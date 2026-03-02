@@ -85,6 +85,7 @@ export function SubAgentCard({
   isLive = false
 }: SubAgentCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
+  const [expanded, setExpanded] = React.useState(false)
   const [toolsExpanded, setToolsExpanded] = React.useState(true)
 
   // Resolve display name: for unified Task tool, use input.subagent_type; otherwise legacy name
@@ -140,6 +141,7 @@ export function SubAgentCard({
     return `${previewSource.slice(0, limit)}…`
   }, [previewSource, isRunning])
   const hasPreview = previewText.trim().length > 0
+  const handleToggleExpanded = (): void => setExpanded((prev) => !prev)
   const handleOpenPreview = (): void => {
     useUIStore.getState().openDetailPanel({
       type: 'subagent',
@@ -147,6 +149,8 @@ export function SubAgentCard({
       text: previewSource || undefined
     })
   }
+
+  const ChevronIcon = expanded ? ChevronDown : ChevronRight
 
   return (
     <div
@@ -167,58 +171,65 @@ export function SubAgentCard({
           isError && 'bg-destructive/5'
         )}
       >
-        <div
-          className={cn(
-            'flex items-center justify-center rounded-lg p-1.5',
-            isRunning ? 'bg-violet-500/15 text-violet-500' : 'bg-muted text-muted-foreground'
-          )}
+        <button
+          type="button"
+          onClick={handleToggleExpanded}
+          className="flex flex-1 items-center gap-2.5 text-left rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-500/40 transition-colors"
         >
-          {icon}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm font-semibold text-violet-600 dark:text-violet-400">
-              {displayName}
-            </span>
-            <Badge
-              variant={isRunning ? 'default' : isError ? 'destructive' : 'secondary'}
-              className={cn('text-[9px] px-1.5 h-4', isRunning && 'bg-violet-500 animate-pulse')}
-            >
-              {isRunning ? t('subAgent.working') : isError ? t('subAgent.failed') : t('subAgent.done')}
-            </Badge>
+          <div
+            className={cn(
+              'flex items-center justify-center rounded-lg p-1.5',
+              isRunning ? 'bg-violet-500/15 text-violet-500' : 'bg-muted text-muted-foreground'
+            )}
+          >
+            {icon}
           </div>
-          {queryText && (
-            <p className="text-xs text-muted-foreground/70 truncate mt-0.5">{queryText}</p>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0 text-[10px] text-muted-foreground/50">
-          {(live || histMeta) && (
-            <>
-              <span className="tabular-nums">
-                {t('subAgent.iter', { count: live?.iteration ?? histMeta?.iterations ?? 0 })}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-semibold text-violet-600 dark:text-violet-400">
+                {displayName}
               </span>
-              <span>·</span>
-              <span className="tabular-nums">
-                {t('subAgent.calls', { count: live?.toolCalls.length ?? histMeta?.toolCalls.length ?? 0 })}
+              <Badge
+                variant={isRunning ? 'default' : isError ? 'destructive' : 'secondary'}
+                className={cn('text-[9px] px-1.5 h-4', isRunning && 'bg-violet-500 animate-pulse')}
+              >
+                {isRunning ? t('subAgent.working') : isError ? t('subAgent.failed') : t('subAgent.done')}
+              </Badge>
+            </div>
+            {queryText && (
+              <p className="text-xs text-muted-foreground/70 truncate mt-0.5">{queryText}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0 text-[10px] text-muted-foreground/50">
+            {(live || histMeta) && (
+              <>
+                <span className="tabular-nums">
+                  {t('subAgent.iter', { count: live?.iteration ?? histMeta?.iterations ?? 0 })}
+                </span>
+                <span>·</span>
+                <span className="tabular-nums">
+                  {t('subAgent.calls', { count: live?.toolCalls.length ?? histMeta?.toolCalls.length ?? 0 })}
+                </span>
+              </>
+            )}
+            {(live || histMeta) && elapsed != null && <span>·</span>}
+            {elapsed != null && (
+              <span className="tabular-nums flex items-center gap-0.5">
+                <Clock className="size-2.5" />
+                {formatElapsed(elapsed)}
               </span>
-            </>
-          )}
-          {(live || histMeta) && elapsed != null && <span>·</span>}
-          {elapsed != null && (
-            <span className="tabular-nums flex items-center gap-0.5">
-              <Clock className="size-2.5" />
-              {formatElapsed(elapsed)}
-            </span>
-          )}
-          {histMeta && (
-            <>
-              <span>·</span>
-              <span className="tabular-nums">
-                {formatTokens(histMeta.usage.inputTokens + histMeta.usage.outputTokens)} tok
-              </span>
-            </>
-          )}
-        </div>
+            )}
+            {histMeta && (
+              <>
+                <span>·</span>
+                <span className="tabular-nums">
+                  {formatTokens(histMeta.usage.inputTokens + histMeta.usage.outputTokens)} tok
+                </span>
+              </>
+            )}
+          </div>
+          <ChevronIcon className="size-3.5 text-muted-foreground/50 shrink-0" />
+        </button>
         <button
           onClick={(e) => {
             e.stopPropagation()
@@ -231,141 +242,145 @@ export function SubAgentCard({
         </button>
       </div>
 
-      {/* Inner tool calls (live) */}
-      {live && live.toolCalls.length > 0 && (
-        <Collapsible open={toolsExpanded} onOpenChange={setToolsExpanded}>
-          <div className="border-t border-violet-500/10 px-4 py-1.5">
-            <CollapsibleTrigger asChild>
-              <button className="flex w-full items-center gap-1.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors">
-                <Wrench className="size-2.5" />
-                <span className="font-medium uppercase tracking-wider">{t('subAgent.toolCalls', { ns: 'chat' })}</span>
-                <Badge variant="secondary" className="text-[9px] h-3.5 px-1 ml-0.5">
-                  {live.toolCalls.length}
-                </Badge>
-                <span className="flex-1" />
-                {toolsExpanded ? (
-                  <ChevronDown className="size-3" />
-                ) : (
-                  <ChevronRight className="size-3" />
-                )}
-              </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="mt-1 space-y-1">
-                {live.toolCalls.map((tc) => (
-                  <ToolCallCard
-                    key={tc.id}
-                    toolUseId={tc.id}
-                    name={tc.name}
-                    input={tc.input}
-                    output={tc.output}
-                    status={tc.status}
-                    error={tc.error}
-                    startedAt={tc.startedAt}
-                    completedAt={tc.completedAt}
-                  />
-                ))}
+      {expanded && (
+        <>
+          {/* Inner tool calls (live) */}
+          {live && live.toolCalls.length > 0 && (
+            <Collapsible open={toolsExpanded} onOpenChange={setToolsExpanded}>
+              <div className="border-t border-violet-500/10 px-4 py-1.5">
+                <CollapsibleTrigger asChild>
+                  <button className="flex w-full items-center gap-1.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors">
+                    <Wrench className="size-2.5" />
+                    <span className="font-medium uppercase tracking-wider">{t('subAgent.toolCalls', { ns: 'chat' })}</span>
+                    <Badge variant="secondary" className="text-[9px] h-3.5 px-1 ml-0.5">
+                      {live.toolCalls.length}
+                    </Badge>
+                    <span className="flex-1" />
+                    {toolsExpanded ? (
+                      <ChevronDown className="size-3" />
+                    ) : (
+                      <ChevronRight className="size-3" />
+                    )}
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="mt-1 space-y-1">
+                    {live.toolCalls.map((tc) => (
+                      <ToolCallCard
+                        key={tc.id}
+                        toolUseId={tc.id}
+                        name={tc.name}
+                        input={tc.input}
+                        output={tc.output}
+                        status={tc.status}
+                        error={tc.error}
+                        startedAt={tc.startedAt}
+                        completedAt={tc.completedAt}
+                      />
+                    ))}
+                  </div>
+                </CollapsibleContent>
               </div>
-            </CollapsibleContent>
-          </div>
-        </Collapsible>
-      )}
+            </Collapsible>
+          )}
 
-      {/* Historical tool calls (from embedded metadata) — rendered as ToolCallCards */}
-      {!live && histMeta && histMeta.toolCalls.length > 0 && (
-        <Collapsible open={toolsExpanded} onOpenChange={setToolsExpanded}>
-          <div className="border-t border-violet-500/10 px-4 py-1.5">
-            <CollapsibleTrigger asChild>
-              <button className="flex w-full items-center gap-1.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors">
-                <Wrench className="size-2.5" />
-                <span className="font-medium uppercase tracking-wider">{t('subAgent.toolCalls', { ns: 'chat' })}</span>
-                <Badge variant="secondary" className="text-[9px] h-3.5 px-1 ml-0.5">
-                  {histMeta.toolCalls.length}
-                </Badge>
-                <span className="flex-1" />
-                {toolsExpanded ? (
-                  <ChevronDown className="size-3" />
-                ) : (
-                  <ChevronRight className="size-3" />
-                )}
-              </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="mt-1 space-y-1">
-                {histMeta.toolCalls.map((tc) => (
-                  <ToolCallCard
-                    key={tc.id}
-                    toolUseId={tc.id}
-                    name={tc.name}
-                    input={tc.input}
-                    output={tc.output}
-                    status={tc.status === 'error' ? 'error' : 'completed'}
-                    error={tc.error}
-                    startedAt={tc.startedAt}
-                    completedAt={tc.completedAt}
-                  />
-                ))}
+          {/* Historical tool calls (from embedded metadata) — rendered as ToolCallCards */}
+          {!live && histMeta && histMeta.toolCalls.length > 0 && (
+            <Collapsible open={toolsExpanded} onOpenChange={setToolsExpanded}>
+              <div className="border-t border-violet-500/10 px-4 py-1.5">
+                <CollapsibleTrigger asChild>
+                  <button className="flex w-full items-center gap-1.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors">
+                    <Wrench className="size-2.5" />
+                    <span className="font-medium uppercase tracking-wider">{t('subAgent.toolCalls', { ns: 'chat' })}</span>
+                    <Badge variant="secondary" className="text-[9px] h-3.5 px-1 ml-0.5">
+                      {histMeta.toolCalls.length}
+                    </Badge>
+                    <span className="flex-1" />
+                    {toolsExpanded ? (
+                      <ChevronDown className="size-3" />
+                    ) : (
+                      <ChevronRight className="size-3" />
+                    )}
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="mt-1 space-y-1">
+                    {histMeta.toolCalls.map((tc) => (
+                      <ToolCallCard
+                        key={tc.id}
+                        toolUseId={tc.id}
+                        name={tc.name}
+                        input={tc.input}
+                        output={tc.output}
+                        status={tc.status === 'error' ? 'error' : 'completed'}
+                        error={tc.error}
+                        startedAt={tc.startedAt}
+                        completedAt={tc.completedAt}
+                      />
+                    ))}
+                  </div>
+                </CollapsibleContent>
               </div>
-            </CollapsibleContent>
-          </div>
-        </Collapsible>
-      )}
+            </Collapsible>
+          )}
 
-      {/* Thinking indicator (running but no text yet) */}
-      {live?.isRunning && !live.streamingText && live.toolCalls.length === 0 && (
-        <div className="border-t border-violet-500/10 px-4 py-2 flex items-center gap-2">
-          <span className="flex gap-1">
-            <span
-              className="size-1.5 rounded-full bg-violet-400/50 animate-bounce"
-              style={{ animationDelay: '0ms' }}
-            />
-            <span
-              className="size-1.5 rounded-full bg-violet-400/50 animate-bounce"
-              style={{ animationDelay: '150ms' }}
-            />
-            <span
-              className="size-1.5 rounded-full bg-violet-400/50 animate-bounce"
-              style={{ animationDelay: '300ms' }}
-            />
-          </span>
-          <span className="text-[11px] text-violet-400/60">{t('subAgent.thinking')}</span>
-        </div>
-      )}
+          {/* Thinking indicator (running but no text yet) */}
+          {live?.isRunning && !live.streamingText && live.toolCalls.length === 0 && (
+            <div className="border-t border-violet-500/10 px-4 py-2 flex items-center gap-2">
+              <span className="flex gap-1">
+                <span
+                  className="size-1.5 rounded-full bg-violet-400/50 animate-bounce"
+                  style={{ animationDelay: '0ms' }}
+                />
+                <span
+                  className="size-1.5 rounded-full bg-violet-400/50 animate-bounce"
+                  style={{ animationDelay: '150ms' }}
+                />
+                <span
+                  className="size-1.5 rounded-full bg-violet-400/50 animate-bounce"
+                  style={{ animationDelay: '300ms' }}
+                />
+              </span>
+              <span className="text-[11px] text-violet-400/60">{t('subAgent.thinking')}</span>
+            </div>
+          )}
 
-      {/* Lightweight preview instead of full markdown rendering */}
-      {hasPreview && (
-        <div className="border-t border-violet-500/10 px-4 py-2.5 space-y-1 bg-muted/10">
-          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
-            <Zap className="size-2.5" />
-            <span className="font-medium uppercase tracking-wider">
-              {isRunning ? t('subAgent.thinking') : t('subAgent.result')}
-            </span>
-            <span className="text-muted-foreground/30">·</span>
-            <span className="text-muted-foreground/50">{t('subAgent.viewDetails')}</span>
-            <span className="flex-1" />
-            <CopyOutputBtn text={previewSource} />
-          </div>
-          <p className="text-[12px] text-muted-foreground/80 whitespace-pre-wrap leading-relaxed line-clamp-5">
-            {previewText}
-          </p>
-          <button
-            onClick={handleOpenPreview}
-            className="inline-flex items-center gap-1 text-[11px] font-medium text-violet-600 dark:text-violet-400 hover:text-violet-500"
-          >
-            {t('subAgent.viewDetails')}
-            <Maximize2 className="size-3" />
-          </button>
-        </div>
-      )}
+          {/* Lightweight preview instead of full markdown rendering */}
+          {hasPreview && (
+            <div className="border-t border-violet-500/10 px-4 py-2.5 space-y-1 bg-muted/10">
+              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
+                <Zap className="size-2.5" />
+                <span className="font-medium uppercase tracking-wider">
+                  {isRunning ? t('subAgent.thinking') : t('subAgent.result')}
+                </span>
+                <span className="text-muted-foreground/30">·</span>
+                <span className="text-muted-foreground/50">{t('subAgent.viewDetails')}</span>
+                <span className="flex-1" />
+                <CopyOutputBtn text={previewSource} />
+              </div>
+              <p className="text-[12px] text-muted-foreground/80 whitespace-pre-wrap leading-relaxed line-clamp-5">
+                {previewText}
+              </p>
+              <button
+                onClick={handleOpenPreview}
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-violet-600 dark:text-violet-400 hover:text-violet-500"
+              >
+                {t('subAgent.viewDetails')}
+                <Maximize2 className="size-3" />
+              </button>
+            </div>
+          )}
 
-      {/* Footer — only when live and running */}
-      {live?.isRunning && (
-        <div className="border-t border-violet-500/10 px-4 py-1.5 flex items-center gap-2">
-          <Loader2 className="size-3 animate-spin text-violet-400" />
-          <span className="text-[10px] text-violet-400/70 font-medium">
-            {t('subAgent.exploring', { name: displayName })}
-          </span>
-        </div>
+          {/* Footer — only when live and running */}
+          {live?.isRunning && (
+            <div className="border-t border-violet-500/10 px-4 py-1.5 flex items-center gap-2">
+              <Loader2 className="size-3 animate-spin text-violet-400" />
+              <span className="text-[10px] text-violet-400/70 font-medium">
+                {t('subAgent.exploring', { name: displayName })}
+              </span>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

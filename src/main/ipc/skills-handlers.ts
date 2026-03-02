@@ -16,7 +16,7 @@ export interface MarketSkillInfo {
   source_path?: string
 }
 
-const SKILLS_DIR = path.join(os.homedir(), 'agents', 'skills')
+const SKILLS_DIR = path.join(os.homedir(), '.agents', 'skills')
 const SKILLS_FILENAME = 'SKILL.md'
 
 /**
@@ -57,7 +57,7 @@ function getBundledSkillsDir(): string {
 }
 
 /**
- * Copy built-in skills from resources/skills/ to ~/agents/skills/.
+ * Copy built-in skills from resources/skills/ to ~/.agents/skills/.
  * Only copies a skill if it does not already exist in the target,
  * so user modifications are preserved.
  */
@@ -154,7 +154,7 @@ export function registerSkillsHandlers(): void {
   ensureBuiltinSkills()
 
   /**
-   * skills:list — scan ~/agents/skills/ and return all available skills.
+   * skills:list — scan ~/.agents/skills/ and return all available skills.
    * Each subdirectory containing a SKILL.md is treated as a skill.
    */
   ipcMain.handle('skills:list', async (): Promise<SkillInfo[]> => {
@@ -248,7 +248,7 @@ export function registerSkillsHandlers(): void {
   })
 
   /**
-   * skills:delete — remove a skill directory from ~/agents/skills/.
+   * skills:delete — remove a skill directory from ~/.agents/skills/.
    */
   ipcMain.handle('skills:delete', async (_event, args: { name: string }): Promise<{ success: boolean; error?: string }> => {
     try {
@@ -280,7 +280,7 @@ export function registerSkillsHandlers(): void {
   })
 
   /**
-   * skills:add-from-folder — copy a skill from a source folder into ~/agents/skills/.
+   * skills:add-from-folder — copy a skill from a source folder into ~/.agents/skills/.
    * Expects the source folder to contain a SKILL.md file.
    */
   ipcMain.handle('skills:add-from-folder', async (_event, args: { sourcePath: string }): Promise<{ success: boolean; name?: string; error?: string }> => {

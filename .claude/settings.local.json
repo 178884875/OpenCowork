@@ -28,7 +28,8 @@
       "WebFetch(domain:www.kimi.com)",
       "WebFetch(domain:skillsmp.com)",
       "WebFetch(domain:www.skillsmp.com)",
-      "WebFetch(domain:api.skillsmp.com)"
+      "WebFetch(domain:api.skillsmp.com)",
+      "Bash(test:*)"
     ]
   }
 }

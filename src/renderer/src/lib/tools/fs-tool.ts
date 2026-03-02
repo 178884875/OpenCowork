@@ -3,6 +3,38 @@ import { joinFsPath } from '../agent/memory-files'
 import { IPC } from '../ipc/channels'
 import type { ToolHandler, ToolContext } from './tool-types'
 
+type EolStyle = '\n' | '\r\n' | null
+
+function detectEolStyle(str: string): EolStyle {
+  if (str.includes('\r\n')) return '\r\n'
+  if (str.includes('\n')) return '\n'
+  return null
+}
+
+function normalizeToLf(str: string): string {
+  return str.replace(/\r\n/g, '\n')
+}
+
+function applyEolStyle(str: string, style: EolStyle): string {
+  if (!style) return str
+  const normalized = normalizeToLf(str)
+  return style === '\n' ? normalized : normalized.replace(/\n/g, '\r\n')
+}
+
+function buildOldStringVariants(oldStr: string, fileContent: string): Array<{ text: string; eol: EolStyle }> {
+  const variants: Array<{ text: string; eol: EolStyle }> = [{ text: oldStr, eol: detectEolStyle(oldStr) }]
+  const fileHasCrlf = fileContent.includes('\r\n')
+  const fileHasOnlyLf = !fileHasCrlf
+
+  if (oldStr.includes('\n') && !oldStr.includes('\r') && fileHasCrlf) {
+    variants.push({ text: oldStr.replace(/\n/g, '\r\n'), eol: '\r\n' })
+  } else if (oldStr.includes('\r\n') && fileHasOnlyLf) {
+    variants.push({ text: oldStr.replace(/\r\n/g, '\n'), eol: '\n' })
+  }
+
+  return variants
+}
+
 // ── SSH routing helper ──
 
 function isSsh(ctx: ToolContext): boolean {
@@ -210,15 +242,34 @@ const editHandler: ToolHandler = {
     const newStr = String(input.new_string)
     const replaceAll = Boolean(input.replace_all)
 
-    let updated: string
-    if (replaceAll) {
-      updated = content.split(oldStr).join(newStr)
-    } else {
-      const idx = content.indexOf(oldStr)
-      if (idx === -1) {
+    const oldStringVariants = buildOldStringVariants(oldStr, content)
+    const matchedVariant = oldStringVariants.find((variant) => variant.text.length > 0 && content.includes(variant.text))
+    if (!matchedVariant) {
+      if (replaceAll) {
         return JSON.stringify({ error: 'old_string not found in file' })
       }
-      updated = content.slice(0, idx) + newStr + content.slice(idx + oldStr.length)
+      const idxFallback = content.indexOf(oldStr)
+      if (idxFallback === -1) {
+        return JSON.stringify({ error: 'old_string not found in file' })
+      }
+      const replacement = applyEolStyle(newStr, detectEolStyle(oldStr))
+      const updatedFallback = content.slice(0, idxFallback) + replacement + content.slice(idxFallback + oldStr.length)
+      const writeChFallback = isSsh(ctx) ? IPC.SSH_FS_WRITE_FILE : IPC.FS_WRITE_FILE
+      const writeArgsFallback = isSsh(ctx)
+        ? sshArgs(ctx, { path: resolvedPath, content: updatedFallback })
+        : { path: resolvedPath, content: updatedFallback }
+      await ctx.ipc.invoke(writeChFallback, writeArgsFallback)
+      return JSON.stringify({ success: true })
+    }
+
+    const replacementText = applyEolStyle(newStr, matchedVariant.eol)
+    let updated: string
+    if (replaceAll) {
+      updated = content.split(matchedVariant.text).join(replacementText)
+    } else {
+      const idx = content.indexOf(matchedVariant.text)
+      updated =
+        content.slice(0, idx) + replacementText + content.slice(idx + matchedVariant.text.length)
     }
 
     const writeCh = isSsh(ctx) ? IPC.SSH_FS_WRITE_FILE : IPC.FS_WRITE_FILE

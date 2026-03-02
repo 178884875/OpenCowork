@@ -13,6 +13,8 @@ import sys
 
 try:
     from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
     from docx.shared import Inches, Pt
     pass  # docx.enum.text available if needed
 except ImportError:
@@ -128,6 +130,33 @@ def add_formatted_run(paragraph, text):
             paragraph.add_run(part)
 
 
+def insert_toc(doc, title='Table of Contents', depth=3):
+    """Insert a TOC field so Word can populate entries after opening."""
+    depth = max(1, min(int(depth or 3), 9))
+    doc.add_heading(title, level=1)
+    paragraph = doc.add_paragraph()
+
+    run = paragraph.add_run()
+    fld_char_begin = OxmlElement('w:fldChar')
+    fld_char_begin.set(qn('w:fldCharType'), 'begin')
+    run._r.append(fld_char_begin)
+
+    instr_text = OxmlElement('w:instrText')
+    instr_text.set(qn('xml:space'), 'preserve')
+    instr_text.text = f'TOC \\o "1-{depth}" \\h \\z \\u'
+    run._r.append(instr_text)
+
+    fld_char_sep = OxmlElement('w:fldChar')
+    fld_char_sep.set(qn('w:fldCharType'), 'separate')
+    run._r.append(fld_char_sep)
+
+    paragraph.add_run('Table of contents placeholder. Update fields in Word to refresh.')
+
+    fld_char_end = OxmlElement('w:fldChar')
+    fld_char_end.set(qn('w:fldCharType'), 'end')
+    run._r.append(fld_char_end)
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -146,6 +175,9 @@ def cmd_create(args):
     # Add title
     if args.title:
         doc.add_heading(args.title, level=0)
+
+    if args.toc:
+        insert_toc(doc, title=args.toc_title or 'Table of Contents', depth=args.toc_depth)
 
     # Add content from Markdown file
     if args.from_markdown:
@@ -333,6 +365,9 @@ def main():
     p.add_argument('--from-markdown', help='Create from Markdown file')
     p.add_argument('--content', help='Inline body text')
     p.add_argument('--template', help='Template .docx for styles')
+    p.add_argument('--toc', action='store_true', help='Insert a TOC field placeholder (requires manual update in Word)')
+    p.add_argument('--toc-title', help='Heading text placed above the TOC (default: Table of Contents)')
+    p.add_argument('--toc-depth', type=int, default=3, help='Heading depth captured by the TOC (default: 3)')
 
     # read
     p = sub.add_parser('read', help='Read/extract text from .docx')

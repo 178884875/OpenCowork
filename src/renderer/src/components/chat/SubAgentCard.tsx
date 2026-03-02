@@ -26,9 +26,6 @@ import { cn } from '@renderer/lib/utils'
 import { parseSubAgentMeta } from '@renderer/lib/agent/sub-agents/create-tool'
 import { subAgentRegistry } from '@renderer/lib/agent/sub-agents/registry'
 import { ToolCallCard } from './ToolCallCard'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { MONO_FONT } from '@renderer/lib/constants'
 import type { ToolResultContent } from '@renderer/lib/api/types'
 
 // --- SubAgent icon resolver (dynamic from registry) ---
@@ -89,7 +86,6 @@ export function SubAgentCard({
 }: SubAgentCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
   const [toolsExpanded, setToolsExpanded] = React.useState(true)
-  const [outputExpanded, setOutputExpanded] = React.useState(false)
 
   // Resolve display name: for unified Task tool, use input.subagent_type; otherwise legacy name
   const displayName = String(input.subagent_type ?? name)
@@ -117,16 +113,6 @@ export function SubAgentCard({
     ? histText.startsWith('{"error"') || outputStr.startsWith('{"error"')
     : false
 
-  // Auto-expand output when SubAgent completes
-  const prevRunningRef = React.useRef(isRunning)
-  React.useEffect(() => {
-    if (prevRunningRef.current && !isRunning && (output || live?.streamingText)) {
-      setOutputExpanded(true)
-      setToolsExpanded(false)
-    }
-    prevRunningRef.current = isRunning
-  }, [isRunning, output, live?.streamingText])
-
   // Live elapsed time counter (auto-updates every second while running)
   const [now, setNow] = React.useState(Date.now())
   React.useEffect(() => {
@@ -143,8 +129,23 @@ export function SubAgentCard({
   // Query/task description from input (unified Task uses description/prompt)
   const queryText = String(input.description ?? input.query ?? input.task ?? input.target ?? '')
 
+  const previewSource = live?.streamingText || histText || ''
+  const previewText = React.useMemo(() => {
+    if (!previewSource) return ''
+    const limit = 420
+    if (previewSource.length <= limit) return previewSource
+    if (isRunning) {
+      return `…${previewSource.slice(-limit)}`
+    }
+    return `${previewSource.slice(0, limit)}…`
+  }, [previewSource, isRunning])
+  const hasPreview = previewText.trim().length > 0
   const handleOpenPreview = (): void => {
-    useUIStore.getState().openDetailPanel({ type: 'subagent', toolUseId })
+    useUIStore.getState().openDetailPanel({
+      type: 'subagent',
+      toolUseId,
+      text: previewSource || undefined
+    })
   }
 
   return (
@@ -331,79 +332,30 @@ export function SubAgentCard({
         </div>
       )}
 
-      {/* Streaming text output (live) */}
-      {live && live.streamingText && (
-        <div className="border-t border-violet-500/10 px-4 py-2.5 max-h-64 overflow-y-auto">
-          <div className="prose prose-xs dark:prose-invert max-w-none text-[12px] leading-relaxed">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code: ({ className, children, ...props }) => (
-                  <code
-                    className={cn(className, 'font-mono')}
-                    style={{ fontFamily: MONO_FONT }}
-                    {...props}
-                  >
-                    {children}
-                  </code>
-                )
-              }}
-            >
-              {live.streamingText}
-            </ReactMarkdown>
+      {/* Lightweight preview instead of full markdown rendering */}
+      {hasPreview && (
+        <div className="border-t border-violet-500/10 px-4 py-2.5 space-y-1 bg-muted/10">
+          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
+            <Zap className="size-2.5" />
+            <span className="font-medium uppercase tracking-wider">
+              {isRunning ? t('subAgent.thinking') : t('subAgent.result')}
+            </span>
+            <span className="text-muted-foreground/30">·</span>
+            <span className="text-muted-foreground/50">{t('subAgent.viewDetails')}</span>
+            <span className="flex-1" />
+            <CopyOutputBtn text={previewSource} />
           </div>
-          {live.isRunning && (
-            <span className="inline-block w-1 h-3 bg-violet-500/60 animate-pulse ml-0.5" />
-          )}
+          <p className="text-[12px] text-muted-foreground/80 whitespace-pre-wrap leading-relaxed line-clamp-5">
+            {previewText}
+          </p>
+          <button
+            onClick={handleOpenPreview}
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-violet-600 dark:text-violet-400 hover:text-violet-500"
+          >
+            {t('subAgent.viewDetails')}
+            <Maximize2 className="size-3" />
+          </button>
         </div>
-      )}
-
-      {/* Completed output (from tool result in message history) */}
-      {!live && outputStr && histText && (
-        <Collapsible open={outputExpanded} onOpenChange={setOutputExpanded}>
-          <div className="border-t border-violet-500/10">
-            <CollapsibleTrigger asChild>
-              <button className="flex w-full items-center gap-1.5 px-4 py-1.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors">
-                <Zap className="size-2.5" />
-                <span className="font-medium">{t('subAgent.result')}</span>
-                <span className="text-muted-foreground/30 ml-1">
-                  {histText.length > 500
-                    ? t('subAgent.kChars', { count: Math.round(histText.length / 1000) })
-                    : t('subAgent.nChars', { count: histText.length })}
-                </span>
-                <span className="flex-1" />
-                <CopyOutputBtn text={histText} />
-                {outputExpanded ? (
-                  <ChevronDown className="size-3" />
-                ) : (
-                  <ChevronRight className="size-3" />
-                )}
-              </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="px-4 pb-3 max-h-80 overflow-y-auto">
-                <div className="prose prose-xs dark:prose-invert max-w-none text-[12px] leading-relaxed">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      code: ({ className, children, ...props }) => (
-                        <code
-                          className={cn(className, 'font-mono')}
-                          style={{ fontFamily: MONO_FONT }}
-                          {...props}
-                        >
-                          {children}
-                        </code>
-                      )
-                    }}
-                  >
-                    {histText}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            </CollapsibleContent>
-          </div>
-        </Collapsible>
       )}
 
       {/* Footer — only when live and running */}

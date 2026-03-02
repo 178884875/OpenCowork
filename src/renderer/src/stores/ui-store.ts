@@ -34,7 +34,7 @@ export type DetailPanelContent =
 
   | { type: 'team' }
 
-  | { type: 'subagent'; toolUseId?: string }
+  | { type: 'subagent'; toolUseId?: string; text?: string }
 
   | { type: 'terminal'; processId: string }
 

@@ -16,6 +16,17 @@ Create, read, and edit Microsoft Word documents (.docx) using Python.
 - User wants to generate reports, proposals, or professional documents
 - User needs tables, formatted headings, or structured content in Word format
 
+## Table of contents
+
+1. [Overview](#docx-creator)
+2. [When to use this skill](#when-to-use-this-skill)
+3. [Scripts overview](#scripts-overview)
+4. [Steps](#steps)
+5. [Generating a table of contents](#generating-a-table-of-contents)
+6. [Common workflows](#common-workflows)
+7. [Edge cases](#edge-cases)
+8. [Scripts](#scripts)
+
 ## Scripts overview
 
 | Script | Purpose | Dependencies |
@@ -51,6 +62,11 @@ Options:
 - `--from-markdown PATH` — Create from a Markdown file (converts headings, lists, bold, italic, code, tables)
 - `--content TEXT` — Inline body text
 - `--template PATH` — Use an existing .docx as template for styles
+- `--toc` — Inserts a Word TOC field (requires opening the file in Word/LibreOffice and choosing **Update field**)
+- `--toc-title` — Heading text placed above the TOC (defaults to "Table of Contents")
+- `--toc-depth` — Heading depth captured in the TOC (1–9, defaults to 3)
+
+> **Formatting tips**: Use consistent heading levels (H1 → H3) in Markdown so python-docx applies the correct Word styles. Tables should follow standard pipe-table syntax (header row + separator). Inline formatting supports `**bold**`, `*italic*`, and `` `code` ``.
 
 ### 3. Read / extract text from a document
 
@@ -77,6 +93,17 @@ python scripts/docx_tool.py append "EXISTING.docx" --table "col1,col2,col3" --ro
 ```bash
 python scripts/docx_tool.py table "OUTPUT.docx" --from-csv "DATA.csv" --title "Data Table"
 ```
+
+## Generating a table of contents
+
+python-docx does not refresh TOC entries automatically (confirmed in [python-openxml/python-docx#723](https://github.com/python-openxml/python-docx/issues/723)). To provide a TOC that Word can populate:
+
+1. Ensure headings in Markdown or appended content follow the correct outline order.
+2. Run `docx_tool.py create report.docx --from-markdown input.md --toc --toc-depth 3` to insert a Word TOC field (uses the `w:fldChar` trick from [StackOverflow: python-docx TOC](https://stackoverflow.com/questions/18595864/python-create-a-table-of-contents-with-python-docx-lxml)).
+3. Open the generated `.docx` in Word (or LibreOffice), right-click the placeholder, and choose **Update Field → Update entire table**.
+4. After edits, press `Ctrl+A`, then `F9` so the TOC reflects the latest headings.
+
+If the deliverable must already contain a populated TOC without manual intervention, run a follow-up script that opens the document via Word COM automation (Windows only) or ask the user to confirm that manual refresh is acceptable.
 
 ## Common workflows
 

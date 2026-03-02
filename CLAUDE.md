@@ -4,7 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenCowork is a desktop AI agent application built with Electron + React + TypeScript. It provides an agentic chat interface where an LLM can use tools (file system, shell, search, sub-agents) to accomplish tasks. It also integrates with messaging platforms (Feishu, DingTalk, Telegram, Discord, WhatsApp, WeCom) as plugins that can auto-reply using the agent loop.
+OpenCowork is an AI-powered collaborative development platform built with Electron + React + TypeScript. It provides an agentic chat interface where LLMs (OpenAI, Anthropic Claude, DeepSeek, etc.) can use tools (file system, shell, search, sub-agents) to accomplish development tasks. Features include:
+- Multi-provider AI agent system with tool execution and approval workflow
+- Sub-agent framework for specialized tasks (code review, debugging, refactoring, security audits)
+- Three working modes: Chat, Cowork, and Code
+- Plugin system for messaging platform integration (Feishu, DingTalk, Telegram, Discord, WhatsApp, WeCom)
+- Persistent session management with SQLite database
+- Real-time streaming with token usage tracking
 
 ## Commands
 
@@ -123,3 +129,45 @@ A separate Next.js + [Fumadocs](https://fumadocs.dev) documentation site. Run in
 - `tsconfig.web.json`: Renderer TypeScript config with `@renderer/*` path mapping.
 - Styling: Tailwind CSS v4 via `@tailwindcss/vite` plugin, with `tailwind-merge`, `class-variance-authority`, and `tw-animate-css`.
 - UI components: Radix UI primitives, Lucide icons, Motion for animations, Monaco Editor, cmdk for command palette.
+
+## Working with Sub-Agents
+
+Sub-agents are specialized AI agents defined in markdown files at `resources/agents/*.md`. Each defines:
+- Agent name, description, and capabilities
+- System prompt tailored for specific tasks
+- Available tools (subset of main tool registry)
+- Input/output format
+
+Available sub-agents include:
+- `code-reviewer.md` - Code review and quality analysis
+- `debugger.md` - Bug investigation and debugging
+- `refactor-expert.md` - Code refactoring and optimization
+- `security-auditor.md` - Security vulnerability scanning
+- `test-automator.md` - Test generation and automation
+- `api-designer.md` - API design and documentation
+- `architect-reviewer.md` - Architecture review
+- `performance-engineer.md` - Performance optimization
+- `doc-writer.md` - Documentation generation
+- `frontend-developer.md`, `fullstack-developer.md` - Specialized development agents
+- `data-analyst.md`, `copywriter.md`, `translator.md`, `meeting-summarizer.md` - Domain-specific agents
+
+Sub-agents are loaded dynamically at startup via IPC from the main process and registered as a unified `Task` tool in the tool registry.
+
+## Important Implementation Notes
+
+- **Frameless Window**: The app uses a custom title bar with window controls handled via IPC (`window:minimize`, `window:maximize`, `window:close`)
+- **Database Persistence**: All sessions and messages are persisted to SQLite. Messages are lazy-loaded (session list shows metadata only, full history loads on activation)
+- **Tool Approval System**: Tools can require user approval based on settings. The agent loop pauses and yields an approval event, waiting for user confirmation before execution
+- **Context Window Management**: Automatic compression when approaching token limits - either lightweight pre-compression (removes stale tool results) or full compression (summarizes history via LLM)
+- **Error Recovery**: Provider requests retry up to 3 times with exponential backoff. Tool execution errors are captured and returned as tool results to the agent
+- **Process Cleanup**: All managed background processes are killed on app quit to prevent orphaned processes
+- **Security**: API keys stored securely in main process via `secure-key-store.ts`, not accessible from renderer
+
+## Development Workflow
+
+1. **Hot Reload**: Renderer process supports HMR. Main process changes require full restart (`Ctrl+C` then `npm run dev`)
+2. **Type Safety**: Always run `npm run typecheck` before committing to catch type errors
+3. **Code Style**: Use `npm run format` to auto-format with Prettier. Follow existing patterns in the codebase
+4. **Adding Tools**: Register new tools in `src/renderer/src/lib/tools/index.ts` via `registerAllTools()`
+5. **Adding IPC Handlers**: Create handler file in `src/main/ipc/`, register in `src/main/index.ts`
+6. **State Management**: Use Zustand stores with Immer for immutable updates. Keep stores focused and single-purpose

@@ -295,6 +295,9 @@ export const azureOpenaiPreset: BuiltinProviderPreset = {
       responseSummary: 'detailed',
       enablePromptCache: true,
       enableSystemPromptCache: true,
+      requestOverrides: {
+        omitBodyKeys: ['temperature']
+      },
       type: 'openai-responses'
     },
     {

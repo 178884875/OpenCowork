@@ -6,7 +6,6 @@ import {
   XCircle,
   Copy,
   Check,
-  ArrowRight,
   Terminal,
   SendHorizontal,
   Square,
@@ -107,7 +106,7 @@ export function inputSummary(name: string, input: Record<string, unknown>): stri
   return val.length > 60 ? val.slice(0, 60) + '…' : val
 }
 
-function CopyBtn({ text }: { text: string }): React.JSX.Element {
+function CopyBtn({ text, title }: { text: string; title?: string }): React.JSX.Element {
   const [copied, setCopied] = React.useState(false)
   return (
     <button
@@ -117,7 +116,7 @@ function CopyBtn({ text }: { text: string }): React.JSX.Element {
         setTimeout(() => setCopied(false), 1500)
       }}
       className="ml-auto rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
-      title="Copy"
+      title={title ?? 'Copy'}
     >
       {copied ? <Check className="size-3 text-green-500" /> : <Copy className="size-3" />}
     </button>
@@ -871,50 +870,28 @@ function foldContext(lines: DiffLine[], ctx: number = 2): DiffChunk[] {
   return chunks
 }
 
-function DiffBlock({
-  oldStr,
-  newStr,
-  filePath
-}: {
-  oldStr: string
-  newStr: string
-  filePath?: string
-}): React.JSX.Element {
+function InlineDiff({ oldStr, newStr }: { oldStr: string; newStr: string }): React.JSX.Element {
   const { t } = useTranslation('chat')
   const lines = React.useMemo(() => computeDiff(oldStr, newStr), [oldStr, newStr])
   const chunks = React.useMemo(() => foldContext(lines), [lines])
   const [expandedChunks, setExpandedChunks] = React.useState<Set<number>>(new Set())
-  const added = lines.filter((l) => l.type === 'add').length
-  const removed = lines.filter((l) => l.type === 'del').length
 
-  const renderLine = (line: DiffLine, i: number): React.JSX.Element => (
-    <div
-      key={i}
-      className={cn(
-        'flex',
-        line.type === 'del' && 'bg-red-500/10',
-        line.type === 'add' && 'bg-green-500/10'
-      )}
-    >
-      <span
-        className={cn(
-          'select-none w-5 shrink-0 text-right pr-1',
-          line.type === 'del'
-            ? 'text-red-400/40'
-            : line.type === 'add'
-              ? 'text-green-400/40'
-              : 'text-zinc-600'
-        )}
-      >
+  const renderLine = (line: DiffLine, key: number): React.JSX.Element => (
+    <div key={key} className={cn('flex', line.type === 'del' && 'bg-red-500/10', line.type === 'add' && 'bg-green-500/10')}>
+      <span className={cn(
+        'select-none w-5 shrink-0 text-right pr-1',
+        line.type === 'del' ? 'text-red-400/40' : line.type === 'add' ? 'text-green-400/40' : 'text-zinc-600'
+      )}>
         {line.oldNum ?? line.newNum ?? ''}
       </span>
       <span
         className={cn(
-          'px-1.5 flex-1',
+          'px-1.5 flex-1 font-mono',
           line.type === 'del' && 'text-red-300/80',
           line.type === 'add' && 'text-green-300/80',
           line.type === 'keep' && 'text-zinc-500'
         )}
+        style={{ fontFamily: MONO_FONT, whiteSpace: 'pre-wrap' }}
       >
         {line.type === 'del' ? '- ' : line.type === 'add' ? '+ ' : '  '}
         {line.text}
@@ -923,20 +900,16 @@ function DiffBlock({
   )
 
   return (
-    <div>
-      <div className="mb-1 flex items-center gap-1.5">
-        <ArrowRight className="size-3 text-muted-foreground" />
-        <p className="text-xs font-medium text-muted-foreground">{t('toolCall.diff')}</p>
-        {filePath && (
-          <span className="text-[10px] text-muted-foreground/40 font-mono truncate">
-            {filePath.split(/[\\/]/).slice(-2).join('/')}
-          </span>
-        )}
-        <span className="text-[9px] text-muted-foreground/30">
-          {removed > 0 && <span className="text-red-400/60">-{removed}</span>}
-          {removed > 0 && added > 0 && ' '}
-          {added > 0 && <span className="text-green-400/60">+{added}</span>}
-        </span>
+    <div className="space-y-1">
+      <div className="flex items-center justify-end gap-2 text-[10px] text-muted-foreground/60">
+        <CopyBtn
+          text={oldStr}
+          title={t('fileChange.copyOldString', { defaultValue: 'Copy old string' })}
+        />
+        <CopyBtn
+          text={newStr}
+          title={t('fileChange.copyNewString', { defaultValue: 'Copy new string' })}
+        />
       </div>
       <div
         className="rounded-md border bg-zinc-950 overflow-auto max-h-64 text-[11px] font-mono leading-relaxed"
@@ -1386,12 +1359,8 @@ export function ToolCallCard({
         <div className="mt-1.5 space-y-2 pl-5 min-w-0 overflow-hidden">
           {/* Diff view for Edit tool */}
           {name === 'Edit' && !!input.old_string && !!input.new_string && (
-              <DiffBlock
-                oldStr={String(input.old_string)}
-                newStr={String(input.new_string)}
-                filePath={String(input.file_path ?? input.path ?? '')}
-              />
-            )}
+            <InlineDiff oldStr={String(input.old_string)} newStr={String(input.new_string)} />
+          )}
           {/* Write: show content with syntax highlighting */}
           {name === 'Write' && !!input.content && (
             <div>

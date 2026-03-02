@@ -36,6 +36,7 @@ import {
 import {
   useProviderStore,
   builtinProviderPresets,
+  normalizeProviderBaseUrl,
 } from '@renderer/stores/provider-store'
 import { useQuotaStore, type CodexQuota, type CodexQuotaWindow } from '@renderer/stores/quota-store'
 import {
@@ -807,7 +808,10 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
       const isAnthropic = requestType === 'anthropic'
       const isResponses = requestType === 'openai-responses'
       const defaultBaseUrl = isAnthropic ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
-      const baseUrl = (activeProvider.baseUrl || defaultBaseUrl).trim().replace(/\/+$/, '')
+      const baseUrl = normalizeProviderBaseUrl(
+        activeProvider.baseUrl?.trim() || defaultBaseUrl,
+        requestType
+      )
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       let url: string
       let body: string

@@ -172,9 +172,11 @@ function TeamDetailView(): React.JSX.Element {
 
 // ── SubAgent Detail View ─────────────────────────────────────────
 
-function SubAgentDetailItem({ sa, isOpen, onToggle }: { sa: SubAgentState; isOpen: boolean; onToggle: () => void }): React.JSX.Element {
+function SubAgentDetailItem({ sa, isOpen, onToggle, inlineText }: { sa: SubAgentState; isOpen: boolean; onToggle: () => void; inlineText?: string }): React.JSX.Element {
   const { t } = useTranslation('layout')
   const elapsed = sa.completedAt && sa.startedAt ? sa.completedAt - sa.startedAt : null
+  const textContent = sa.streamingText || inlineText || ''
+  const hasText = textContent.trim().length > 0
 
   return (
     <div className="rounded-lg border border-muted overflow-hidden">
@@ -215,13 +217,11 @@ function SubAgentDetailItem({ sa, isOpen, onToggle }: { sa: SubAgentState; isOpe
             </div>
 
             {/* Streaming text / final output */}
-            {sa.streamingText && (
-              <div className="rounded-md bg-violet-500/[0.03] border border-violet-500/10 px-2.5 py-2 max-h-48 overflow-y-auto">
-                <p className="text-[11px] text-muted-foreground/70 leading-relaxed whitespace-pre-wrap break-words">
-                  {sa.streamingText.length > 1000
-                    ? sa.streamingText.slice(-1000) + '…'
-                    : sa.streamingText}
-                </p>
+            {hasText && (
+              <div className="rounded-md bg-violet-500/[0.03] border border-violet-500/10 px-2.5 py-2 max-h-[360px] overflow-y-auto">
+                <div className="prose prose-xs dark:prose-invert max-w-none text-[11px] leading-relaxed">
+                  <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
+                </div>
               </div>
             )}
 
@@ -256,7 +256,7 @@ function SubAgentDetailItem({ sa, isOpen, onToggle }: { sa: SubAgentState; isOpe
   )
 }
 
-function SubAgentDetailView({ toolUseId }: { toolUseId?: string }): React.JSX.Element {
+function SubAgentDetailView({ toolUseId, inlineText }: { toolUseId?: string; inlineText?: string }): React.JSX.Element {
   const { t } = useTranslation('layout')
   const activeSubAgents = useAgentStore((s) => s.activeSubAgents)
   const completedSubAgents = useAgentStore((s) => s.completedSubAgents)
@@ -285,7 +285,23 @@ function SubAgentDetailView({ toolUseId }: { toolUseId?: string }): React.JSX.El
           sa={targeted}
           isOpen={expandedId === targeted.toolUseId}
           onToggle={() => toggle(targeted.toolUseId)}
+          inlineText={targeted.toolUseId === toolUseId ? inlineText : undefined}
         />
+      )}
+
+      {/* Standalone text fallback when state not found */}
+      {!targeted && inlineText && (
+        <div className="rounded-lg border border-muted/80 bg-muted/10 p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Bot className="size-3.5 text-violet-500" />
+            <span className="text-xs font-semibold text-violet-600 dark:text-violet-400">
+              {t('detailPanel.subAgentOutput')}
+            </span>
+          </div>
+          <div className="prose prose-xs dark:prose-invert max-w-none text-[11px] leading-relaxed">
+            <Markdown remarkPlugins={[remarkGfm]}>{inlineText}</Markdown>
+          </div>
+        </div>
       )}
 
       {/* Current session SubAgents */}
@@ -303,6 +319,7 @@ function SubAgentDetailView({ toolUseId }: { toolUseId?: string }): React.JSX.El
                 sa={sa}
                 isOpen={expandedId === sa.toolUseId}
                 onToggle={() => toggle(sa.toolUseId)}
+                inlineText={sa.toolUseId === toolUseId ? inlineText : undefined}
               />
             ))}
           </div>
@@ -326,6 +343,7 @@ function SubAgentDetailView({ toolUseId }: { toolUseId?: string }): React.JSX.El
                   sa={sa}
                   isOpen={expandedId === sa.toolUseId}
                   onToggle={() => toggle(sa.toolUseId)}
+                  inlineText={sa.toolUseId === toolUseId ? inlineText : undefined}
                 />
               ))}
             </div>
@@ -519,7 +537,7 @@ export function DetailPanel(): React.JSX.Element {
 
           {content?.type === 'subagent' && (
             <FadeIn key="subagent" className="h-full">
-              <SubAgentDetailView toolUseId={content.toolUseId} />
+              <SubAgentDetailView toolUseId={content.toolUseId} inlineText={content.text} />
             </FadeIn>
           )}
 

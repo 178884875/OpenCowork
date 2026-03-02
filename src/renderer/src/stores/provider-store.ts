@@ -1,7 +1,13 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { nanoid } from 'nanoid'
-import type { AIProvider, AIModelConfig, ProviderConfig, ModelCategory } from '../lib/api/types'
+import type {
+  AIProvider,
+  AIModelConfig,
+  ProviderConfig,
+  ModelCategory,
+  RequestOverrides,
+} from '../lib/api/types'
 import { builtinProviderPresets } from './providers'
 import type { BuiltinProviderPreset } from './providers'
 import { configStorage } from '../lib/ipc/config-storage'
@@ -35,7 +41,7 @@ function createProviderFromPreset(preset: BuiltinProviderPreset): AIProvider {
   }
 }
 
-function normalizeProviderBaseUrl(
+export function normalizeProviderBaseUrl(
   baseUrl: string,
   requestType: ProviderConfig['type']
 ): string {
@@ -45,6 +51,77 @@ function normalizeProviderBaseUrl(
     return trimmed.replace(/\/v1(?:\/messages)?$/i, '')
   }
   return trimmed
+}
+
+function mergeRequestOverrides(
+  ...overrides: (RequestOverrides | undefined)[]
+): RequestOverrides | undefined {
+  const merged: RequestOverrides = {}
+  let hasHeaders = false
+  let hasBody = false
+  let hasOmitKeys = false
+
+  for (const override of overrides) {
+    if (!override) continue
+
+    if (override.headers) {
+      merged.headers = { ...(merged.headers ?? {}), ...override.headers }
+      hasHeaders = true
+    }
+
+    if (override.body) {
+      merged.body = { ...(merged.body ?? {}), ...override.body }
+      hasBody = true
+    }
+
+    if (override.omitBodyKeys?.length) {
+      const existing = new Set(merged.omitBodyKeys ?? [])
+      for (const key of override.omitBodyKeys) {
+        if (key) existing.add(key)
+      }
+      merged.omitBodyKeys = Array.from(existing)
+      hasOmitKeys = merged.omitBodyKeys.length > 0
+    }
+  }
+
+  return hasHeaders || hasBody || hasOmitKeys ? merged : undefined
+}
+
+function usesGpt5Model(modelId?: string): boolean {
+  if (!modelId) return false
+  const normalized = modelId.split('/').pop() ?? modelId
+  return /^gpt-5/i.test(normalized)
+}
+
+function ensureTemperatureOmit(
+  overrides: RequestOverrides | undefined,
+  modelId?: string
+): RequestOverrides | undefined {
+  if (!usesGpt5Model(modelId)) {
+    return overrides
+  }
+
+  const omitBodyKeys = new Set(overrides?.omitBodyKeys ?? [])
+  omitBodyKeys.add('temperature')
+
+  const result: RequestOverrides = {}
+  if (overrides?.headers) {
+    result.headers = overrides.headers
+  }
+  if (overrides?.body) {
+    result.body = overrides.body
+  }
+  result.omitBodyKeys = Array.from(omitBodyKeys)
+  return result
+}
+
+function buildRequestOverrides(
+  providerOverrides: RequestOverrides | undefined,
+  modelOverrides: RequestOverrides | undefined,
+  modelId?: string
+): RequestOverrides | undefined {
+  const merged = mergeRequestOverrides(providerOverrides, modelOverrides)
+  return ensureTemperatureOmit(merged, modelId)
 }
 
 function mergeBuiltinModels(
@@ -315,6 +392,11 @@ export const useProviderStore = create<ProviderStore>()(
         const normalizedBaseUrl = provider.baseUrl
           ? normalizeProviderBaseUrl(provider.baseUrl, requestType)
           : undefined
+        const requestOverrides = buildRequestOverrides(
+          provider.requestOverrides,
+          activeModel?.requestOverrides,
+          activeModel?.id ?? activeModelId
+        )
         return {
           type: requestType,
           apiKey: provider.apiKey,
@@ -328,7 +410,7 @@ export const useProviderStore = create<ProviderStore>()(
           enablePromptCache: activeModel?.enablePromptCache,
           enableSystemPromptCache: activeModel?.enableSystemPromptCache,
           ...(provider.userAgent ? { userAgent: provider.userAgent } : {}),
-          ...(provider.requestOverrides ? { requestOverrides: provider.requestOverrides } : {}),
+          ...(requestOverrides ? { requestOverrides } : {}),
           ...(provider.instructionsPrompt ? { instructionsPrompt: provider.instructionsPrompt } : {}),
         }
       },
@@ -374,6 +456,11 @@ export const useProviderStore = create<ProviderStore>()(
         const normalizedBaseUrl = provider.baseUrl
           ? normalizeProviderBaseUrl(provider.baseUrl, requestType)
           : undefined
+        const requestOverrides = buildRequestOverrides(
+          provider.requestOverrides,
+          model?.requestOverrides,
+          model?.id ?? modelId
+        )
         return {
           type: requestType,
           apiKey: provider.apiKey,
@@ -387,7 +474,7 @@ export const useProviderStore = create<ProviderStore>()(
           enablePromptCache: model?.enablePromptCache,
           enableSystemPromptCache: model?.enableSystemPromptCache,
           ...(provider.userAgent ? { userAgent: provider.userAgent } : {}),
-          ...(provider.requestOverrides ? { requestOverrides: provider.requestOverrides } : {}),
+          ...(requestOverrides ? { requestOverrides } : {}),
           ...(provider.instructionsPrompt ? { instructionsPrompt: provider.instructionsPrompt } : {}),
         }
       },
@@ -403,6 +490,11 @@ export const useProviderStore = create<ProviderStore>()(
         const normalizedBaseUrl = provider.baseUrl
           ? normalizeProviderBaseUrl(provider.baseUrl, requestType)
           : undefined
+        const requestOverrides = buildRequestOverrides(
+          provider.requestOverrides,
+          fastModel?.requestOverrides,
+          fastModel?.id ?? model
+        )
         return {
           type: requestType,
           apiKey: provider.apiKey,
@@ -416,7 +508,7 @@ export const useProviderStore = create<ProviderStore>()(
           enablePromptCache: fastModel?.enablePromptCache,
           enableSystemPromptCache: fastModel?.enableSystemPromptCache,
           ...(provider.userAgent ? { userAgent: provider.userAgent } : {}),
-          ...(provider.requestOverrides ? { requestOverrides: provider.requestOverrides } : {}),
+          ...(requestOverrides ? { requestOverrides } : {}),
           ...(provider.instructionsPrompt ? { instructionsPrompt: provider.instructionsPrompt } : {}),
         }
       },

@@ -255,6 +255,8 @@ export interface AIModelConfig {
   enablePromptCache?: boolean
   /** Anthropic: enable system prompt caching */
   enableSystemPromptCache?: boolean
+  /** Optional request overrides applied only to this model */
+  requestOverrides?: RequestOverrides
 }
 
 export interface RequestOverrides {

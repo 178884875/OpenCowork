@@ -97,6 +97,32 @@ function GeneralPanel(): React.JSX.Element {
   const sessions = useChatStore((s) => s.sessions)
   const clearAllSessions = useChatStore((s) => s.clearAllSessions)
 
+  const fontOptions = [
+    { label: t('general.appearance.fontSystem'), value: '__default__' },
+    {
+      label: 'Inter',
+      value: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif"
+    },
+    {
+      label: 'Segoe UI',
+      value: "'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif"
+    },
+    {
+      label: 'Noto Sans',
+      value: "'Noto Sans', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif"
+    },
+    {
+      label: 'Source Sans 3',
+      value: "'Source Sans 3', system-ui, -apple-system, 'Segoe UI', sans-serif"
+    },
+    {
+      label: 'Monospace',
+      value: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace"
+    },
+  ]
+
+  const clampFontSize = (value: number): number => Math.min(20, Math.max(12, value))
+
   const checkForUpdates = useCallback(async () => {
     setCheckingUpdate(true)
     setUpdateError(null)
@@ -323,6 +349,98 @@ function GeneralPanel(): React.JSX.Element {
         </Select>
       </section>
 
+      {/* Appearance */}
+      <section className="space-y-4">
+        <div>
+          <label className="text-sm font-medium">{t('general.appearance.title')}</label>
+          <p className="text-xs text-muted-foreground">{t('general.appearance.subtitle')}</p>
+        </div>
+
+        <div className="space-y-2">
+          <div>
+            <label className="text-xs font-medium">{t('general.appearance.background')}</label>
+            <p className="text-xs text-muted-foreground">{t('general.appearance.backgroundDesc')}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              type="color"
+              value={settings.backgroundColor || '#111111'}
+              onChange={(e) => settings.updateSettings({ backgroundColor: e.target.value })}
+              className="h-8 w-12 cursor-pointer p-1"
+            />
+            <Input
+              type="text"
+              value={settings.backgroundColor}
+              onChange={(e) => settings.updateSettings({ backgroundColor: e.target.value.trim() })}
+              placeholder={t('general.appearance.backgroundPlaceholder')}
+              className="max-w-40 text-xs"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => settings.updateSettings({ backgroundColor: '' })}
+            >
+              {t('general.appearance.reset')}
+            </Button>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div>
+            <label className="text-xs font-medium">{t('general.appearance.font')}</label>
+            <p className="text-xs text-muted-foreground">{t('general.appearance.fontDesc')}</p>
+          </div>
+          <Select
+            value={settings.fontFamily || '__default__'}
+            onValueChange={(value) =>
+              settings.updateSettings({ fontFamily: value === '__default__' ? '' : value })
+            }
+          >
+            <SelectTrigger className="w-80 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {fontOptions.map((option) => (
+                <SelectItem key={option.label} value={option.value} className="text-xs">
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between max-w-lg">
+            <div>
+              <label className="text-xs font-medium">{t('general.appearance.fontSize')}</label>
+              <p className="text-xs text-muted-foreground">{t('general.appearance.fontSizeDesc')}</p>
+            </div>
+            <span className="text-xs text-muted-foreground">{settings.fontSize}px</span>
+          </div>
+          <Slider
+            value={[settings.fontSize]}
+            onValueChange={([value]) => settings.updateSettings({ fontSize: clampFontSize(value) })}
+            min={12}
+            max={20}
+            step={1}
+            className="max-w-lg"
+          />
+          <Input
+            type="number"
+            min={12}
+            max={20}
+            value={settings.fontSize}
+            onChange={(e) => {
+              const next = clampFontSize(parseInt(e.target.value, 10) || 16)
+              settings.updateSettings({ fontSize: next })
+            }}
+            className="max-w-32 text-xs"
+          />
+        </div>
+      </section>
+
       <Separator />
 
       {/* Language */}
@@ -535,6 +653,9 @@ function GeneralPanel(): React.JSX.Element {
               temperature: 0.7,
               systemPrompt: '',
               theme: 'system',
+              backgroundColor: '',
+              fontFamily: '',
+              fontSize: 16,
               apiKey: currentKey
             })
             setTheme('system')

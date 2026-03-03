@@ -89,9 +89,34 @@ function upsertGlobalMemoryReminder(sessionId: string, snapshot: GlobalMemorySna
 
 function App(): React.JSX.Element {
   const theme = useSettingsStore((s) => s.theme)
+  const backgroundColor = useSettingsStore((s) => s.backgroundColor)
+  const fontFamily = useSettingsStore((s) => s.fontFamily)
+  const fontSize = useSettingsStore((s) => s.fontSize)
 
   // Initialize plugin auto-reply agent loop listener
   usePluginAutoReply()
+
+  useEffect(() => {
+    const root = document.documentElement
+
+    if (backgroundColor && backgroundColor.trim()) {
+      root.style.setProperty('--app-background', backgroundColor.trim())
+    } else {
+      root.style.removeProperty('--app-background')
+    }
+
+    if (fontFamily && fontFamily.trim()) {
+      root.style.setProperty('--app-font-family', fontFamily.trim())
+    } else {
+      root.style.removeProperty('--app-font-family')
+    }
+
+    if (typeof fontSize === 'number' && Number.isFinite(fontSize)) {
+      root.style.setProperty('--app-font-size', `${fontSize}px`)
+    } else {
+      root.style.removeProperty('--app-font-size')
+    }
+  }, [backgroundColor, fontFamily, fontSize])
 
   // Load sessions and plans from SQLite on startup
   useEffect(() => {

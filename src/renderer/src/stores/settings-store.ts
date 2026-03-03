@@ -28,6 +28,11 @@ interface SettingsStore {
   userName: string
   userAvatar: string
 
+  // Appearance Settings
+  backgroundColor: string
+  fontFamily: string
+  fontSize: number
+
   // Web Search Settings
   webSearchEnabled: boolean
   webSearchProvider: 'tavily' | 'searxng' | 'exa' | 'exa-mcp' | 'bocha' | 'zhipu' | 'google' | 'bing' | 'baidu'
@@ -65,6 +70,11 @@ export const useSettingsStore = create<SettingsStore>()(
       userName: '',
       userAvatar: '',
 
+      // Appearance Settings
+      backgroundColor: '',
+      fontFamily: '',
+      fontSize: 16,
+
       // Web Search Settings
       webSearchEnabled: false,
       webSearchProvider: 'tavily',
@@ -81,7 +91,7 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: 'opencowork-settings',
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => ipcStorage),
       migrate: (persisted: unknown, version: number) => {
         const state = persisted as Record<string, unknown>
@@ -101,6 +111,16 @@ export const useSettingsStore = create<SettingsStore>()(
         if (state.skillsMarketProvider === undefined || state.skillsMarketProvider !== 'skillsmp') {
           state.skillsMarketProvider = 'skillsmp'
           state.skillsMarketApiKey = state.skillsMarketApiKey ?? ''
+        }
+        // Add appearance settings if missing
+        if (state.backgroundColor === undefined) {
+          state.backgroundColor = ''
+        }
+        if (state.fontFamily === undefined) {
+          state.fontFamily = ''
+        }
+        if (state.fontSize === undefined || typeof state.fontSize !== 'number') {
+          state.fontSize = 16
         }
         return state as unknown as SettingsStore
       },
@@ -122,6 +142,10 @@ export const useSettingsStore = create<SettingsStore>()(
         contextCompressionEnabled: state.contextCompressionEnabled,
         userName: state.userName,
         userAvatar: state.userAvatar,
+        // Appearance Settings
+        backgroundColor: state.backgroundColor,
+        fontFamily: state.fontFamily,
+        fontSize: state.fontSize,
         // Web Search Settings
         webSearchEnabled: state.webSearchEnabled,
         webSearchProvider: state.webSearchProvider,

@@ -89,6 +89,10 @@
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
   --radius: 0.625rem;
+  --app-background: var(--background);
+  --app-font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu,
+    Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  --app-font-size: 16px;
 }
 
 .dark {
@@ -130,8 +134,13 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    font-size: var(--app-font-size);
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background: var(--app-background);
+    font-family: var(--app-font-family);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }

@@ -1,7 +1,20 @@
 # Changelog
 
 All notable changes to **OpenCowork** will be documented in this file.
-The format is based on [Keep a Changelog](https://keepachangelog.com/).
+The format is based on [Keep a Changelog](https://keepachangelog.com).
+
+## [0.3.7] - 2026-03-04
+
+### Added
+- **Manual OAuth JSON input for provider configuration** — new interface allowing users to manually input OAuth JSON data for custom provider setups, enhancing flexibility for advanced authentication scenarios.
+- **Manual OAuth token input UI for Codex provider settings** — dedicated UI components for entering OAuth tokens directly in the Codex provider configuration panel, simplifying authentication setup.
+- **Background color, font family and size customization settings** — comprehensive UI customization options in settings panel allowing users to personalize the application's visual appearance with custom background colors, font families, and font sizes.
+
+### Changed
+- **UI panels cleanup** — refined and streamlined various UI panels for improved consistency, removing clutter and enhancing overall user experience.
+
+### Fixed
+- **SSH authentication error handling and validation** — improved robustness in SSH connection workflows with better error messages, validation checks, and handling of authentication failures to provide clearer feedback to users.
 
 ## [0.3.6] - 2026-03-03
 

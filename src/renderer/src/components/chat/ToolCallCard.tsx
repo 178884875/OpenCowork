@@ -506,10 +506,10 @@ function GrepOutputBlock({
       return null
     }
   }, [output])
-  if (!parsed || !Array.isArray(parsed)) return <OutputBlock output={output} />
 
-  // Group by file
+  // Group by file - must be called before early return to maintain hook order
   const groups = React.useMemo(() => {
+    if (!parsed || !Array.isArray(parsed)) return []
     const map = new Map<string, Array<{ line: number; text: string }>>()
     for (const r of parsed) {
       const list = map.get(r.file) ?? []
@@ -518,6 +518,8 @@ function GrepOutputBlock({
     }
     return Array.from(map.entries())
   }, [parsed])
+
+  if (!parsed || !Array.isArray(parsed)) return <OutputBlock output={output} />
 
   return (
     <div>

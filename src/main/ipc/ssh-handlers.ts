@@ -431,9 +431,15 @@ function buildConnectConfig(connection: SshConfigConnection): ConnectConfig {
     readyTimeout: 30000
   }
 
-  if (connection.authType === 'password' && connection.password) {
+  if (connection.authType === 'password') {
+    if (!connection.password) {
+      throw new Error('Password is required for password authentication')
+    }
     config.password = connection.password
-  } else if (connection.authType === 'privateKey' && connection.privateKeyPath) {
+  } else if (connection.authType === 'privateKey') {
+    if (!connection.privateKeyPath) {
+      throw new Error('Private key path is required for private key authentication')
+    }
     try {
       config.privateKey = fs.readFileSync(connection.privateKeyPath, 'utf-8')
     } catch (err) {
@@ -447,6 +453,8 @@ function buildConnectConfig(connection: SshConfigConnection): ConnectConfig {
       process.platform === 'win32'
         ? '\\\\.\\pipe\\openssh-ssh-agent'
         : process.env.SSH_AUTH_SOCK || undefined
+  } else {
+    throw new Error(`Unsupported authentication type: ${connection.authType}`)
   }
 
   return config
@@ -1485,15 +1493,32 @@ export function registerSshHandlers(): void {
           .on('error', (err) => {
             clearTimeout(connectTimeout)
             session.status = 'error'
-            session.error = err.message
+            // Provide more user-friendly error messages
+            let errorMessage = err.message
+            if (errorMessage.includes('All configured authentication methods failed')) {
+              if (connection.authType === 'password') {
+                errorMessage = 'Password authentication failed. Please check your password.'
+              } else if (connection.authType === 'privateKey') {
+                errorMessage = 'Private key authentication failed. Please check your key file and passphrase.'
+              } else if (connection.authType === 'agent') {
+                errorMessage = 'SSH agent authentication failed. Please check your SSH agent is running.'
+              }
+            } else if (errorMessage.includes('ECONNREFUSED')) {
+              errorMessage = 'Connection refused. Please check the host and port.'
+            } else if (errorMessage.includes('ETIMEDOUT') || errorMessage.includes('timeout')) {
+              errorMessage = 'Connection timeout. Please check the host is reachable.'
+            } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('getaddrinfo')) {
+              errorMessage = 'Host not found. Please check the hostname or IP address.'
+            }
+            session.error = errorMessage
             sshSessions.delete(sessionId)
             broadcastToRenderer('ssh:status', {
               sessionId,
               connectionId: args.connectionId,
               status: 'error',
-              error: err.message
+              error: errorMessage
             })
-            resolve({ error: err.message })
+            resolve({ error: errorMessage })
           })
           .on('close', () => {
             if (session.status === 'connected' || session.status === 'connecting') {

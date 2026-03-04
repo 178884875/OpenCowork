@@ -39,7 +39,7 @@
     "sshConnections": "SSH 连接",
     "noSshConnections": "暂无 SSH 连接",
     "sshDirectory": "远程目录",
-    "sshDirectoryPlaceholder": "~/workspace",
+    "sshDirectoryPlaceholder": "",
     "sshSelect": "选择",
     "sshConnected": "已连接"
   },

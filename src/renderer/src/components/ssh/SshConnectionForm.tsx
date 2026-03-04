@@ -145,34 +145,48 @@ export function SshConnectionForm({
 
     setSaving(true)
     try {
-      const data = {
-        name: name.trim(),
-        host: host.trim(),
-        port: parseInt(port, 10) || 22,
-        username: username.trim(),
-        authType,
-        password: password || undefined,
-        privateKeyPath: privateKeyPath || undefined,
-        passphrase: passphrase || undefined,
-        groupId: groupId === '__none__' ? undefined : groupId,
-        defaultDirectory: defaultDirectory || undefined,
-        startupCommand: startupCommand || undefined,
-        proxyJump: proxyJump || undefined,
-        keepAliveInterval: parseInt(keepAliveInterval, 10) || 60
-      }
-
       if (isEditing) {
-        await useSshStore.getState().updateConnection(connection.id, {
-          ...data,
+        const updateData: Record<string, unknown> = {
+          name: name.trim(),
+          host: host.trim(),
+          port: parseInt(port, 10) || 22,
+          username: username.trim(),
+          authType,
           groupId: groupId === '__none__' ? null : groupId,
-          password: password || null,
-          privateKeyPath: privateKeyPath || null,
-          passphrase: passphrase || null,
           defaultDirectory: defaultDirectory || null,
           startupCommand: startupCommand || null,
-          proxyJump: proxyJump || null
-        })
+          proxyJump: proxyJump || null,
+          keepAliveInterval: parseInt(keepAliveInterval, 10) || 60
+        }
+
+        // Only update password/privateKey/passphrase if they were changed
+        if (password) {
+          updateData.password = password
+        }
+        if (privateKeyPath) {
+          updateData.privateKeyPath = privateKeyPath
+        }
+        if (passphrase) {
+          updateData.passphrase = passphrase
+        }
+
+        await useSshStore.getState().updateConnection(connection.id, updateData)
       } else {
+        const data = {
+          name: name.trim(),
+          host: host.trim(),
+          port: parseInt(port, 10) || 22,
+          username: username.trim(),
+          authType,
+          password: password || undefined,
+          privateKeyPath: privateKeyPath || undefined,
+          passphrase: passphrase || undefined,
+          groupId: groupId === '__none__' ? undefined : groupId,
+          defaultDirectory: defaultDirectory || undefined,
+          startupCommand: startupCommand || undefined,
+          proxyJump: proxyJump || undefined,
+          keepAliveInterval: parseInt(keepAliveInterval, 10) || 60
+        }
         await useSshStore.getState().createConnection(data)
       }
       onSaved()
@@ -354,7 +368,7 @@ export function SshConnectionForm({
               <Input
                 value={defaultDirectory}
                 onChange={(e) => setDefaultDirectory(e.target.value)}
-                placeholder="/home/username/workspace"
+                placeholder="/home/username/"
                 className="h-8 text-xs"
               />
               <p className="mt-1 text-[10px] text-muted-foreground/70">

@@ -29,6 +29,9 @@
   "groupCreated": "Group created",
   "groupDeleted": "Group deleted",
   "groupRenamed": "Group renamed",
+  "authError": "Authentication failed: {{error}}",
+  "passwordRequired": "Password is required for password authentication",
+  "privateKeyRequired": "Private key file is required for private key authentication",
   "form": {
     "name": "Connection Name",
     "namePlaceholder": "My Server",
@@ -57,7 +60,7 @@
     "group": "Group",
     "groupNone": "No group",
     "defaultDirectory": "Default Directory",
-    "defaultDirectoryPlaceholder": "~/workspace",
+    "defaultDirectoryPlaceholder": "",
     "defaultDirectoryHint": "Must use absolute path, ~ is not supported",
     "startupCommand": "Startup Command",
     "startupCommandPlaceholder": "Command to run after connect",

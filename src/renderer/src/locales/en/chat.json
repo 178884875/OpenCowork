@@ -39,7 +39,7 @@
     "sshConnections": "SSH Connections",
     "noSshConnections": "No SSH connections configured",
     "sshDirectory": "Remote directory",
-    "sshDirectoryPlaceholder": "~/workspace",
+    "sshDirectoryPlaceholder": "",
     "sshSelect": "Select",
     "sshConnected": "Connected"
   },

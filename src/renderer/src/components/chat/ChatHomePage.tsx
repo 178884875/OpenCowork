@@ -20,7 +20,7 @@ const modes: { value: AppMode; labelKey: string; icon: React.ReactNode }[] = [
   { value: 'cowork', labelKey: 'mode.cowork', icon: <Briefcase className="size-3.5" /> },
   { value: 'code', labelKey: 'mode.code', icon: <Code2 className="size-3.5" /> }
 ]
-const DEFAULT_SSH_WORKDIR = '~/workspace'
+const DEFAULT_SSH_WORKDIR = ''
 
 interface DesktopDirectoryOption {
   name: string

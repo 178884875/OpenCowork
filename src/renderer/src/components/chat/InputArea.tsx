@@ -929,11 +929,9 @@ export function InputArea({
         >
           {/* Top drag handle */}
           <div
-            className="flex items-center justify-center h-2.5 cursor-row-resize group hover:bg-muted/40 rounded-t-lg transition-colors"
+            className="h-1.5 cursor-row-resize rounded-t-lg"
             onMouseDown={handleDragStart}
-          >
-            <div className="w-8 h-0.5 rounded-full bg-border group-hover:bg-muted-foreground/40 transition-colors" />
-          </div>
+          />
           {/* Queued message list (while current run is processing) */}
           {queuedMessages.length > 0 && (
             <div className="px-3 pt-3 pb-1">

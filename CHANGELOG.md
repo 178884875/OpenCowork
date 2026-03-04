@@ -3,6 +3,21 @@
 All notable changes to **OpenCowork** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com).
 
+## [0.4.0] - 2026-03-04
+
+### Added
+- **Qwen 3.5 model catalog** — bundled `qwen_models.json` plus provider store wiring so Qwen3.5-35B-A3B, 27B, 122B-A10B, 397B-A17B, and Qwen3-32B variants ship with accurate pricing, context, and capability metadata.
+- **Image generation workflow** — OpenAI Images provider bridge, prompt optimizer, and renderer UX (model switcher, streaming loader, assistant message previews) enabling inline image creation, zoom, download, and clipboard copy during chats.
+- **Enhanced localization** — added i18n strings for the new image features, provider selectors, SSH terminal states, and layout chrome in both English and Chinese locales.
+
+### Changed
+- **Model switcher & input area** — redesigned selector with tiered grouping, descriptive badges, and better validation for multimodal/image choices; composer now handles image prompts, result hydration, and pause/resume behavior more gracefully.
+- **Provider + plugin settings** — refreshed panels with new icons, toggles, and default options to surface Qwen image support alongside existing providers.
+- **Plan panel & tools** — streamlined layout plus prompt optimizer hooks for richer summaries before dispatching autonomous plans.
+
+### Fixed
+- **General lint issues** — cleaned up unused imports and narrow type assertions uncovered while integrating the new UIs.
+
 ## [0.3.7] - 2026-03-04
 
 ### Added

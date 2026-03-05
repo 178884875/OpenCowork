@@ -32,7 +32,8 @@
       "Bash(test:*)",
       "Bash(git commit:*)",
       "Bash(git tag:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)"
     ]
   }
 }

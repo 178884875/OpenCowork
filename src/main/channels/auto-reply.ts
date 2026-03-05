@@ -4,17 +4,17 @@ import * as os from 'os'
 import * as fs from 'fs'
 import { nanoid } from 'nanoid'
 import { getDb } from '../db/database'
-import type { PluginEvent, PluginInstance, PluginIncomingMessageData } from './plugin-types'
-import type { PluginManager } from './plugin-manager'
+import type { ChannelEvent, ChannelInstance, ChannelIncomingMessageData } from './channel-types'
+import type { ChannelManager } from './channel-manager'
 import { tryHandleCommand } from './plugin-commands'
 
 const PLUGINS_WORK_DIR = path.join(os.homedir(), '.open-cowork', 'plugins')
 const PLUGINS_FILE = path.join(os.homedir(), '.open-cowork', 'plugins.json')
 
-let _pluginManager: PluginManager | null = null
+let _pluginManager: ChannelManager | null = null
 
 /** Must be called once at startup to wire the plugin manager */
-export function setPluginManager(pm: PluginManager): void {
+export function setPluginManager(pm: ChannelManager): void {
   _pluginManager = pm
 }
 
@@ -22,10 +22,10 @@ export function setPluginManager(pm: PluginManager): void {
  * Auto-reply pipeline: routes incoming plugin messages to per-user/per-group sessions
  * and notifies the renderer to trigger the Agent Loop for auto-reply.
  */
-export function handlePluginAutoReply(event: PluginEvent): void {
+export function handleChannelAutoReply(event: ChannelEvent): void {
   if (event.type !== 'incoming_message') return
 
-  const data = event.data as PluginIncomingMessageData
+  const data = event.data as ChannelIncomingMessageData
   if (!data || !data.chatId || (!data.content && !data.images?.length && !data.audio)) return
 
   const pluginId = event.pluginId
@@ -44,10 +44,10 @@ export function handlePluginAutoReply(event: PluginEvent): void {
     // Create new session if not found
     const pluginWorkDir = path.join(PLUGINS_WORK_DIR, pluginId)
     // Look up plugin instance to get bound provider/model
-    let pluginInstance: PluginInstance | undefined
+    let pluginInstance: ChannelInstance | undefined
     try {
       if (fs.existsSync(PLUGINS_FILE)) {
-        const plugins = JSON.parse(fs.readFileSync(PLUGINS_FILE, 'utf-8')) as PluginInstance[]
+        const plugins = JSON.parse(fs.readFileSync(PLUGINS_FILE, 'utf-8')) as ChannelInstance[]
         pluginInstance = plugins.find((p) => p.id === pluginId)
       }
     } catch { /* ignore read errors */ }

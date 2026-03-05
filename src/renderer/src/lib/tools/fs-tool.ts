@@ -71,17 +71,17 @@ function resolveToolPath(inputPath: unknown, workingFolder?: string): string {
 }
 
 function isPluginPathAllowed(
-  targetPath: string,
+  targetPath: string | undefined,
   ctx: ToolContext,
   mode: 'read' | 'write'
 ): boolean {
-  const perms = ctx.pluginPermissions
+  const perms = ctx.channelPermissions
   if (!perms) return true // No plugin context — defer to normal approval logic
 
   if (!targetPath) return mode === 'read'
   const normalized = normalizePath(targetPath)
   const normalizedWorkDir = ctx.workingFolder ? normalizePath(ctx.workingFolder) : ''
-  const normalizedHome = ctx.pluginHomedir ? normalizePath(ctx.pluginHomedir) : ''
+  const normalizedHome = ctx.channelHomedir ? normalizePath(ctx.channelHomedir) : ''
 
   // Always allow access within plugin working directory
   if (normalizedWorkDir && (normalized + '/').startsWith(normalizedWorkDir + '/')) return true
@@ -147,7 +147,7 @@ const readHandler: ToolHandler = {
   },
   requiresApproval: (input, ctx) => {
     // Plugin context: check read permission
-    if (ctx.pluginPermissions) {
+    if (ctx.channelPermissions) {
       const filePath = resolveToolPath(input.file_path, ctx.workingFolder)
       return !isPluginPathAllowed(filePath, ctx, 'read')
     }
@@ -199,7 +199,7 @@ const writeHandler: ToolHandler = {
   requiresApproval: (input, ctx) => {
     const filePath = resolveToolPath(input.file_path, ctx.workingFolder)
     // Plugin context: check write permission
-    if (ctx.pluginPermissions) {
+    if (ctx.channelPermissions) {
       return !isPluginPathAllowed(filePath, ctx, 'write')
     }
     // Normal sessions: writing outside working folder requires approval
@@ -283,7 +283,7 @@ const editHandler: ToolHandler = {
     if (isSsh(ctx)) return false // SSH sessions: trust working folder
     const filePath = resolveToolPath(input.file_path, ctx.workingFolder)
     // Plugin context: check write permission
-    if (ctx.pluginPermissions) {
+    if (ctx.channelPermissions) {
       return !isPluginPathAllowed(filePath, ctx, 'write')
     }
     if (!ctx.workingFolder) return true
@@ -323,7 +323,7 @@ const lsHandler: ToolHandler = {
     return JSON.stringify(result)
   },
   requiresApproval: (input, ctx) => {
-    if (ctx.pluginPermissions) {
+    if (ctx.channelPermissions) {
       const targetPath = resolveToolPath(input.path, ctx.workingFolder)
       return !isPluginPathAllowed(targetPath, ctx, 'read')
     }

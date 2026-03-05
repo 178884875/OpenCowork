@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useState, useCallback, useMemo, useEffect, useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -13,6 +13,7 @@ import { useTypewriter } from '@renderer/hooks/use-typewriter'
 import { Copy, Check, ChevronsDownUp, ChevronsUpDown, Bug, ImageDown } from 'lucide-react'
 import { FadeIn, ScaleIn } from '@renderer/components/animate-ui'
 import { ImageGeneratingLoader } from './ImageGeneratingLoader'
+import { ImageGenerationErrorCard } from './ImageGenerationErrorCard'
 import { ImagePreview } from './ImagePreview'
 import { useChatStore } from '@renderer/stores/chat-store'
 import type {
@@ -214,7 +215,7 @@ function MermaidImageCopyButton({ svg }: { svg: string }): React.JSX.Element {
 function MermaidCodeBlock({ code }: { code: string }): React.JSX.Element {
   const [svg, setSvg] = useState('')
   const [error, setError] = useState('')
-  const diagramKey = useMemo(() => Math.random().toString(36).slice(2), [])
+  const diagramKey = useId().replace(/[^a-zA-Z0-9_-]/g, '')
   const themeVersion = useMermaidThemeVersion()
 
   useEffect(() => {
@@ -834,6 +835,14 @@ export function AssistantMessage({
                 return (
                   <ScaleIn key={item.index} className="w-full origin-left">
                     <ImagePreview src={imgSrc} alt="Generated image" />
+                  </ScaleIn>
+                )
+              }
+              case 'image_error': {
+                const imageError = block as Extract<ContentBlock, { type: 'image_error' }>
+                return (
+                  <ScaleIn key={item.index} className="w-full origin-left">
+                    <ImageGenerationErrorCard code={imageError.code} message={imageError.message} />
                   </ScaleIn>
                 )
               }

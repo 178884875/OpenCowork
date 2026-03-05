@@ -1,5 +1,6 @@
 import type {
   APIProvider,
+  ImageErrorCode,
   ProviderConfig,
   StreamEvent,
   ToolDefinition,
@@ -7,8 +8,34 @@ import type {
   ContentBlock,
   ImageBlock,
 } from './types'
-import { generateImagesFromText, editImageWithPrompt, type Base64ImageInput } from './openai-images'
+import {
+  generateImagesFromText,
+  editImageWithPrompt,
+  OpenAIImagesRequestError,
+  type Base64ImageInput,
+} from './openai-images'
 import { registerProvider } from './provider'
+
+function normalizeImageProviderError(error: unknown): { code: ImageErrorCode; message: string } {
+  if (error instanceof OpenAIImagesRequestError) {
+    return {
+      code: error.code,
+      message: error.message
+    }
+  }
+
+  if (error instanceof TypeError) {
+    return {
+      code: 'network',
+      message: `Network request failed while generating image. ${error.message}`
+    }
+  }
+
+  return {
+    code: 'unknown',
+    message: error instanceof Error ? error.message : String(error)
+  }
+}
 
 class OpenAIImagesProvider implements APIProvider {
   readonly name = 'OpenAI Images'
@@ -111,31 +138,39 @@ class OpenAIImagesProvider implements APIProvider {
         },
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      console.error('[OpenAI Images Provider] Error:', errorMessage, error)
+      const normalizedError = normalizeImageProviderError(error)
+      console.error('[OpenAI Images Provider] Error:', normalizedError.message, error)
 
-      // Yield error event
+      // Yield a structured image error so UI can render a friendly card
       yield {
-        type: 'error',
-        error: {
-          type: 'api_error',
-          message: errorMessage,
+        type: 'image_error',
+        imageError: {
+          code: normalizedError.code,
+          message: normalizedError.message
+        }
+      }
+
+      const requestCompletedAt = Date.now()
+      yield {
+        type: 'message_end',
+        stopReason: 'error',
+        timing: {
+          totalMs: requestCompletedAt - requestStartedAt,
+          ttftMs: requestCompletedAt - requestStartedAt,
         },
       }
 
-      // Also yield a text delta with the error so it appears in the chat
-      yield {
-        type: 'text_delta',
-        text: `\n\n❌ **Image generation failed:**\n${errorMessage}\n`
-      }
+      return
     }
   }
 
-  formatMessages(_messages: UnifiedMessage[]): unknown {
+  formatMessages(messages: UnifiedMessage[]): unknown {
+    void messages
     return []
   }
 
-  formatTools(_tools: ToolDefinition[]): unknown {
+  formatTools(tools: ToolDefinition[]): unknown {
+    void tools
     return []
   }
 }

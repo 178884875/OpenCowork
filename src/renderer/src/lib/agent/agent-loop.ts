@@ -157,6 +157,18 @@ export async function* runAgentLoop(
               }
               break
 
+            case 'image_error':
+              streamedContent = true
+              if (event.imageError) {
+                assistantContentBlocks.push({
+                  type: 'image_error',
+                  code: event.imageError.code,
+                  message: event.imageError.message,
+                })
+                yield { type: 'image_error', imageError: event.imageError }
+              }
+              break
+
             case 'tool_call_start':
               streamedContent = true
               currentToolId = event.toolCallId!

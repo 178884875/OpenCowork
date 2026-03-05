@@ -197,7 +197,7 @@ const bashHandler: ToolHandler = {
   },
   requiresApproval: (_input, ctx) => {
     // Plugin context: respect allowShell permission
-    if (ctx.pluginPermissions) return !ctx.pluginPermissions.allowShell
+    if (ctx.channelPermissions) return !ctx.channelPermissions.allowShell
     return true // Normal sessions: always require approval
   },
 }

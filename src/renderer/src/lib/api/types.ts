@@ -40,6 +40,14 @@ export interface ImageBlock {
   source: { type: 'base64' | 'url'; mediaType?: string; data?: string; url?: string }
 }
 
+export type ImageErrorCode = 'timeout' | 'network' | 'request_aborted' | 'api_error' | 'unknown'
+
+export interface ImageErrorBlock {
+  type: 'image_error'
+  code: ImageErrorCode
+  message: string
+}
+
 export interface ToolUseBlock {
   type: 'tool_use'
   id: string
@@ -67,7 +75,13 @@ export interface ThinkingBlock {
   completedAt?: number
 }
 
-export type ContentBlock = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock | ThinkingBlock
+export type ContentBlock =
+  | TextBlock
+  | ImageBlock
+  | ImageErrorBlock
+  | ToolUseBlock
+  | ToolResultBlock
+  | ThinkingBlock
 
 // --- Messages ---
 
@@ -101,6 +115,7 @@ export type StreamEventType =
   | 'tool_call_delta'
   | 'tool_call_end'
   | 'image_generated'
+  | 'image_error'
   | 'message_end'
   | 'error'
   | 'request_debug'
@@ -116,6 +131,7 @@ export interface StreamEvent {
   argumentsDelta?: string
   toolCallInput?: Record<string, unknown>
   imageBlock?: ImageBlock
+  imageError?: { code: ImageErrorCode; message: string }
   stopReason?: string
   usage?: TokenUsage
   timing?: RequestTiming

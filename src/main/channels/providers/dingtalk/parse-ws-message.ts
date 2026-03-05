@@ -1,10 +1,10 @@
-import type { PluginIncomingMessageData } from '../../plugin-types'
+import type { ChannelIncomingMessageData } from '../../channel-types'
 
 /**
  * Parse a DingTalk WebSocket message frame into normalized data.
  * Supports DingTalk Stream mode callback format and simple JSON envelope.
  */
-export function parseDingTalkWsMessage(raw: string): PluginIncomingMessageData | null {
+export function parseDingTalkWsMessage(raw: string): ChannelIncomingMessageData | null {
   try {
     const data = JSON.parse(raw)
 

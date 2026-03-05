@@ -67,7 +67,7 @@ All communication between processes uses typed IPC channels defined in `src/rend
 All stores in `stores/` use Zustand with Immer middleware. Key stores:
 - `chat-store`: Sessions and messages. Persists to SQLite via fire-and-forget IPC calls.
 - `agent-store`: Agent loop runtime state — streaming text, tool calls, approval flow, sub-agent tracking. Persisted to IPC storage.
-- `plugin-store`: Plugin instances, statuses, incoming message events.
+- `channel-store`: Channel instances, statuses, incoming message events.
 - `settings-store`: User preferences (theme, language, model, API keys).
 - `provider-store`: AI provider configurations (Anthropic, OpenAI-chat, OpenAI-responses).
 - `task-store`, `plan-store`, `team-store`, `cron-store`, `mcp-store`, `ui-store`, `notify-store`.

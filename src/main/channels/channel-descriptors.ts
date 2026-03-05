@@ -1,9 +1,9 @@
-import type { PluginProviderDescriptor } from './plugin-types'
+import type { ChannelProviderDescriptor } from './channel-types'
 
 /** Optional WS relay URL — only for platforms without native WS support */
 const wsRelayField = {
   key: 'wsUrl',
-  label: 'plugin.wsUrl',
+  label: 'channel.wsUrl',
   type: 'text' as const,
   required: false,
   placeholder: 'wss://your-relay-server/ws',
@@ -34,8 +34,8 @@ const FEISHU_PLUGIN_TOOLS = [
   'FeishuBitableDeleteRecords',
 ]
 
-/** Built-in plugin provider descriptors */
-export const PLUGIN_PROVIDERS: PluginProviderDescriptor[] = [
+/** Built-in channel provider descriptors */
+export const CHANNEL_PROVIDERS: ChannelProviderDescriptor[] = [
   // ── China ──
   {
     type: 'feishu-bot',
@@ -47,14 +47,14 @@ export const PLUGIN_PROVIDERS: PluginProviderDescriptor[] = [
     configSchema: [
       {
         key: 'appId',
-        label: 'plugin.feishu.appId',
+        label: 'channel.feishu.appId',
         type: 'text',
         required: true,
         placeholder: 'cli_xxxxx',
       },
       {
         key: 'appSecret',
-        label: 'plugin.feishu.appSecret',
+        label: 'channel.feishu.appSecret',
         type: 'secret',
         required: true,
       },
@@ -70,19 +70,19 @@ export const PLUGIN_PROVIDERS: PluginProviderDescriptor[] = [
     configSchema: [
       {
         key: 'appKey',
-        label: 'plugin.dingtalk.appKey',
+        label: 'channel.dingtalk.appKey',
         type: 'text',
         required: true,
       },
       {
         key: 'appSecret',
-        label: 'plugin.dingtalk.appSecret',
+        label: 'channel.dingtalk.appSecret',
         type: 'secret',
         required: true,
       },
       {
         key: 'cardTemplateId',
-        label: 'plugin.dingtalk.cardTemplateId',
+        label: 'channel.dingtalk.cardTemplateId',
         type: 'text',
         required: false,
         placeholder: 'AI streaming card template ID (optional)',
@@ -99,19 +99,19 @@ export const PLUGIN_PROVIDERS: PluginProviderDescriptor[] = [
     configSchema: [
       {
         key: 'corpId',
-        label: 'plugin.wecom.corpId',
+        label: 'channel.wecom.corpId',
         type: 'text',
         required: true,
       },
       {
         key: 'secret',
-        label: 'plugin.wecom.secret',
+        label: 'channel.wecom.secret',
         type: 'secret',
         required: true,
       },
       {
         key: 'agentId',
-        label: 'plugin.wecom.agentId',
+        label: 'channel.wecom.agentId',
         type: 'text',
         required: true,
       },
@@ -129,7 +129,7 @@ export const PLUGIN_PROVIDERS: PluginProviderDescriptor[] = [
     configSchema: [
       {
         key: 'botToken',
-        label: 'plugin.telegram.botToken',
+        label: 'channel.telegram.botToken',
         type: 'secret',
         required: true,
       },
@@ -146,7 +146,7 @@ export const PLUGIN_PROVIDERS: PluginProviderDescriptor[] = [
     configSchema: [
       {
         key: 'botToken',
-        label: 'plugin.discord.botToken',
+        label: 'channel.discord.botToken',
         type: 'secret',
         required: true,
       },
@@ -162,13 +162,13 @@ export const PLUGIN_PROVIDERS: PluginProviderDescriptor[] = [
     configSchema: [
       {
         key: 'phoneNumberId',
-        label: 'plugin.whatsapp.phoneNumberId',
+        label: 'channel.whatsapp.phoneNumberId',
         type: 'text',
         required: true,
       },
       {
         key: 'accessToken',
-        label: 'plugin.whatsapp.accessToken',
+        label: 'channel.whatsapp.accessToken',
         type: 'secret',
         required: true,
       },

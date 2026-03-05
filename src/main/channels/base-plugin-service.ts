@@ -1,11 +1,11 @@
 import type {
-  MessagingPluginService,
-  PluginInstance,
-  PluginEvent,
-  PluginMessage,
-  PluginGroup,
-  WsMessageParser,
-} from './plugin-types'
+  MessagingChannelService,
+  ChannelInstance,
+  ChannelEvent,
+  ChannelMessage,
+  ChannelGroup,
+  ChannelWsMessageParser,
+} from './channel-types'
 import { WebSocketTransport } from './ws-transport'
 
 /**
@@ -13,33 +13,33 @@ import { WebSocketTransport } from './ws-transport'
  * Handles WebSocket lifecycle, parser wiring, and event emission.
  * Subclasses implement API methods and provide a message parser.
  */
-export abstract class BasePluginService implements MessagingPluginService {
+export abstract class BasePluginService implements MessagingChannelService {
   readonly pluginId: string
   abstract readonly pluginType: string
 
-  protected _instance: PluginInstance
-  private _notify: (event: PluginEvent) => void
+  protected _instance: ChannelInstance
+  private _notify: (event: ChannelEvent) => void
   private ws: WebSocketTransport | null = null
   private _running = false
-  private _parser: WsMessageParser | null = null
+  private _parser: ChannelWsMessageParser | null = null
 
-  constructor(instance: PluginInstance, notify: (event: PluginEvent) => void) {
+  constructor(instance: ChannelInstance, notify: (event: ChannelEvent) => void) {
     this._instance = instance
     this._notify = notify
     this.pluginId = instance.id
   }
 
-  get instance(): PluginInstance {
+  get instance(): ChannelInstance {
     return this._instance
   }
 
   /** Set the WS message parser (called by PluginManager before start) */
-  setParser(parser: WsMessageParser): void {
+  setParser(parser: ChannelWsMessageParser): void {
     this._parser = parser
   }
 
   /** Emit a plugin event to the renderer */
-  protected emit(event: PluginEvent): void {
+  protected emit(event: ChannelEvent): void {
     this._notify(event)
   }
 
@@ -149,6 +149,6 @@ export abstract class BasePluginService implements MessagingPluginService {
 
   abstract sendMessage(chatId: string, content: string): Promise<{ messageId: string }>
   abstract replyMessage(messageId: string, content: string): Promise<{ messageId: string }>
-  abstract getGroupMessages(chatId: string, count?: number): Promise<PluginMessage[]>
-  abstract listGroups(): Promise<PluginGroup[]>
+  abstract getGroupMessages(chatId: string, count?: number): Promise<ChannelMessage[]>
+  abstract listGroups(): Promise<ChannelGroup[]>
 }

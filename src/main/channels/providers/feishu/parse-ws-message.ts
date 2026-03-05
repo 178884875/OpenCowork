@@ -1,11 +1,11 @@
-import type { PluginIncomingMessageData } from '../../plugin-types'
+import type { ChannelIncomingMessageData } from '../../channel-types'
 
 /**
  * Parse a Feishu WebSocket message frame into normalized data.
  * Supports both Feishu event subscription format (im.message.receive_v1)
  * and a simple JSON envelope format from WS relay servers.
  */
-export function parseFeishuWsMessage(raw: string): PluginIncomingMessageData | null {
+export function parseFeishuWsMessage(raw: string): ChannelIncomingMessageData | null {
   try {
     const data = JSON.parse(raw)
 

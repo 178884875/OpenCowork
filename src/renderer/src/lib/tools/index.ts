@@ -48,7 +48,7 @@ export async function registerAllTools(): Promise<void> {
   // Agent Team tools
   registerTeamTools()
 
-  // Plugin tools are registered/unregistered dynamically via plugin-store toggle
+  // Plugin tools are registered/unregistered dynamically via channel-store toggle
   // They are NOT registered here — see plugin-tools.ts registerPluginTools/unregisterPluginTools
 }
 

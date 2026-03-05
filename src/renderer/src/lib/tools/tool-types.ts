@@ -1,5 +1,5 @@
 import type { ToolDefinition, ToolResultContent } from '../api/types'
-import type { PluginPermissions } from '../plugins/types'
+import type { PluginPermissions as ChannelPermissions } from '../channel/types'
 
 // --- Tool Context ---
 
@@ -25,11 +25,10 @@ export interface ToolContext {
   /** Mutable shared state bag — survives { ...toolCtx } spread copies in agent-loop.
    *  Used for per-run flags like deliveryUsed that must persist across tool calls. */
   sharedState?: { deliveryUsed?: boolean }
-  /** Plugin security permissions — when set, tools use these to self-manage approval.
-   *  Avoids the need for forceApproval + external approvalFn. */
-  pluginPermissions?: PluginPermissions
-  /** Home directory path — used by plugin permission checks for path-based access control */
-  pluginHomedir?: string
+  /** Channel security permissions for tool approval checks. */
+  channelPermissions?: ChannelPermissions
+  /** Channel working home dir for path-based access control */
+  channelHomedir?: string
 }
 
 export interface IPCClient {

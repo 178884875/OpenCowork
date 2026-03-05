@@ -13,7 +13,7 @@ import { useSshStore } from './stores/ssh-store'
 import { registerAllTools, updateWebSearchToolRegistration } from './lib/tools'
 import { registerAllProviders } from './lib/api'
 import { registerAllViewers } from './lib/preview/register-viewers'
-import { initPluginEventListener } from './stores/plugin-store'
+import { initChannelEventListener } from './stores/channel-store'
 import { usePluginAutoReply } from './hooks/use-plugin-auto-reply'
 import { toast } from 'sonner'
 import i18n from './locales'
@@ -41,8 +41,8 @@ initProviderStore()
 // Register tools (async because SubAgents are loaded from .md files via IPC)
 registerAllTools().catch((err) => console.error('[App] Failed to register tools:', err))
 
-// Initialize plugin incoming event listener
-initPluginEventListener()
+// Initialize channel incoming event listener
+initChannelEventListener()
 
 const GLOBAL_MEMORY_REMINDER_MARKER = '[global-memory-update]'
 const globalMemoryVersionBySession = new Map<string, number>()

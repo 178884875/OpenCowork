@@ -1,20 +1,20 @@
 import { toolRegistry } from '../agent/tool-registry'
 import type { ToolHandler, ToolContext } from '../tools/tool-types'
 import { IPC } from '../ipc/channels'
-import { usePluginStore } from '@renderer/stores/plugin-store'
+import { useChannelStore } from '@renderer/stores/channel-store'
 
 // ── 5 Unified Plugin Tools ──
 // All provider-agnostic — route via plugin_id to the correct backend service
 
 function isPluginToolEnabled(pluginId: string, toolName: string): boolean {
-  const plugin = usePluginStore.getState().plugins.find((p) => p.id === pluginId)
-  if (!plugin?.tools) return true
-  const enabled = plugin.tools[toolName]
+  const channel = useChannelStore.getState().channels.find((p) => p.id === pluginId)
+  if (!channel?.tools) return true
+  const enabled = channel.tools[toolName]
   return enabled !== false
 }
 
 function toolDisabledError(toolName: string): string {
-  return JSON.stringify({ error: `Tool "${toolName}" is disabled for this plugin.` })
+  return JSON.stringify({ error: `Tool "${toolName}" is disabled for this channel.` })
 }
 
 async function execPlugin(
@@ -25,7 +25,7 @@ async function execPlugin(
   toolName: string
 ): Promise<string> {
   if (!pluginId || typeof pluginId !== 'string') {
-    return JSON.stringify({ error: 'Missing or invalid plugin_id. Check the active plugins list.' })
+    return JSON.stringify({ error: 'Missing or invalid plugin_id. Check the active channels list.' })
   }
   if (!isPluginToolEnabled(pluginId, toolName)) {
     return toolDisabledError(toolName)
@@ -43,11 +43,11 @@ const pluginSendMessage: ToolHandler = {
   definition: {
     name: 'PluginSendMessage',
     description:
-      'Send a message to a chat/group via a messaging plugin (Feishu, DingTalk, etc.). Requires approval.',
+      'Send a message to a chat/group via a messaging channel (Feishu, DingTalk, etc.). Requires approval.',
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The plugin instance ID to use' },
+        plugin_id: { type: 'string', description: 'The channel instance ID to use' },
         chat_id: { type: 'string', description: 'The chat/group ID to send the message to' },
         content: { type: 'string', description: 'The message content to send' },
       },
@@ -83,11 +83,11 @@ const pluginReplyMessage: ToolHandler = {
   definition: {
     name: 'PluginReplyMessage',
     description:
-      'Reply to a specific message via a messaging plugin. Requires approval.',
+      'Reply to a specific message via a messaging channel. Requires approval.',
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The plugin instance ID to use' },
+        plugin_id: { type: 'string', description: 'The channel instance ID to use' },
         message_id: { type: 'string', description: 'The message ID to reply to' },
         content: { type: 'string', description: 'The reply content' },
       },
@@ -109,11 +109,11 @@ const pluginReplyMessage: ToolHandler = {
 const pluginGetGroupMessages: ToolHandler = {
   definition: {
     name: 'PluginGetGroupMessages',
-    description: 'Get recent messages from a chat/group via a messaging plugin.',
+    description: 'Get recent messages from a chat/group via a messaging channel.',
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The plugin instance ID to use' },
+        plugin_id: { type: 'string', description: 'The channel instance ID to use' },
         chat_id: { type: 'string', description: 'The chat/group ID to get messages from' },
         count: { type: 'number', description: 'Number of messages to retrieve (default 20)' },
       },
@@ -134,11 +134,11 @@ const pluginGetGroupMessages: ToolHandler = {
 const pluginListGroups: ToolHandler = {
   definition: {
     name: 'PluginListGroups',
-    description: 'List all available groups/chats for a messaging plugin.',
+    description: 'List all available groups/chats for a messaging channel.',
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The plugin instance ID to use' },
+        plugin_id: { type: 'string', description: 'The channel instance ID to use' },
       },
       required: ['plugin_id'],
     },
@@ -156,7 +156,7 @@ const pluginSummarizeGroup: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The plugin instance ID to use' },
+        plugin_id: { type: 'string', description: 'The channel instance ID to use' },
         chat_id: { type: 'string', description: 'The chat/group ID to summarize' },
         count: {
           type: 'number',
@@ -180,11 +180,11 @@ const pluginSummarizeGroup: ToolHandler = {
 const pluginGetCurrentChatMessages: ToolHandler = {
   definition: {
     name: 'PluginGetCurrentChatMessages',
-    description: 'Get recent messages from the current plugin chat session.',
+    description: 'Get recent messages from the current channel chat session.',
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The plugin instance ID to use (optional, defaults to current)' },
+        plugin_id: { type: 'string', description: 'The channel instance ID to use (optional, defaults to current)' },
         chat_id: { type: 'string', description: 'The chat/group ID to read (optional, defaults to current)' },
         count: { type: 'number', description: 'Number of messages to retrieve (default 20)' },
       },
@@ -195,7 +195,7 @@ const pluginGetCurrentChatMessages: ToolHandler = {
     const pluginId = typeof input.plugin_id === 'string' ? input.plugin_id : ctx.pluginId
     const chatId = typeof input.chat_id === 'string' ? input.chat_id : ctx.pluginChatId
     if (!pluginId || !chatId) {
-      return JSON.stringify({ error: 'Missing plugin_id or chat_id. Ensure you are in a plugin chat session.' })
+      return JSON.stringify({ error: 'Missing plugin_id or chat_id. Ensure you are in a channel chat session.' })
     }
     if (!isPluginToolEnabled(pluginId, 'PluginGetCurrentChatMessages')) {
       return toolDisabledError('PluginGetCurrentChatMessages')
@@ -204,7 +204,7 @@ const pluginGetCurrentChatMessages: ToolHandler = {
       const composite = `plugin:${pluginId}:chat:${chatId}`
       const session = await ctx.ipc.invoke(IPC.PLUGIN_SESSIONS_FIND_BY_CHAT, composite) as { id?: string } | null
       if (!session?.id) {
-        return JSON.stringify({ error: 'Plugin session not found for this chat.' })
+        return JSON.stringify({ error: 'Channel session not found for this chat.' })
       }
       const rows = await ctx.ipc.invoke(IPC.PLUGIN_SESSIONS_MESSAGES, {
         sessionId: session.id,
@@ -213,7 +213,7 @@ const pluginGetCurrentChatMessages: ToolHandler = {
       return JSON.stringify({ sessionId: session.id, messages: rows })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      return JSON.stringify({ error: `Failed to load plugin chat messages: ${msg}` })
+      return JSON.stringify({ error: `Failed to load channel chat messages: ${msg}` })
     }
   },
 }
@@ -228,7 +228,7 @@ const feishuSendImage: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         chat_id: { type: 'string', description: 'The Feishu chat ID to send the image to' },
         file_path: { type: 'string', description: 'Absolute local file path OR an HTTP/HTTPS URL pointing to the image' },
       },
@@ -258,7 +258,7 @@ const feishuSendFile: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         chat_id: { type: 'string', description: 'The Feishu chat ID to send the file to' },
         file_path: { type: 'string', description: 'Absolute local file path OR an HTTP/HTTPS URL pointing to the file' },
         file_type: {
@@ -293,7 +293,7 @@ const feishuListChatMembers: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         chat_id: { type: 'string', description: 'The Feishu chat ID (optional, defaults to current)' },
         page_size: { type: 'number', description: 'Page size (1-50, default 50)' },
         page_token: { type: 'string', description: 'Pagination token' },
@@ -312,7 +312,7 @@ const feishuListChatMembers: ToolHandler = {
     }
     const chatId = (input.chat_id as string | undefined) ?? ctx.pluginChatId
     if (!chatId) {
-      return JSON.stringify({ error: 'Missing chat_id. Ensure you are in a plugin chat session.' })
+      return JSON.stringify({ error: 'Missing chat_id. Ensure you are in a channel chat session.' })
     }
     const result = await ctx.ipc.invoke(IPC.PLUGIN_FEISHU_LIST_MEMBERS, {
       pluginId: input.plugin_id,
@@ -332,7 +332,7 @@ const feishuAtMember: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         chat_id: { type: 'string', description: 'The Feishu chat ID (optional, defaults to current)' },
         user_ids: { type: 'array', items: { type: 'string' }, description: 'User IDs to mention' },
         at_all: { type: 'boolean', description: 'Mention all members' },
@@ -366,7 +366,7 @@ const feishuSendUrgent: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         message_id: { type: 'string', description: 'Target message_id for urgent push' },
         user_ids: { type: 'array', items: { type: 'string' }, description: 'User IDs to notify' },
         urgent_types: {
@@ -401,7 +401,7 @@ const feishuBitableListApps: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
       },
       required: ['plugin_id'],
     },
@@ -424,7 +424,7 @@ const feishuBitableListTables: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         app_token: { type: 'string', description: 'Bitable app token' },
       },
       required: ['plugin_id', 'app_token'],
@@ -449,7 +449,7 @@ const feishuBitableListFields: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         app_token: { type: 'string', description: 'Bitable app token' },
         table_id: { type: 'string', description: 'Bitable table ID' },
       },
@@ -476,7 +476,7 @@ const feishuBitableGetRecords: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         app_token: { type: 'string', description: 'Bitable app token' },
         table_id: { type: 'string', description: 'Bitable table ID' },
         filter: { type: 'string', description: 'Optional filter formula' },
@@ -509,7 +509,7 @@ const feishuBitableCreateRecords: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         app_token: { type: 'string', description: 'Bitable app token' },
         table_id: { type: 'string', description: 'Bitable table ID' },
         records: {
@@ -542,7 +542,7 @@ const feishuBitableUpdateRecords: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         app_token: { type: 'string', description: 'Bitable app token' },
         table_id: { type: 'string', description: 'Bitable table ID' },
         records: {
@@ -575,7 +575,7 @@ const feishuBitableDeleteRecords: ToolHandler = {
     inputSchema: {
       type: 'object',
       properties: {
-        plugin_id: { type: 'string', description: 'The Feishu plugin instance ID' },
+        plugin_id: { type: 'string', description: 'The Feishu channel instance ID' },
         app_token: { type: 'string', description: 'Bitable app token' },
         table_id: { type: 'string', description: 'Bitable table ID' },
         record_ids: { type: 'array', items: { type: 'string' }, description: 'Record IDs to delete' },

@@ -18,13 +18,13 @@ import { buildSystemPrompt } from '@renderer/lib/agent/system-prompt'
 import { useSettingsStore } from '@renderer/stores/settings-store'
 import { useProviderStore } from '@renderer/stores/provider-store'
 import { ensureProviderAuthReady } from '@renderer/lib/auth/provider-auth'
-import { usePluginStore } from '@renderer/stores/plugin-store'
+import { useChannelStore } from '@renderer/stores/channel-store'
 import { useChatStore } from '@renderer/stores/chat-store'
 import { useAgentStore } from '@renderer/stores/agent-store'
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
 import { IPC } from '@renderer/lib/ipc/channels'
-import { registerPluginTools, isPluginToolsRegistered } from '@renderer/lib/plugins/plugin-tools'
-import { DEFAULT_PLUGIN_PERMISSIONS } from '@renderer/lib/plugins/types'
+import { registerPluginTools, isPluginToolsRegistered } from '@renderer/lib/channel/plugin-tools'
+import { DEFAULT_PLUGIN_PERMISSIONS } from '@renderer/lib/channel/types'
 import {
   joinFsPath,
   loadOptionalMemoryFile,
@@ -59,20 +59,20 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
   const { sessionId, pluginId, pluginType, chatId, supportsStreaming } = task
 
   // ── Check feature toggles ──
-  const pluginMeta = usePluginStore.getState().plugins.find((p) => p.id === pluginId)
-  const features = pluginMeta?.features ?? { autoReply: true, streamingReply: true, autoStart: true }
-  const pluginTypeFromStore = (pluginMeta?.type ?? '').toLowerCase()
+  const channelMeta = useChannelStore.getState().channels.find((p) => p.id === pluginId)
+  const features = channelMeta?.features ?? { autoReply: true, streamingReply: true, autoStart: true }
+  const channelTypeFromStore = (channelMeta?.type ?? '').toLowerCase()
   const pluginTypeFromTask = (pluginType ?? '').toLowerCase()
-  const isFeishuPlugin = pluginTypeFromStore === 'feishu-bot'
+  const isFeishuChannel = channelTypeFromStore === 'feishu-bot'
     || pluginTypeFromTask === 'feishu-bot'
-    || pluginTypeFromStore === 'feishu'
+    || channelTypeFromStore === 'feishu'
     || pluginTypeFromTask === 'feishu'
   if (!features.autoReply) {
     console.log(`[PluginAutoReply] Auto-reply disabled for plugin ${pluginId}, skipping`)
     return
   }
 
-  const sendPluginNotice = async (message: string): Promise<void> => {
+  const sendChannelNotice = async (message: string): Promise<void> => {
     try {
       await ipcClient.invoke(IPC.PLUGIN_EXEC, {
         pluginId,
@@ -84,49 +84,49 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
     }
   }
 
-  // ── Provider config (with per-plugin model override) ──
+  // ── Provider config (with per-channel model override) ──
   const providerStore = useProviderStore.getState()
-  const targetProviderId = pluginMeta?.providerId ?? providerStore.activeProviderId
+  const targetProviderId = channelMeta?.providerId ?? providerStore.activeProviderId
   if (targetProviderId) {
     const ready = await ensureProviderAuthReady(targetProviderId)
     if (!ready) {
       console.error('[PluginAutoReply] Provider auth missing')
-      await sendPluginNotice('未配置或未完成认证的模型服务商，请在设置中完成配置后再试。')
+      await sendChannelNotice('未配置或未完成认证的模型服务商，请在设置中完成配置后再试。')
       return
     }
   }
 
-  const providerConfig = getProviderConfig(pluginMeta?.providerId, pluginMeta?.model)
+  const providerConfig = getProviderConfig(channelMeta?.providerId, channelMeta?.model)
   if (!providerConfig) {
     console.error('[PluginAutoReply] No provider config — API key not configured')
-    await sendPluginNotice('未配置模型服务商或 API Key，请在设置中完成配置后再试。')
+    await sendChannelNotice('未配置模型服务商或 API Key，请在设置中完成配置后再试。')
     return
   }
 
   const supportsVision = resolveModelSupportsVision(
-    pluginMeta?.providerId ?? providerStore.activeProviderId,
-    pluginMeta?.model ?? providerConfig.model
+    channelMeta?.providerId ?? providerStore.activeProviderId,
+    channelMeta?.model ?? providerConfig.model
   )
 
   let effectiveContent = task.content
 
-  if (task.audio && isFeishuPlugin) {
+  if (task.audio && isFeishuChannel) {
     const speechProviderId = providerStore.activeSpeechProviderId
     const speechModelId = providerStore.activeSpeechModelId
     if (!speechProviderId || !speechModelId) {
-      await sendPluginNotice('已收到语音消息，但未配置语音识别模型。请在 设置 → 模型 → 语音识别模型 中选择后再试。')
+      await sendChannelNotice('已收到语音消息，但未配置语音识别模型。请在 设置 → 模型 → 语音识别模型 中选择后再试。')
       return
     }
 
     const ready = await ensureProviderAuthReady(speechProviderId)
     if (!ready) {
-      await sendPluginNotice('语音识别服务商认证未完成，请在 设置 → 模型 中完成认证后再试。')
+      await sendChannelNotice('语音识别服务商认证未完成，请在 设置 → 模型 中完成认证后再试。')
       return
     }
 
     const openAiConfig = resolveOpenAiProviderConfig(speechProviderId, speechModelId)
     if (!openAiConfig) {
-      await sendPluginNotice('语音识别需要 OpenAI 兼容服务商。请在 设置 → 模型 → 语音识别模型 中选择 OpenAI 兼容模型后再试。')
+      await sendChannelNotice('语音识别需要 OpenAI 兼容服务商。请在 设置 → 模型 → 语音识别模型 中选择 OpenAI 兼容模型后再试。')
       return
     }
 
@@ -139,7 +139,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
       }) as { ok?: boolean; base64?: string; mediaType?: string; error?: string }
 
       if (!download?.base64 || download.error) {
-        await sendPluginNotice(`语音下载失败：${download?.error ?? 'unknown error'}`)
+        await sendChannelNotice(`语音下载失败：${download?.error ?? 'unknown error'}`)
         return
       }
 
@@ -162,7 +162,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
         : '[语音已转写，但内容为空]'
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      await sendPluginNotice(`语音转写失败：${msg}`)
+      await sendChannelNotice(`语音转写失败：${msg}`)
       return
     }
   } else if (task.audio) {
@@ -170,7 +170,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
       pluginId,
       messageId: task.messageId,
       pluginTypeFromTask: pluginType,
-      pluginTypeFromStore: pluginMeta?.type,
+      pluginTypeFromStore: channelMeta?.type,
     })
   }
 
@@ -188,7 +188,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
   }
 
   // ── Resolve permissions & homedir for security enforcement ──
-  const permissions = pluginMeta?.permissions ?? DEFAULT_PLUGIN_PERMISSIONS
+  const permissions = channelMeta?.permissions ?? DEFAULT_PLUGIN_PERMISSIONS
   let homedir = ''
   try {
     homedir = (await ipcClient.invoke('app:homedir')) as string
@@ -201,7 +201,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
   // Instead of calling loadFromDb() (which reloads ALL sessions and can hang),
   // check if it exists and create it in the store if missing.
   // workingFolder is passed directly from main process in the task payload
-  const pluginWorkDir: string = (task as { workingFolder?: string }).workingFolder ?? ''
+  const channelWorkDir: string = (task as { workingFolder?: string }).workingFolder ?? ''
 
   const resolvedTitle = task.sessionTitle || task.chatName || task.senderName || task.chatId
 
@@ -220,11 +220,11 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
           messagesLoaded: true,
           createdAt: Date.now(),
           updatedAt: Date.now(),
-          workingFolder: r.working_folder || pluginWorkDir,
+          workingFolder: r.working_folder || channelWorkDir,
           pluginId,
           externalChatId: `plugin:${pluginId}:chat:${task.chatId}`,
-          providerId: r.provider_id || pluginMeta?.providerId || undefined,
-          modelId: r.model_id || pluginMeta?.model || undefined,
+          providerId: r.provider_id || channelMeta?.providerId || undefined,
+          modelId: r.model_id || channelMeta?.model || undefined,
         }
         useChatStore.setState((state) => {
           state.sessions.push(newSession)
@@ -246,11 +246,11 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
       messagesLoaded: true,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      workingFolder: pluginWorkDir,
+      workingFolder: channelWorkDir,
       pluginId,
       externalChatId: `plugin:${pluginId}:chat:${task.chatId}`,
-      providerId: pluginMeta?.providerId || undefined,
-      modelId: pluginMeta?.model || undefined,
+      providerId: channelMeta?.providerId || undefined,
+      modelId: channelMeta?.model || undefined,
     }
     useChatStore.setState((state) => {
       state.sessions.push(newSession)
@@ -287,52 +287,52 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
   // ── Build tools (same as main agent's cowork branch) ──
   const allToolDefs = toolRegistry.getDefinitions()
 
-  // ── Build system prompt with plugin context ──
+  // ── Build system prompt with channel context ──
   const settings = useSettingsStore.getState()
   let userPrompt = settings.systemPrompt || ''
 
-  // Inject active plugin metadata
-  const activePlugins = usePluginStore.getState().getActivePlugins()
-  if (activePlugins.length > 0) {
-    const pluginLines: string[] = ['\n## Active Plugins']
-    for (const p of activePlugins) {
-      pluginLines.push(`- **${p.name}** (plugin_id: \`${p.id}\`, type: ${p.type})`)
-      if (p.userSystemPrompt?.trim()) {
-        pluginLines.push(`  Plugin instructions: ${p.userSystemPrompt.trim()}`)
+  // Inject active channel metadata
+  const activeChannels = useChannelStore.getState().getActiveChannels()
+  if (activeChannels.length > 0) {
+    const channelLines: string[] = ['\n## Active Channels']
+    for (const c of activeChannels) {
+      channelLines.push(`- **${c.name}** (channel_id: \`${c.id}\`, type: ${c.type})`)
+      if (c.userSystemPrompt?.trim()) {
+        channelLines.push(`  Channel instructions: ${c.userSystemPrompt.trim()}`)
       }
-      const desc = usePluginStore.getState().getDescriptor(p.type)
+      const desc = useChannelStore.getState().getDescriptor(c.type)
       const toolNames = desc?.tools ?? []
       if (toolNames.length > 0) {
-        const enabled = toolNames.filter((name) => p.tools?.[name] !== false)
-        const disabled = toolNames.filter((name) => p.tools?.[name] === false)
-        pluginLines.push(`  Enabled tools: ${enabled.length > 0 ? enabled.join(', ') : 'none'}`)
+        const enabled = toolNames.filter((name) => c.tools?.[name] !== false)
+        const disabled = toolNames.filter((name) => c.tools?.[name] === false)
+        channelLines.push(`  Enabled tools: ${enabled.length > 0 ? enabled.join(', ') : 'none'}`)
         if (disabled.length > 0) {
-          pluginLines.push(`  Disabled tools: ${disabled.join(', ')}`)
+          channelLines.push(`  Disabled tools: ${disabled.join(', ')}`)
         }
       }
     }
-    pluginLines.push('', 'Use the plugin_id parameter when calling Plugin* tools.')
-    userPrompt = userPrompt ? `${userPrompt}\n${pluginLines.join('\n')}` : pluginLines.join('\n')
+    channelLines.push('', 'Use the channel_id value as plugin_id when calling Plugin* tools.')
+    userPrompt = userPrompt ? `${userPrompt}\n${channelLines.join('\n')}` : channelLines.join('\n')
   }
 
-  // Inject plugin session auto-reply context
-  // (pluginMeta already resolved above from usePluginStore)
-  const isFeishu = isFeishuPlugin
+  // Inject channel session auto-reply context
+  // (channelMeta already resolved above from useChannelStore)
+  const isFeishu = isFeishuChannel
 
-  const pluginDescriptor = pluginMeta ? usePluginStore.getState().getDescriptor(pluginMeta.type) : undefined
-  const pluginToolNames = pluginDescriptor?.tools ?? []
-  const enabledTools = pluginToolNames.filter((name) => pluginMeta?.tools?.[name] !== false)
-  const disabledTools = pluginToolNames.filter((name) => pluginMeta?.tools?.[name] === false)
+  const channelDescriptor = channelMeta ? useChannelStore.getState().getDescriptor(channelMeta.type) : undefined
+  const channelToolNames = channelDescriptor?.tools ?? []
+  const enabledTools = channelToolNames.filter((name) => channelMeta?.tools?.[name] !== false)
+  const disabledTools = channelToolNames.filter((name) => channelMeta?.tools?.[name] === false)
 
-  const pluginCtx = [
-    `\n## Plugin Auto-Reply Context`,
-    `This session is handling messages from plugin **${pluginMeta?.name ?? pluginType}** (plugin_id: \`${pluginId}\`).`,
+  const channelCtx = [
+    `\n## Channel Auto-Reply Context`,
+    `This session is handling messages from channel **${channelMeta?.name ?? pluginType}** (channel_id: \`${pluginId}\`).`,
     `Chat ID: \`${chatId}\``,
     `Chat Type: ${task.chatType ?? 'unknown'}`,
     `Sender: ${task.senderName || task.senderId} (id: ${task.senderId})`,
     `Enabled tools: ${enabledTools.length > 0 ? enabledTools.join(', ') : 'none'}`,
     disabledTools.length > 0 ? `Disabled tools: ${disabledTools.join(', ')}` : '',
-    `Your response will be streamed directly to the user in real-time via the plugin.`,
+    `Your response will be streamed directly to the user in real-time via the channel.`,
     `Just respond naturally — the streaming pipeline handles delivery automatically.`,
     `If you need to send an additional message, use PluginSendMessage with plugin_id="${pluginId}" and chat_id="${chatId}".`,
 
@@ -359,9 +359,9 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
       `For @mentions, fetch member open_id via **FeishuListChatMembers** and call **FeishuAtMember** (plain '@' text will not mention).`,
       `Always prefer sending files over pasting long content in messages.`,
     ].join('\n') : '',
-    pluginMeta?.userSystemPrompt?.trim() ? `\nPlugin-specific instructions: ${pluginMeta.userSystemPrompt.trim()}` : '',
+    channelMeta?.userSystemPrompt?.trim() ? `\nChannel-specific instructions: ${channelMeta.userSystemPrompt.trim()}` : '',
   ].filter(Boolean).join('\n')
-  userPrompt = userPrompt ? `${userPrompt}\n${pluginCtx}` : pluginCtx
+  userPrompt = userPrompt ? `${userPrompt}\n${channelCtx}` : channelCtx
 
   // Load AGENTS.md memory file from working directory
   let agentsMemory: string | undefined
@@ -457,8 +457,8 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
     pluginChatType: task.chatType,
     pluginSenderId: task.senderId,
     pluginSenderName: task.senderName,
-    pluginPermissions: permissions,
-    pluginHomedir: homedir,
+    channelPermissions: permissions,
+    channelHomedir: homedir,
   }
 
   // ── Run Agent Loop ──
@@ -655,7 +655,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
   }
 
   if (!streamingActive && !fullText.trim()) {
-    await sendPluginNotice(fallbackMessage)
+    await sendChannelNotice(fallbackMessage)
   }
 
   // Non-streaming fallback: send the final text via plugin sendMessage

@@ -1,10 +1,10 @@
-import type { PluginIncomingMessageData } from '../../plugin-types'
+import type { ChannelIncomingMessageData } from '../../channel-types'
 
 /**
  * Parse a WeCom (企业微信) WebSocket message frame into normalized data.
  * Supports WeCom callback event format and simple JSON envelope.
  */
-export function parseWeComWsMessage(raw: string): PluginIncomingMessageData | null {
+export function parseWeComWsMessage(raw: string): ChannelIncomingMessageData | null {
   try {
     const data = JSON.parse(raw)
 

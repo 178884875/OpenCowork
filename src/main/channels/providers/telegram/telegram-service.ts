@@ -1,10 +1,10 @@
 import type {
-  PluginInstance,
-  PluginEvent,
-  PluginMessage,
-  PluginGroup,
-  MessagingPluginService,
-} from '../../plugin-types'
+  ChannelInstance,
+  ChannelEvent,
+  ChannelMessage,
+  ChannelGroup,
+  MessagingChannelService,
+} from '../../channel-types'
 import { BasePluginService } from '../../base-plugin-service'
 import { TelegramApi } from './telegram-api'
 
@@ -31,20 +31,20 @@ export class TelegramService extends BasePluginService {
     return this.api.sendMessage('', content)
   }
 
-  async getGroupMessages(_chatId: string, _count?: number): Promise<PluginMessage[]> {
+  async getGroupMessages(_chatId: string, _count?: number): Promise<ChannelMessage[]> {
     // Telegram Bot API doesn't support fetching message history
     return []
   }
 
-  async listGroups(): Promise<PluginGroup[]> {
+  async listGroups(): Promise<ChannelGroup[]> {
     // Telegram Bot API doesn't support listing groups
     return []
   }
 }
 
 export function createTelegramService(
-  instance: PluginInstance,
-  notify: (event: PluginEvent) => void
-): MessagingPluginService {
+  instance: ChannelInstance,
+  notify: (event: ChannelEvent) => void
+): MessagingChannelService {
   return new TelegramService(instance, notify)
 }

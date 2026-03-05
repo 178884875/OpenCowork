@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Settings, BrainCircuit, Info, Server, Puzzle, Cable, Loader2, Github, Sparkles, ShieldCheck, Layers, HardDriveDownload, HardDriveUpload, Trash2, Globe, Wand2, BookOpen, Save, RefreshCw } from 'lucide-react'
+import { Settings, BrainCircuit, Info, Server, MessageSquare, Cable, Loader2, Github, Sparkles, ShieldCheck, Layers, HardDriveDownload, HardDriveUpload, Trash2, Globe, Wand2, BookOpen, Save, RefreshCw } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { AnimatePresence } from 'motion/react'
 import { useUIStore, type SettingsTab } from '@renderer/stores/ui-store'
@@ -28,7 +28,7 @@ import {
 import { FadeIn, SlideIn } from '@renderer/components/animate-ui'
 import { useProviderStore } from '@renderer/stores/provider-store'
 import { ProviderPanel } from './ProviderPanel'
-import { PluginPanel } from './PluginPanel'
+import { ChannelPanel } from './PluginPanel'
 import { McpPanel } from './McpPanel'
 import { WebSearchPanel } from './WebSearchPanel'
 import { SkillsMarketPanel } from './SkillsMarketPanel'
@@ -72,7 +72,7 @@ const menuItemDefs: { id: SettingsTab; icon: React.ReactNode; labelKey: string; 
   { id: 'general', icon: <Settings className="size-4" />, labelKey: 'general.title', descKey: 'general.subtitle' },
   { id: 'memory', icon: <BookOpen className="size-4" />, labelKey: 'memory.title', descKey: 'memory.subtitle' },
   { id: 'provider', icon: <Server className="size-4" />, labelKey: 'provider.title', descKey: 'provider.subtitle' },
-  { id: 'plugin', icon: <Puzzle className="size-4" />, labelKey: 'plugin.title', descKey: 'plugin.subtitle' },
+  { id: 'channel', icon: <MessageSquare className="size-4" />, labelKey: 'channel.title', descKey: 'channel.subtitle' },
   { id: 'mcp', icon: <Cable className="size-4" />, labelKey: 'mcp.title', descKey: 'mcp.subtitle' },
   { id: 'model', icon: <BrainCircuit className="size-4" />, labelKey: 'model.title', descKey: 'model.subtitle' },
   { id: 'websearch', icon: <Globe className="size-4" />, labelKey: 'websearch.title', descKey: 'websearch.subtitle' },
@@ -1249,8 +1249,8 @@ function AboutPanel(): React.JSX.Element {
     },
     {
       icon: Layers,
-      title: t('about.featureCards.plugins.title'),
-      desc: t('about.featureCards.plugins.desc'),
+      title: t('about.featureCards.channels.title'),
+      desc: t('about.featureCards.channels.desc'),
     },
   ]
   return (
@@ -1334,7 +1334,7 @@ const panelMap: Record<SettingsTab, () => React.JSX.Element> = {
   general: GeneralPanel,
   memory: MemoryPanel,
   provider: ProviderPanel,
-  plugin: PluginPanel,
+  channel: ChannelPanel,
   mcp: McpPanel,
   model: ModelPanel,
   websearch: WebSearchPanel,
@@ -1396,7 +1396,7 @@ export function SettingsPage(): React.JSX.Element {
       <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden px-6 py-4">
         {/* Content */}
         <AnimatePresence mode="wait">
-          {settingsTab === 'provider' || settingsTab === 'plugin' || settingsTab === 'mcp' ? (
+          {settingsTab === 'provider' || settingsTab === 'channel' || settingsTab === 'mcp' ? (
             <div className="flex-1 min-h-0 min-w-0 overflow-hidden pb-4" key="full-panel">
               <SlideIn key={settingsTab} direction="right" duration={0.25} className="h-full">
                 <ActivePanel />

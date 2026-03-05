@@ -19,11 +19,11 @@ import { nanoid } from 'nanoid'
 import { runAgentLoop } from '../agent/agent-loop'
 import { toolRegistry } from '../agent/tool-registry'
 import { subAgentRegistry } from '../agent/sub-agents/registry'
-import { registerPluginTools, isPluginToolsRegistered } from '../plugins/plugin-tools'
+import { registerPluginTools, isPluginToolsRegistered } from '../channel/plugin-tools'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useProviderStore } from '../../stores/provider-store'
 import { ensureProviderAuthReady } from '../auth/provider-auth'
-import { usePluginStore } from '../../stores/plugin-store'
+import { useChannelStore } from '../../stores/channel-store'
 import { useCronStore } from '../../stores/cron-store'
 import { useChatStore } from '../../stores/chat-store'
 import { cronEvents } from './cron-events'
@@ -159,8 +159,8 @@ async function _runCronAgentAsync(
     deliveryMode: _deliveryMode = 'desktop',
     deliveryTarget,
     maxIterations: maxIter,
-    pluginId,
-    pluginChatId,
+    pluginId: channelsId,
+    pluginChatId: channelsChatId,
   } = options
 
   // Resolve source session config (model, provider, working folder)
@@ -170,11 +170,11 @@ async function _runCronAgentAsync(
   const effectiveModel = modelOverride || sourceSession?.modelId || null
   const effectiveWorkingFolder = workingFolder || sourceSession?.workingFolder || null
 
-  // Resolve provider config — use plugin's bound provider, then source session's, then global
+  // Resolve provider config — use channel's bound provider, then source session's, then global
   let resolvedProviderId: string | null = null
-  if (pluginId) {
-    const pluginMeta = usePluginStore.getState().plugins.find((p) => p.id === pluginId)
-    if (pluginMeta?.providerId) resolvedProviderId = pluginMeta.providerId
+  if (channelsId) {
+    const channelMeta = useChannelStore.getState().channels.find((p) => p.id === channelsId)
+    if (channelMeta?.providerId) resolvedProviderId = channelMeta.providerId
   }
   const effectiveProviderId = resolvedProviderId || sourceSession?.providerId || null
   if (effectiveProviderId) {
@@ -216,18 +216,18 @@ async function _runCronAgentAsync(
     ipc: ipcClient,
     currentToolUseId: undefined,
     callerAgent: agentName,
-    pluginId: pluginId ?? undefined,
-    pluginChatId: pluginChatId ?? undefined,
+    pluginId: channelsId ?? undefined,
+    pluginChatId: channelsChatId ?? undefined,
     sharedState: { deliveryUsed: false },
   }
 
-  // Always register plugin tools for cron agents
+  // Always register channel messaging tools (Plugin* compatibility toolset) for cron agents
   if (!isPluginToolsRegistered()) {
     registerPluginTools()
   }
 
-  // Build allowed tools — always include plugin tools
-  const PLUGIN_TOOL_NAMES = [
+  // Build allowed tools — always include channel messaging tools
+  const CHANNEL_TOOL_NAMES = [
     'PluginSendMessage',
     'PluginReplyMessage',
     'PluginGetGroupMessages',
@@ -248,7 +248,7 @@ async function _runCronAgentAsync(
     'FeishuBitableDeleteRecords',
   ]
   const allDefs = toolRegistry.getDefinitions()
-  const allowedSet = new Set([...definition.allowedTools, 'Notify', 'Skill', ...PLUGIN_TOOL_NAMES])
+  const allowedSet = new Set([...definition.allowedTools, 'Notify', 'Skill', ...CHANNEL_TOOL_NAMES])
   const innerTools = allDefs.filter((t) => allowedSet.has(t.name))
 
   // Build provider config with agent's system prompt
@@ -259,34 +259,34 @@ async function _runCronAgentAsync(
     temperature: definition.temperature ?? providerConfig.temperature,
   }
 
-  // Build plugin context for cron agent
-  let pluginInfo = ''
-  if (pluginId && pluginChatId) {
-    // This cron job was created from a plugin session — inject routing info
-    const pluginMeta = usePluginStore.getState().plugins.find((p) => p.id === pluginId)
-    const pluginName = pluginMeta?.name ?? pluginId
-    pluginInfo = `\n## Plugin Reply Channel\nThis cron job was created from plugin **${pluginName}** (plugin_id: \`${pluginId}\`).\nChat ID: \`${pluginChatId}\`\nWhen you have results to report, use **PluginSendMessage** with plugin_id="${pluginId}" and chat_id="${pluginChatId}" to send the results back to the user through the original plugin channel.\n`
+  // Build channel context for cron agent
+  let channelInfo = ''
+  if (channelsId && channelsChatId) {
+    // This cron job was created from a channel session — inject routing info
+    const channelMeta = useChannelStore.getState().channels.find((p) => p.id === channelsId)
+    const channelName = channelMeta?.name ?? channelsId
+    channelInfo = `\n## Channel Reply Routing\nThis cron job was created from channel **${channelName}** (channel_id: \`${channelsId}\`).\nChat ID: \`${channelsChatId}\`\nWhen you have results to report, use **PluginSendMessage** with plugin_id="${channelsId}" and chat_id="${channelsChatId}" to send the results back to the user through the original channel.\n`
   } else {
-    // List all configured plugins (not just active) for cron agents
-    const allPlugins = usePluginStore.getState().plugins
-    if (allPlugins.length > 0) {
-      const pluginLines = allPlugins.map((p) =>
-        `- **${p.name}** (plugin_id: \`${p.id}\`, type: ${p.type})`
+    // List all configured channels (not just active) for cron agents
+    const allChannels = useChannelStore.getState().channels
+    if (allChannels.length > 0) {
+      const channelLines = allChannels.map((c) =>
+        `- **${c.name}** (channel_id: \`${c.id}\`, type: ${c.type})`
       )
-      pluginInfo = `\n## Available Messaging Plugins\n${pluginLines.join('\n')}\nYou can send messages via these plugins using PluginSendMessage (requires plugin_id and chat_id).\nFor Feishu plugins, you can also use FeishuSendImage and FeishuSendFile to send media.\n`
+      channelInfo = `\n## Available Messaging Channels\n${channelLines.join('\n')}\nYou can send messages via these channels using PluginSendMessage (set plugin_id to channel_id, and include chat_id).\nFor Feishu channels, you can also use FeishuSendImage and FeishuSendFile to send media.\n`
     }
   }
 
-  // Build initial user message — delivery instructions depend on whether plugin context exists
-  const hasPluginChannel = !!(pluginId && pluginChatId)
-  const deliveryInstructions = hasPluginChannel
-    ? `When finished, use **PluginSendMessage** with plugin_id="${pluginId}" and chat_id="${pluginChatId}" to send a friendly summary back through the plugin channel. Do NOT use Notify or desktop notifications. Call PluginSendMessage EXACTLY ONCE as your very last action, then STOP.`
+  // Build initial user message — delivery instructions depend on whether channel routing exists
+  const hasChannelRouting = !!(channelsId && channelsChatId)
+  const deliveryInstructions = hasChannelRouting
+    ? `When finished, use **PluginSendMessage** with plugin_id="${channelsId}" and chat_id="${channelsChatId}" to send a friendly summary back through the channel. Do NOT use Notify or desktop notifications. Call PluginSendMessage EXACTLY ONCE as your very last action, then STOP.`
     : `When finished, call **Notify** EXACTLY ONCE with action="desktop" to send a friendly result summary. Do NOT call Notify more than once. Do NOT use action="session" or action="all". After calling Notify, STOP.`
 
   const cronContext = `You are a scheduled task assistant running cron job (ID: ${jobId}).
 Agent: ${agentName}
 ${deliveryTarget ? `Target session: ${deliveryTarget}` : ''}
-${pluginInfo}
+${channelInfo}
 ## Your Task
 ${prompt}
 

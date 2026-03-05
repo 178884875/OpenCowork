@@ -38,8 +38,8 @@ import type { AgentLoopConfig } from '@renderer/lib/agent/types'
 import { ApiStreamError } from '@renderer/lib/ipc/api-stream'
 import { compressMessages } from '@renderer/lib/agent/context-compression'
 import type { CompressionConfig } from '@renderer/lib/agent/context-compression'
-import { usePluginStore } from '@renderer/stores/plugin-store'
-import { registerPluginTools, unregisterPluginTools, isPluginToolsRegistered } from '@renderer/lib/plugins/plugin-tools'
+import { useChannelStore } from '@renderer/stores/channel-store'
+import { registerPluginTools, unregisterPluginTools, isPluginToolsRegistered } from '@renderer/lib/channel/plugin-tools'
 import { useMcpStore } from '@renderer/stores/mcp-store'
 import { registerMcpTools, unregisterMcpTools, isMcpToolsRegistered } from '@renderer/lib/mcp/mcp-tools'
 import {
@@ -566,7 +566,7 @@ export function useChatActions(): {
     }
 
     if (targetSessionId && !chatStore.sessions.some((s) => s.id === targetSessionId)) {
-      // Session may have been created externally (e.g. plugin auto-reply in main process).
+      // Session may have been created externally (e.g. channel auto-reply in main process).
       // Try reloading from DB before giving up.
       console.log(`[sendMessage] Session ${targetSessionId} not in store, reloading from DB...`)
       await useChatStore.getState().loadFromDb()
@@ -637,23 +637,23 @@ export function useChatActions(): {
 
     baseProviderConfig.sessionId = sessionId
 
-    // Override provider config for plugin sessions using latest plugin settings
+    // Override provider config for channel sessions using latest channel settings
     // Regular user sessions should use the global active provider/model from ModelSwitcher
     const sessionForProvider = useChatStore.getState().sessions.find((s) => s.id === sessionId)
     if (sessionForProvider?.pluginId) {
-      const pluginMeta = usePluginStore.getState().plugins.find((p) => p.id === sessionForProvider.pluginId)
-      const pluginProviderId = pluginMeta
-        ? (pluginMeta.providerId ?? null)
+      const channelMeta = useChannelStore.getState().channels.find((p) => p.id === sessionForProvider.pluginId)
+      const channelProviderId = channelMeta
+        ? (channelMeta.providerId ?? null)
         : (sessionForProvider.providerId ?? null)
-      let pluginModelId = pluginMeta
-        ? (pluginMeta.model ?? null)
+      let channelModelId = channelMeta
+        ? (channelMeta.model ?? null)
         : (sessionForProvider.modelId ?? null)
-      if (pluginProviderId && !pluginModelId) {
-        pluginModelId = resolveProviderDefaultModelId(pluginProviderId)
+      if (channelProviderId && !channelModelId) {
+        channelModelId = resolveProviderDefaultModelId(channelProviderId)
       }
 
-      if (pluginProviderId && pluginModelId) {
-        const ready = await ensureProviderAuthReady(pluginProviderId)
+      if (channelProviderId && channelModelId) {
+        const ready = await ensureProviderAuthReady(channelProviderId)
         if (!ready) {
           toast.error('Authentication required', {
             description: 'Please sign in to the session provider in Settings',
@@ -663,7 +663,7 @@ export function useChatActions(): {
         }
 
         const sessionProviderConfig = providerStore.getProviderConfigById(
-          pluginProviderId, pluginModelId
+          channelProviderId, channelModelId
         )
         if (sessionProviderConfig?.apiKey) {
           baseProviderConfig.type = sessionProviderConfig.type
@@ -764,6 +764,11 @@ export function useChatActions(): {
     chatStore.addMessage(sessionId, assistantMsg)
     chatStore.setStreamingMessageId(sessionId, assistantMsgId)
 
+    const isImageRequest = baseProviderConfig.type === 'openai-images'
+    if (isImageRequest) {
+      chatStore.setGeneratingImage(assistantMsgId, true)
+    }
+
     // Setup abort controller (per-session)
     // If this session already has a running agent, abort it first
     const existingAc = sessionAbortControllers.get(sessionId)
@@ -798,11 +803,11 @@ export function useChatActions(): {
       // Cowork / Code mode: agent loop with tools
       const session = useChatStore.getState().sessions.find((s) => s.id === sessionId)
 
-      // Dynamic plugin tool registration based on active plugins
-      const activePlugins = usePluginStore.getState().getActivePlugins()
-      if (activePlugins.length > 0 && !isPluginToolsRegistered()) {
+      // Dynamic plugin tool registration based on active channels
+      const activeChannels = useChannelStore.getState().getActiveChannels()
+      if (activeChannels.length > 0 && !isPluginToolsRegistered()) {
         registerPluginTools()
-      } else if (activePlugins.length === 0 && isPluginToolsRegistered()) {
+      } else if (activeChannels.length === 0 && isPluginToolsRegistered()) {
         unregisterPluginTools()
       }
 
@@ -834,45 +839,45 @@ export function useChatActions(): {
         finalEffectiveToolDefs = []
       }
 
-      // Build plugin info for system prompt — inject plugin metadata + per-plugin system prompts
+      // Build channel info for system prompt — inject channel metadata + per-channel system prompts
       let userPrompt = settings.systemPrompt || ''
-      if (activePlugins.length > 0) {
-        const pluginLines: string[] = ['\n## Active Plugins']
-        for (const p of activePlugins) {
-          pluginLines.push(`- **${p.name}** (plugin_id: \`${p.id}\`, type: ${p.type})`)
-          if (p.userSystemPrompt?.trim()) {
-            pluginLines.push(`  Plugin instructions: ${p.userSystemPrompt.trim()}`)
+      if (activeChannels.length > 0) {
+        const channelLines: string[] = ['\n## Active Channels']
+        for (const c of activeChannels) {
+          channelLines.push(`- **${c.name}** (channel_id: \`${c.id}\`, type: ${c.type})`)
+          if (c.userSystemPrompt?.trim()) {
+            channelLines.push(`  Channel instructions: ${c.userSystemPrompt.trim()}`)
           }
-          const desc = usePluginStore.getState().getDescriptor(p.type)
+          const desc = useChannelStore.getState().getDescriptor(c.type)
           const toolNames = desc?.tools ?? []
           if (toolNames.length > 0) {
-            const enabled = toolNames.filter((name) => p.tools?.[name] !== false)
-            const disabled = toolNames.filter((name) => p.tools?.[name] === false)
-            pluginLines.push(`  Enabled tools: ${enabled.length > 0 ? enabled.join(', ') : 'none'}`)
+            const enabled = toolNames.filter((name) => c.tools?.[name] !== false)
+            const disabled = toolNames.filter((name) => c.tools?.[name] === false)
+            channelLines.push(`  Enabled tools: ${enabled.length > 0 ? enabled.join(', ') : 'none'}`)
             if (disabled.length > 0) {
-              pluginLines.push(`  Disabled tools: ${disabled.join(', ')}`)
+              channelLines.push(`  Disabled tools: ${disabled.join(', ')}`)
             }
           }
         }
-        // Check if any active plugin is Feishu (has file/image send capability)
-        const hasFeishuPlugin = activePlugins.some((p) => p.type === 'feishu-bot')
+        // Check if any active channel is Feishu (has file/image send capability)
+        const hasFeishuChannel = activeChannels.some((c) => c.type === 'feishu-bot')
 
-        pluginLines.push(
+        channelLines.push(
           '',
-          'Use the plugin_id parameter when calling Plugin* tools (PluginSendMessage, PluginReplyMessage, PluginGetGroupMessages, PluginListGroups, PluginSummarizeGroup, PluginGetCurrentChatMessages).',
+          'Use plugin_id (set to channel_id) when calling Plugin* tools (PluginSendMessage, PluginReplyMessage, PluginGetGroupMessages, PluginListGroups, PluginSummarizeGroup, PluginGetCurrentChatMessages).',
           'Always confirm with the user before sending messages on their behalf.',
           '',
-          '### Generating & Delivering Files via Plugins',
+          '### Generating & Delivering Files via Channels',
           'When the user asks you to generate reports, documents, or any deliverable and wants it sent to a chat:',
           '1. **Write the file** using the Write tool (e.g. `report.md`, `analysis.csv`, `summary.html`).',
-          hasFeishuPlugin
+          hasFeishuChannel
             ? '2. **Send the file** using FeishuSendFile (for Feishu chats) or share key content via PluginSendMessage (for other platforms).'
             : '2. **Share the content** via PluginSendMessage, or inform the user where the file was saved.',
           '3. **Provide a brief summary** in your response so the user knows what was generated.',
           'Prefer writing to a file + sending it over pasting long content (>30 lines) directly in chat messages.'
         )
-        const pluginSection = pluginLines.join('\n')
-        userPrompt = userPrompt ? `${userPrompt}\n${pluginSection}` : pluginSection
+        const channelSection = channelLines.join('\n')
+        userPrompt = userPrompt ? `${userPrompt}\n${channelSection}` : channelSection
       }
 
       // Build MCP info for system prompt — inject active MCP server metadata and tool mappings
@@ -897,25 +902,25 @@ export function useChatActions(): {
         userPrompt = userPrompt ? `${userPrompt}\n${mcpSection}` : mcpSection
       }
 
-      // Plugin session context: inject reply instructions when this session belongs to a plugin
+      // Channel session context: inject reply instructions when this session belongs to a channel
       if (session?.pluginId && session?.externalChatId) {
-        const pluginMeta = usePluginStore.getState().plugins.find((p) => p.id === session.pluginId)
+        const channelMeta = useChannelStore.getState().channels.find((p) => p.id === session.pluginId)
         const chatId = session.externalChatId.replace(/^plugin:[^:]+:chat:/, '')
-        const isFeishu = pluginMeta?.type === 'feishu-bot'
-        const pluginDescriptor = pluginMeta ? usePluginStore.getState().getDescriptor(pluginMeta.type) : undefined
-        const toolNames = pluginDescriptor?.tools ?? []
-        const enabledTools = toolNames.filter((name) => pluginMeta?.tools?.[name] !== false)
-        const disabledTools = toolNames.filter((name) => pluginMeta?.tools?.[name] === false)
+        const isFeishu = channelMeta?.type === 'feishu-bot'
+        const channelDescriptor = channelMeta ? useChannelStore.getState().getDescriptor(channelMeta.type) : undefined
+        const toolNames = channelDescriptor?.tools ?? []
+        const enabledTools = toolNames.filter((name) => channelMeta?.tools?.[name] !== false)
+        const disabledTools = toolNames.filter((name) => channelMeta?.tools?.[name] === false)
         const senderLabel = session.pluginSenderName || session.pluginSenderId || 'unknown'
-        const pluginCtx = [
-          `\n## Plugin Auto-Reply Context`,
-          `This session is handling messages from plugin **${pluginMeta?.name ?? session.pluginId}** (plugin_id: \`${session.pluginId}\`).`,
+        const channelCtx = [
+          `\n## Channel Auto-Reply Context`,
+          `This session is handling messages from channel **${channelMeta?.name ?? session.pluginId}** (channel_id: \`${session.pluginId}\`).`,
           `Chat ID: \`${chatId}\``,
           `Chat Type: ${session.pluginChatType ?? 'unknown'}`,
           `Sender: ${senderLabel} (id: ${session.pluginSenderId ?? 'unknown'})`,
           `Enabled tools: ${enabledTools.length > 0 ? enabledTools.join(', ') : 'none'}`,
           disabledTools.length > 0 ? `Disabled tools: ${disabledTools.join(', ')}` : '',
-          `Your response will be streamed directly to the user in real-time via the plugin.`,
+          `Your response will be streamed directly to the user in real-time via the channel.`,
           `Just respond naturally — the streaming pipeline handles delivery automatically.`,
           `If you need to send an additional message, use PluginSendMessage with plugin_id="${session.pluginId}" and chat_id="${chatId}".`,
           isFeishu ? [
@@ -925,21 +930,20 @@ export function useChatActions(): {
             `- **FeishuSendFile**: Send a file (PDF, document, spreadsheet, etc.)`,
             `Both require plugin_id="${session.pluginId}" and chat_id="${chatId}".`,
           ].join('\n') : '',
-          pluginMeta?.userSystemPrompt?.trim() ? `\nPlugin-specific instructions: ${pluginMeta.userSystemPrompt.trim()}` : '',
+          channelMeta?.userSystemPrompt?.trim() ? `\nChannel-specific instructions: ${channelMeta.userSystemPrompt.trim()}` : '',
         ].filter(Boolean).join('\n')
-        userPrompt = userPrompt ? `${userPrompt}\n${pluginCtx}` : pluginCtx
+        userPrompt = userPrompt ? `${userPrompt}\n${channelCtx}` : channelCtx
       }
 
       // Load AGENTS.md memory file from working directory
       let agentsMemory: string | undefined
-      let globalMemory: string | undefined
       if (session?.workingFolder) {
         const projectMemoryPath = joinFsPath(session.workingFolder, 'AGENTS.md')
         agentsMemory = await loadOptionalMemoryFile(ipcClient, projectMemoryPath)
       }
 
       const globalMemorySnapshot = await loadGlobalMemorySnapshot(ipcClient)
-      globalMemory = globalMemorySnapshot.content
+      const globalMemory = globalMemorySnapshot.content
       const globalMemoryPath = globalMemorySnapshot.path
 
       const agentSystemPrompt = buildSystemPrompt({
@@ -1038,9 +1042,9 @@ export function useChatActions(): {
 
       let streamDeltaBuffer: StreamDeltaBuffer | null = null
 
-      // Extract plugin context from session so tools like CronAdd can auto-inject plugin routing
-      const sessionPluginId = session?.pluginId
-      const sessionPluginChatId = session?.externalChatId
+      // Extract channel context from session so tools like CronAdd can auto-inject routing
+      const sessionChannelId = session?.pluginId
+      const sessionChannelChatId = session?.externalChatId
         ? session.externalChatId.replace(/^plugin:[^:]+:chat:/, '')
         : undefined
 
@@ -1122,9 +1126,9 @@ export function useChatActions(): {
             sshConnectionId: session?.sshConnectionId,
             signal: abortController.signal,
             ipc: ipcClient,
-            ...(sessionPluginId && sessionPluginChatId && {
-              pluginId: sessionPluginId,
-              pluginChatId: sessionPluginChatId,
+            ...(sessionChannelId && sessionChannelChatId && {
+              pluginId: sessionChannelId,
+              pluginChatId: sessionChannelChatId,
               pluginChatType: session?.pluginChatType,
               pluginSenderId: session?.pluginSenderId,
               pluginSenderName: session?.pluginSenderName,
@@ -1219,12 +1223,6 @@ export function useChatActions(): {
           }
         }
 
-        // Check if this is an image model - if so, set generating image state
-        const activeModelConfig = useProviderStore.getState().getActiveModelConfig()
-        if (activeModelConfig?.category === 'image') {
-          useChatStore.getState().setGeneratingImage(assistantMsgId, true)
-        }
-
         for await (const event of loop) {
           if (abortController.signal.aborted) break
 
@@ -1289,6 +1287,22 @@ export function useChatActions(): {
                 useChatStore.getState().appendContentBlock(sessionId!, assistantMsgId, event.imageBlock)
               }
               // Clear generating state after first image
+              useChatStore.getState().setGeneratingImage(assistantMsgId, false)
+              break
+
+            case 'image_error':
+              streamDeltaBuffer.flushNow()
+              if (!thinkingDone) {
+                thinkingDone = true
+                useChatStore.getState().completeThinking(sessionId!, assistantMsgId)
+              }
+              if (event.imageError) {
+                useChatStore.getState().appendContentBlock(sessionId!, assistantMsgId, {
+                  type: 'image_error',
+                  code: event.imageError.code,
+                  message: event.imageError.message,
+                })
+              }
               useChatStore.getState().setGeneratingImage(assistantMsgId, false)
               break
 
@@ -1878,6 +1892,32 @@ async function runSimpleChat(
           }
           streamDeltaBuffer.pushText(event.text!)
           break
+        case 'image_generated':
+          streamDeltaBuffer.flushNow()
+          if (!thinkingDone) {
+            thinkingDone = true
+            useChatStore.getState().completeThinking(sessionId, assistantMsgId)
+          }
+          if (event.imageBlock) {
+            useChatStore.getState().appendContentBlock(sessionId, assistantMsgId, event.imageBlock)
+          }
+          useChatStore.getState().setGeneratingImage(assistantMsgId, false)
+          break
+        case 'image_error':
+          streamDeltaBuffer.flushNow()
+          if (!thinkingDone) {
+            thinkingDone = true
+            useChatStore.getState().completeThinking(sessionId, assistantMsgId)
+          }
+          if (event.imageError) {
+            useChatStore.getState().appendContentBlock(sessionId, assistantMsgId, {
+              type: 'image_error',
+              code: event.imageError.code,
+              message: event.imageError.message,
+            })
+          }
+          useChatStore.getState().setGeneratingImage(assistantMsgId, false)
+          break
         case 'message_end':
           streamDeltaBuffer.flushNow()
           if (!thinkingDone) {
@@ -1919,6 +1959,7 @@ async function runSimpleChat(
   } finally {
     streamDeltaBuffer.flushNow()
     streamDeltaBuffer.dispose()
+    useChatStore.getState().setGeneratingImage(assistantMsgId, false)
     useChatStore.getState().setStreamingMessageId(sessionId, null)
   }
 }

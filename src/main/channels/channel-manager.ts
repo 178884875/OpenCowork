@@ -1,36 +1,36 @@
 import type {
-  PluginInstance,
-  PluginEvent,
-  MessagingPluginService,
-  ServiceFactory,
-  WsMessageParser,
-} from './plugin-types'
+  ChannelInstance,
+  ChannelEvent,
+  MessagingChannelService,
+  ChannelServiceFactory,
+  ChannelWsMessageParser,
+} from './channel-types'
 import type { BasePluginService } from './base-plugin-service'
 
 /**
- * PluginManager — manages plugin service lifecycle with a factory registry pattern.
+ * ChannelManager — manages channel service lifecycle with a factory registry pattern.
  * Adding a new provider = register one factory function.
  */
-export class PluginManager {
-  private factories = new Map<string, ServiceFactory>()
-  private parsers = new Map<string, WsMessageParser>()
-  private services = new Map<string, MessagingPluginService>()
+export class ChannelManager {
+  private factories = new Map<string, ChannelServiceFactory>()
+  private parsers = new Map<string, ChannelWsMessageParser>()
+  private services = new Map<string, MessagingChannelService>()
   private statuses = new Map<string, 'running' | 'stopped' | 'error'>()
 
   /** Register a service factory for a plugin type */
-  registerFactory(type: string, factory: ServiceFactory): void {
+  registerFactory(type: string, factory: ChannelServiceFactory): void {
     this.factories.set(type, factory)
   }
 
   /** Register a WS message parser for a plugin type */
-  registerParser(type: string, parser: WsMessageParser): void {
+  registerParser(type: string, parser: ChannelWsMessageParser): void {
     this.parsers.set(type, parser)
   }
 
   /** Start a plugin instance — creates service via factory, calls .start() */
   async startPlugin(
-    instance: PluginInstance,
-    notify: (event: PluginEvent) => void
+    instance: ChannelInstance,
+    notify: (event: ChannelEvent) => void
   ): Promise<void> {
     // Stop existing service if running
     if (this.services.has(instance.id)) {
@@ -39,7 +39,7 @@ export class PluginManager {
 
     const factory = this.factories.get(instance.type)
     if (!factory) {
-      console.error(`[PluginManager] No factory registered for type: ${instance.type}`)
+      console.error(`[ChannelManager] No factory registered for type: ${instance.type}`)
       this.statuses.set(instance.id, 'error')
       return
     }
@@ -58,9 +58,9 @@ export class PluginManager {
     try {
       await service.start()
       this.statuses.set(instance.id, 'running')
-      console.log(`[PluginManager] Started plugin: ${instance.name} (${instance.id})`)
+      console.log(`[ChannelManager] Started channel: ${instance.name} (${instance.id})`)
     } catch (err) {
-      console.error(`[PluginManager] Failed to start plugin ${instance.id}:`, err)
+      console.error(`[ChannelManager] Failed to start channel ${instance.id}:`, err)
       this.statuses.set(instance.id, 'error')
       this.services.delete(instance.id)
       throw err
@@ -73,9 +73,9 @@ export class PluginManager {
 
     try {
       await service.stop()
-      console.log(`[PluginManager] Stopped plugin: ${id}`)
+      console.log(`[ChannelManager] Stopped channel: ${id}`)
     } catch (err) {
-      console.error(`[PluginManager] Error stopping plugin ${id}:`, err)
+      console.error(`[ChannelManager] Error stopping channel ${id}:`, err)
     } finally {
       this.services.delete(id)
       this.statuses.set(id, 'stopped')
@@ -83,14 +83,14 @@ export class PluginManager {
   }
 
   async restartPlugin(
-    instance: PluginInstance,
-    notify: (event: PluginEvent) => void
+    instance: ChannelInstance,
+    notify: (event: ChannelEvent) => void
   ): Promise<void> {
     await this.stopPlugin(instance.id)
     await this.startPlugin(instance, notify)
   }
 
-  getService(id: string): MessagingPluginService | undefined {
+  getService(id: string): MessagingChannelService | undefined {
     return this.services.get(id)
   }
 
@@ -105,6 +105,6 @@ export class PluginManager {
   async stopAll(): Promise<void> {
     const ids = Array.from(this.services.keys())
     await Promise.allSettled(ids.map((id) => this.stopPlugin(id)))
-    console.log(`[PluginManager] All plugins stopped`)
+    console.log(`[ChannelManager] All channels stopped`)
   }
 }

@@ -144,12 +144,12 @@
         "title": "本地安全沙盒",
         "desc": "所有文件与密钥均在本地处理，可控可审计。"
       },
-      "plugins": {
-        "title": "MCP / 插件体系",
-        "desc": "无缝连接 MCP 服务器、Skills 与第三方插件。"
+      "channels": {
+        "title": "MCP / 聊天频道生态",
+        "desc": "无缝连接 MCP 服务器、Skills 与第三方聊天频道。"
       }
     },
-    "summary": "OpenCowork 将多模型工作流、MCP 服务器、Skills 与自定义插件统一在一个桌面体验里，你可以在 Chat / Cowork / Code 模式间自由切换，并保持对所有数据的本地掌控。"
+    "summary": "OpenCowork 将多模型工作流、MCP 服务器、Skills 与自定义聊天频道统一在一个桌面体验里，你可以在 Chat / Cowork / Code 模式间自由切换，并保持对所有数据的本地掌控。"
   },
   "dialog": {
     "title": "快速设置",
@@ -367,27 +367,29 @@
     "channelDisconnected": "已断开渠道登录",
     "channelRequired": "请先完成渠道商验证"
   },
-  "plugin": {
-    "title": "插件",
-    "subtitle": "配置和管理消息插件",
-    "search": "搜索插件...",
-    "addPlugin": "添加插件",
-    "addPluginDesc": "选择要添加的插件提供商。",
-    "added": "插件已添加",
-    "removed": "插件已移除",
+  "channel": {
+    "title": "聊天频道",
+    "subtitle": "配置和管理聊天频道",
+    "search": "搜索频道...",
+    "addChannel": "添加频道",
+    "addChannelDesc": "选择要添加的频道提供商。",
+    "addPlugin": "添加频道",
+    "addPluginDesc": "选择要添加的频道提供商。",
+    "added": "频道已添加",
+    "removed": "频道已移除",
     "botName": "机器人名称",
     "systemPrompt": "系统提示词",
-    "systemPromptPlaceholder": "可选：为该插件的自动回复设置专用系统提示词...",
+    "systemPromptPlaceholder": "可选：为该频道的自动回复设置专用系统提示词...",
     "model": "回复模型",
     "modelDefault": "使用全局默认",
-    "modelHint": "自动回复所用模型。保留默认将使用当前全局模型。",
+    "modelHint": "频道自动回复所用模型。保留默认将使用当前全局模型。",
     "features": "功能",
     "autoReply": "自动回复",
     "autoReplyDesc": "收到消息后自动调用 Agent 回复",
     "streamingReply": "流式回复",
     "streamingReplyDesc": "通过 CardKit 实时推送回复（仅 Feishu）",
     "autoStart": "自动启动",
-    "autoStartDesc": "应用启动时自动启动该插件",
+    "autoStartDesc": "应用启动时自动启动该频道",
     "tools": "工具",
     "status": "状态",
     "running": "运行中",
@@ -398,33 +400,36 @@
     "enabled": "已启用",
     "disabled": "已禁用",
     "conversations": "对话记录",
-    "conversationsDesc": "插件的对话记录将显示在此处。",
+    "conversationsDesc": "频道的对话记录将显示在此处。",
     "messagesCleared": "消息已清空",
     "sessionDeleted": "对话已删除",
     "clearMessages": "清空消息",
     "deleteSession": "删除对话",
     "remove": "移除",
-    "noPlugins": "未配置插件",
-    "selectToConfig": "选择一个插件开始配置",
+    "noChannels": "未配置频道",
+    "noPlugins": "未配置频道",
+    "selectToConfig": "选择一个频道开始配置",
     "security": "安全与权限",
     "allowReadHome": "读取主目录",
     "allowReadHomeDesc": "允许读取主目录 (~) 下的文件",
     "readablePaths": "允许读取的路径",
-    "readablePathsDesc": "白名单：指定插件可以读取的目录",
+    "readablePathsDesc": "白名单：指定频道可以读取的目录",
     "addPath": "添加",
     "allowShell": "Shell 执行",
     "allowShellDesc": "允许执行终端命令（高风险）",
     "allowWriteOutside": "写入工作目录外",
-    "allowWriteOutsideDesc": "允许在插件目录之外写入文件",
+    "allowWriteOutsideDesc": "允许在频道目录之外写入文件",
     "allowSubAgents": "子代理工具",
     "allowSubAgentsDesc": "允许使用 Task 等子代理工具",
+    "custom": "自定义",
+    "wsUrl": "WS 中继地址",
     "toolsDesc": {
-      "PluginSendMessage": "通过插件发送消息",
-      "PluginReplyMessage": "通过插件回复指定消息",
+      "PluginSendMessage": "通过频道发送消息",
+      "PluginReplyMessage": "通过频道回复指定消息",
       "PluginGetGroupMessages": "读取群聊/会话最近消息",
       "PluginListGroups": "列出可用群聊/会话",
       "PluginSummarizeGroup": "拉取群聊消息用于总结",
-      "PluginGetCurrentChatMessages": "读取当前插件会话消息",
+      "PluginGetCurrentChatMessages": "读取当前频道会话消息",
       "FeishuSendImage": "发送图片到 Feishu 会话",
       "FeishuSendFile": "发送文件到 Feishu 会话",
       "FeishuListChatMembers": "列出 Feishu 群成员（用于 @ 提及）",
@@ -444,7 +449,23 @@
     },
     "dingtalk": {
       "appKey": "App Key",
-      "appSecret": "App Secret"
+      "appSecret": "App Secret",
+      "cardTemplateId": "卡片模板 ID"
+    },
+    "wecom": {
+      "corpId": "企业 ID",
+      "secret": "Secret",
+      "agentId": "Agent ID"
+    },
+    "telegram": {
+      "botToken": "Bot Token"
+    },
+    "discord": {
+      "botToken": "Bot Token"
+    },
+    "whatsapp": {
+      "phoneNumberId": "Phone Number ID",
+      "accessToken": "Access Token"
     }
   },
   "mcp": {

@@ -144,12 +144,12 @@
         "title": "Local secure sandbox",
         "desc": "Keep every file and secret local with auditable execution."
       },
-      "plugins": {
-        "title": "MCP & plugin ecosystem",
-        "desc": "Connect MCP servers, skills, and third-party plugins seamlessly."
+      "channels": {
+        "title": "MCP & channle ecosystem",
+        "desc": "Connect MCP servers, skills, and third-party channles seamlessly."
       }
     },
-    "summary": "OpenCowork unifies multi-model workflows, MCP servers, skills, and custom plugins inside one desktop experience so you can switch between Chat, Cowork, or Code modes while staying in control."
+    "summary": "OpenCowork unifies multi-model workflows, MCP servers, skills, and custom channles inside one desktop experience so you can switch between Chat, Cowork, or Code modes while staying in control."
   },
   "dialog": {
     "title": "Quick Settings",
@@ -367,27 +367,29 @@
     "channelDisconnected": "Channel disconnected",
     "channelRequired": "Please complete channel verification first"
   },
-  "plugin": {
-    "title": "Plugins",
-    "subtitle": "Configure and manage your messaging plugins",
-    "search": "Search plugins...",
-    "addPlugin": "Add Plugin",
-    "addPluginDesc": "Choose a plugin provider to add.",
-    "added": "Plugin added",
-    "removed": "Plugin removed",
+  "channel": {
+    "title": "channles",
+    "subtitle": "Configure and manage your channles",
+    "search": "Search channles...",
+    "addChannel": "Add channle",
+    "addChannelDesc": "Choose a channle provider to add.",
+    "addPlugin": "Add channle",
+    "addPluginDesc": "Choose a channle provider to add.",
+    "added": "Channle added",
+    "removed": "Channle removed",
     "botName": "Bot Name",
     "systemPrompt": "System Prompt",
-    "systemPromptPlaceholder": "Optional: set a custom system prompt for this plugin's auto-replies...",
+    "systemPromptPlaceholder": "Optional: set a custom system prompt for this channle's auto-replies...",
     "model": "Reply Model",
     "modelDefault": "Use global default",
-    "modelHint": "Model used for auto-reply. Leave default to use the globally active model.",
+    "modelHint": "Model used for channle auto-reply. Leave default to use the globally active model.",
     "features": "Features",
     "autoReply": "Auto Reply",
     "autoReplyDesc": "Automatically reply to incoming messages using the Agent",
     "streamingReply": "Streaming Reply",
     "streamingReplyDesc": "Stream responses in real-time via CardKit (Feishu only)",
     "autoStart": "Auto Start",
-    "autoStartDesc": "Automatically start this plugin when the app launches",
+    "autoStartDesc": "Automatically start this channle when the app launches",
     "tools": "Tools",
     "status": "Status",
     "running": "Running",
@@ -398,33 +400,36 @@
     "enabled": "Enabled",
     "disabled": "Disabled",
     "conversations": "Conversations",
-    "conversationsDesc": "Plugin conversation history will appear here.",
+    "conversationsDesc": "Channle conversation history will appear here.",
     "messagesCleared": "Messages cleared",
     "sessionDeleted": "Conversation deleted",
     "clearMessages": "Clear messages",
     "deleteSession": "Delete conversation",
     "remove": "Remove",
-    "noPlugins": "No plugins configured",
-    "selectToConfig": "Select a plugin to configure",
+    "noChannels": "No channles configured",
+    "noPlugins": "No channles configured",
+    "selectToConfig": "Select a channle to configure",
     "security": "Security & Permissions",
     "allowReadHome": "Read Home Directory",
     "allowReadHomeDesc": "Allow reading files under your home directory (~)",
     "readablePaths": "Allowed Read Paths",
-    "readablePathsDesc": "Whitelist specific directories the plugin can read",
+    "readablePathsDesc": "Whitelist specific directories the channle can read",
     "addPath": "Add",
     "allowShell": "Shell Execution",
     "allowShellDesc": "Allow executing terminal commands (high risk)",
     "allowWriteOutside": "Write Outside Working Dir",
-    "allowWriteOutsideDesc": "Allow writing files outside the plugin directory",
+    "allowWriteOutsideDesc": "Allow writing files outside the channle directory",
     "allowSubAgents": "Sub-Agent Tools",
     "allowSubAgentsDesc": "Allow using Task and other sub-agent tools",
+    "custom": "Custom",
+    "wsUrl": "WS Relay URL",
     "toolsDesc": {
-      "PluginSendMessage": "Send a message via the plugin",
-      "PluginReplyMessage": "Reply to a specific message via the plugin",
+      "PluginSendMessage": "Send a message via the channle",
+      "PluginReplyMessage": "Reply to a specific message via the channle",
       "PluginGetGroupMessages": "Read recent messages from a chat/group",
       "PluginListGroups": "List available chats/groups",
       "PluginSummarizeGroup": "Fetch recent messages for summarization",
-      "PluginGetCurrentChatMessages": "Read recent messages from the current plugin chat",
+      "PluginGetCurrentChatMessages": "Read recent messages from the current channle chat",
       "FeishuSendImage": "Send an image to a Feishu chat",
       "FeishuSendFile": "Send a file to a Feishu chat",
       "FeishuListChatMembers": "List members in a Feishu chat (for @mentions)",
@@ -444,7 +449,23 @@
     },
     "dingtalk": {
       "appKey": "App Key",
-      "appSecret": "App Secret"
+      "appSecret": "App Secret",
+      "cardTemplateId": "Card Template ID"
+    },
+    "wecom": {
+      "corpId": "Corp ID",
+      "secret": "Secret",
+      "agentId": "Agent ID"
+    },
+    "telegram": {
+      "botToken": "Bot Token"
+    },
+    "discord": {
+      "botToken": "Bot Token"
+    },
+    "whatsapp": {
+      "phoneNumberId": "Phone Number ID",
+      "accessToken": "Access Token"
     }
   },
   "mcp": {

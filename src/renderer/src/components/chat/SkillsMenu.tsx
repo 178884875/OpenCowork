@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, Sparkles, Loader2, Command, Puzzle, Settings2, Check, Cable } from 'lucide-react'
+import { Plus, Sparkles, Loader2, Command, MessageSquare, Settings2, Check, Cable } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
 import {
   DropdownMenu,
@@ -17,7 +17,7 @@ import {
 } from '@renderer/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip'
 import { useSkillsStore } from '@renderer/stores/skills-store'
-import { usePluginStore } from '@renderer/stores/plugin-store'
+import { useChannelStore } from '@renderer/stores/channel-store'
 import { useMcpStore } from '@renderer/stores/mcp-store'
 import { useUIStore } from '@renderer/stores/ui-store'
 
@@ -33,13 +33,13 @@ export function SkillsMenu({ onSelectSkill, disabled = false }: SkillsMenuProps)
   const loading = useSkillsStore((s) => s.loading)
   const loadSkills = useSkillsStore((s) => s.loadSkills)
 
-  // Plugin state
-  const plugins = usePluginStore((s) => s.plugins)
-  const activePluginIds = usePluginStore((s) => s.activePluginIds)
-  const toggleActivePlugin = usePluginStore((s) => s.toggleActivePlugin)
-  const loadPlugins = usePluginStore((s) => s.loadPlugins)
-  const loadProviders = usePluginStore((s) => s.loadProviders)
-  const configuredPlugins = React.useMemo(() => plugins.filter((p) => p.enabled), [plugins])
+  // Channel state
+  const channels = useChannelStore((s) => s.channels)
+  const activeChannelIds = useChannelStore((s) => s.activeChannelIds)
+  const toggleActiveChannel = useChannelStore((s) => s.toggleActiveChannel)
+  const loadChannels = useChannelStore((s) => s.loadChannels)
+  const loadProviders = useChannelStore((s) => s.loadProviders)
+  const configuredChannels = React.useMemo(() => channels.filter((p) => p.enabled), [channels])
   const openSettingsPage = useUIStore((s) => s.openSettingsPage)
 
   // MCP state
@@ -54,15 +54,15 @@ export function SkillsMenu({ onSelectSkill, disabled = false }: SkillsMenuProps)
     [mcpServers, mcpStatuses]
   )
 
-  // Load skills, plugins, and MCP servers when menu opens
+  // Load skills, channels, and MCP servers when menu opens
   React.useEffect(() => {
     if (open) {
       loadSkills()
       loadProviders()
-      loadPlugins()
+      loadChannels()
       loadMcpServers()
     }
-  }, [open, loadSkills, loadPlugins, loadProviders, loadMcpServers])
+  }, [open, loadSkills, loadChannels, loadProviders, loadMcpServers])
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -145,34 +145,34 @@ export function SkillsMenu({ onSelectSkill, disabled = false }: SkillsMenuProps)
         <DropdownMenuGroup>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
-              <Puzzle className="mr-2 size-4" />
-              <span>{t('skills.pluginsLabel', 'Plugins')}</span>
-              {activePluginIds.length > 0 && (
+              <MessageSquare className="mr-2 size-4" />
+              <span>{t('skills.channelsLabel', 'Channels')}</span>
+              {activeChannelIds.length > 0 && (
                 <span className="ml-auto text-[10px] text-muted-foreground">
-                  {activePluginIds.length}
+                  {activeChannelIds.length}
                 </span>
               )}
             </DropdownMenuSubTrigger>
             <DropdownMenuPortal>
               <DropdownMenuSubContent className="w-56 max-h-80 overflow-y-auto">
-                <DropdownMenuLabel>{t('skills.availablePlugins', 'Available Plugins')}</DropdownMenuLabel>
+                <DropdownMenuLabel>{t('skills.availableChannels', 'Available Channels')}</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                {configuredPlugins.length === 0 ? (
+                {configuredChannels.length === 0 ? (
                   <div className="px-2 py-4 text-center text-xs text-muted-foreground">
-                    <p>{t('skills.noPlugins', 'No plugins configured')}</p>
+                    <p>{t('skills.noChannels', 'No channels configured')}</p>
                     <p className="mt-1 text-[10px] opacity-70">
-                      {t('skills.configureInSettings', 'Add plugins in Settings → Plugins')}
+                      {t('skills.configureInSettings', 'Add channels in Settings → channles')}
                     </p>
                   </div>
                 ) : (
-                  configuredPlugins.map((plugin) => {
-                    const isActive = activePluginIds.includes(plugin.id)
+                  configuredChannels.map((channel) => {
+                    const isActive = activeChannelIds.includes(channel.id)
                     return (
                       <DropdownMenuItem
-                        key={plugin.id}
+                        key={channel.id}
                         onSelect={(e) => {
                           e.preventDefault()
-                          toggleActivePlugin(plugin.id)
+                          toggleActiveChannel(channel.id)
                         }}
                         className="flex items-center gap-2 py-1.5 cursor-pointer"
                       >
@@ -185,8 +185,8 @@ export function SkillsMenu({ onSelectSkill, disabled = false }: SkillsMenuProps)
                         >
                           {isActive && <Check className="size-3" />}
                         </span>
-                        <span className="flex-1 truncate text-xs">{plugin.name}</span>
-                        <span className="text-[10px] text-muted-foreground">{plugin.type}</span>
+                        <span className="flex-1 truncate text-xs">{channel.name}</span>
+                        <span className="text-[10px] text-muted-foreground">{channel.type}</span>
                       </DropdownMenuItem>
                     )
                   })
@@ -195,12 +195,12 @@ export function SkillsMenu({ onSelectSkill, disabled = false }: SkillsMenuProps)
                 <DropdownMenuItem
                   onClick={() => {
                     setOpen(false)
-                    openSettingsPage('plugin')
+                    openSettingsPage('channel')
                   }}
                   className="text-xs"
                 >
                   <Settings2 className="mr-2 size-3.5" />
-                  {t('skills.configurePlugins', 'Configure...')}
+                  {t('skills.configureChannels', 'Configure...')}
                 </DropdownMenuItem>
               </DropdownMenuSubContent>
             </DropdownMenuPortal>

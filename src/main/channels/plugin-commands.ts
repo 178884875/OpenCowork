@@ -18,8 +18,8 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { getDb } from '../db/database'
-import type { PluginManager } from './plugin-manager'
-import type { PluginIncomingMessageData, PluginInstance } from './plugin-types'
+import type { ChannelManager } from './channel-manager'
+import type { ChannelIncomingMessageData, ChannelInstance } from './channel-types'
 
 const PLUGINS_FILE = path.join(os.homedir(), '.open-cowork', 'plugins.json')
 
@@ -27,10 +27,10 @@ export interface CommandContext {
   pluginId: string
   pluginType: string
   chatId: string
-  data: PluginIncomingMessageData
+  data: ChannelIncomingMessageData
   sessionId: string | undefined
   pluginWorkDir: string
-  pluginManager: PluginManager
+  pluginManager: ChannelManager
 }
 
 interface CommandResult {
@@ -222,10 +222,10 @@ function handleStatus(ctx: CommandContext, _args: string): CommandResult {
   const lines: string[] = ['📊 当前状态 / Status']
 
   // Plugin info
-  let pluginInstance: PluginInstance | undefined
+  let pluginInstance: ChannelInstance | undefined
   try {
     if (fs.existsSync(PLUGINS_FILE)) {
-      const plugins = JSON.parse(fs.readFileSync(PLUGINS_FILE, 'utf-8')) as PluginInstance[]
+      const plugins = JSON.parse(fs.readFileSync(PLUGINS_FILE, 'utf-8')) as ChannelInstance[]
       pluginInstance = plugins.find((p) => p.id === ctx.pluginId)
     }
   } catch { /* ignore */ }

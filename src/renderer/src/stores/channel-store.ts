@@ -7,48 +7,48 @@ import type {
   PluginProviderDescriptor,
   PluginInstance,
   PluginIncomingEvent,
-} from '@renderer/lib/plugins/types'
+} from '@renderer/lib/channel/types'
 import { IPC } from '@renderer/lib/ipc/channels'
 
-interface PluginStore {
-  plugins: PluginInstance[]
+interface ChannelStore {
+  channels: PluginInstance[]
   providers: PluginProviderDescriptor[]
-  selectedPluginId: string | null
-  pluginStatuses: Record<string, 'running' | 'stopped' | 'error'>
+  selectedChannelId: string | null
+  channelStatuses: Record<string, 'running' | 'stopped' | 'error'>
 
   // Per-session activation (toggled via + menu)
-  activePluginIds: string[]
+  activeChannelIds: string[]
 
   // Init
   loadProviders: () => Promise<void>
-  loadPlugins: () => Promise<void>
+  loadChannels: () => Promise<void>
 
   // CRUD
-  addPlugin: (type: string, name: string, config: Record<string, string>, systemPrompt?: string) => Promise<string>
-  updatePlugin: (id: string, patch: Partial<PluginInstance>) => Promise<void>
-  removePlugin: (id: string) => Promise<void>
-  togglePluginEnabled: (id: string) => Promise<void>
+  addChannel: (type: string, name: string, config: Record<string, string>, systemPrompt?: string) => Promise<string>
+  updateChannel: (id: string, patch: Partial<PluginInstance>) => Promise<void>
+  removeChannel: (id: string) => Promise<void>
+  toggleChannelEnabled: (id: string) => Promise<void>
 
   // Service control
-  startPlugin: (id: string) => Promise<string | undefined>
-  stopPlugin: (id: string) => Promise<void>
-  refreshStatus: (id: string) => Promise<void>
+  startChannel: (id: string) => Promise<string | undefined>
+  stopChannel: (id: string) => Promise<void>
+  refreshChannelStatus: (id: string) => Promise<void>
 
   // UI
-  setSelectedPlugin: (id: string | null) => void
+  setSelectedChannel: (id: string | null) => void
 
   // Per-session activation
-  toggleActivePlugin: (id: string) => void
-  clearActivePlugins: () => void
+  toggleActiveChannel: (id: string) => void
+  clearActiveChannels: () => void
 
-  // Plugin sessions
-  pluginSessions: Record<string, unknown[]>
-  loadPluginSessions: (pluginId: string) => Promise<void>
+  // Channel sessions
+  channelSessions: Record<string, unknown[]>
+  loadChannelSessions: (channelId: string) => Promise<void>
 
   // Helpers
   getDescriptor: (type: string) => PluginProviderDescriptor | undefined
-  getConfiguredPlugins: () => PluginInstance[]
-  getActivePlugins: () => PluginInstance[]
+  getConfiguredChannels: () => PluginInstance[]
+  getActiveChannels: () => PluginInstance[]
 }
 
 // Use window-level flags so HMR module reloads don't re-register listeners
@@ -60,7 +60,7 @@ declare global {
   }
 }
 
-export function initPluginEventListener(): void {
+export function initChannelEventListener(): void {
   if (window.__pluginListenerActive) return
   window.__pluginListenerActive = true
   if (!window.__pluginDispatchedIds) window.__pluginDispatchedIds = new Set<string>()
@@ -71,8 +71,8 @@ export function initPluginEventListener(): void {
 
     if (data.type === 'status_change') {
       const status = data.data as 'running' | 'stopped' | 'error'
-      usePluginStore.setState((s) => ({
-        pluginStatuses: { ...s.pluginStatuses, [data.pluginId]: status },
+      useChannelStore.setState((s) => ({
+        channelStatuses: { ...s.channelStatuses, [data.pluginId]: status },
       }))
     }
     if (data.type === 'incoming_message') {
@@ -80,8 +80,8 @@ export function initPluginEventListener(): void {
     }
     if (data.type === 'error') {
       console.error(`[Plugin:${data.pluginId}] Error:`, data.data)
-      usePluginStore.setState((s) => ({
-        pluginStatuses: { ...s.pluginStatuses, [data.pluginId]: 'error' },
+      useChannelStore.setState((s) => ({
+        channelStatuses: { ...s.channelStatuses, [data.pluginId]: 'error' },
       }))
     }
   })
@@ -120,13 +120,13 @@ export function initPluginEventListener(): void {
   })
 }
 
-export const usePluginStore = create<PluginStore>((set, get) => ({
-  plugins: [],
+export const useChannelStore = create<ChannelStore>((set, get) => ({
+  channels: [],
   providers: [],
-  selectedPluginId: null,
-  pluginStatuses: {},
-  activePluginIds: [],
-  pluginSessions: {},
+  selectedChannelId: null,
+  channelStatuses: {},
+  activeChannelIds: [],
+  channelSessions: {},
 
   loadProviders: async () => {
     try {
@@ -137,21 +137,21 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     }
   },
 
-  loadPlugins: async () => {
+  loadChannels: async () => {
     try {
       const plugins = (await ipcClient.invoke(IPC.PLUGIN_LIST)) as PluginInstance[]
       const arr = Array.isArray(plugins) ? plugins : []
-      console.log(`[PluginStore] Loaded ${arr.length} plugins:`, arr.map((p) => `${p.type}(${p.id})`))
+      console.log(`[ChannelStore] Loaded ${arr.length} plugins:`, arr.map((p) => `${p.type}(${p.id})`))
       // Auto-activate all enabled plugins
       const enabledIds = arr.filter((p) => p.enabled).map((p) => p.id)
-      set({ plugins: arr, activePluginIds: enabledIds })
+      set({ channels: arr, activeChannelIds: enabledIds })
     } catch (err) {
-      console.error('[PluginStore] Failed to load plugins:', err)
-      set({ plugins: [] })
+      console.error('[ChannelStore] Failed to load plugins:', err)
+      set({ channels: [] })
     }
   },
 
-  addPlugin: async (type, name, config, systemPrompt) => {
+  addChannel: async (type, name, config, systemPrompt) => {
     const id = nanoid()
     const desc = get().providers.find((p) => p.type === type)
     const tools = desc?.tools?.reduce<Record<string, boolean>>((acc, toolName) => {
@@ -170,20 +170,20 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     }
     await ipcClient.invoke(IPC.PLUGIN_ADD, instance)
     set((s) => ({
-      plugins: [...s.plugins, instance],
-      activePluginIds: [...s.activePluginIds, id],
+      channels: [...s.channels, instance],
+      activeChannelIds: [...s.activeChannelIds, id],
     }))
     return id
   },
 
-  updatePlugin: async (id, patch) => {
+  updateChannel: async (id, patch) => {
     const normalizedPatch = { ...patch }
     if ('providerId' in patch && patch.providerId == null) {
       normalizedPatch.model = null
     }
     await ipcClient.invoke(IPC.PLUGIN_UPDATE, { id, patch: normalizedPatch })
     set((s) => ({
-      plugins: s.plugins.map((p) => {
+      channels: s.channels.map((p) => {
         if (p.id !== id) return p
         const next = { ...p, ...normalizedPatch }
         if (next.providerId == null) {
@@ -194,7 +194,7 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     }))
 
     if ('providerId' in normalizedPatch || 'model' in normalizedPatch) {
-      const plugin = get().plugins.find((p) => p.id === id)
+      const plugin = get().channels.find((p) => p.id === id)
       const providerId = plugin?.providerId ?? null
       const modelId = providerId ? (plugin?.model ?? null) : null
       useChatStore.setState((state) => {
@@ -221,37 +221,37 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     }
   },
 
-  removePlugin: async (id) => {
+  removeChannel: async (id) => {
     await ipcClient.invoke(IPC.PLUGIN_REMOVE, id)
     set((s) => ({
-      plugins: s.plugins.filter((p) => p.id !== id),
-      selectedPluginId: s.selectedPluginId === id ? null : s.selectedPluginId,
-      activePluginIds: s.activePluginIds.filter((pid) => pid !== id),
+      channels: s.channels.filter((p) => p.id !== id),
+      selectedChannelId: s.selectedChannelId === id ? null : s.selectedChannelId,
+      activeChannelIds: s.activeChannelIds.filter((pid) => pid !== id),
     }))
   },
 
-  togglePluginEnabled: async (id) => {
-    const plugin = get().plugins.find((p) => p.id === id)
+  toggleChannelEnabled: async (id) => {
+    const plugin = get().channels.find((p) => p.id === id)
     if (!plugin) return
     const enabled = !plugin.enabled
-    await get().updatePlugin(id, { enabled })
+    await get().updateChannel(id, { enabled })
     if (enabled) {
       // Auto-activate when enabling
       set((s) => ({
-        activePluginIds: s.activePluginIds.includes(id)
-          ? s.activePluginIds
-          : [...s.activePluginIds, id],
+        activeChannelIds: s.activeChannelIds.includes(id)
+          ? s.activeChannelIds
+          : [...s.activeChannelIds, id],
       }))
     } else {
-      await get().stopPlugin(id)
+      await get().stopChannel(id)
       // Deactivate when disabling
       set((s) => ({
-        activePluginIds: s.activePluginIds.filter((pid) => pid !== id),
+        activeChannelIds: s.activeChannelIds.filter((pid) => pid !== id),
       }))
     }
   },
 
-  startPlugin: async (id) => {
+  startChannel: async (id) => {
     try {
       const res = (await ipcClient.invoke(IPC.PLUGIN_START, id)) as {
         success: boolean
@@ -259,67 +259,67 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
       }
       if (!res.success) {
         set((s) => ({
-          pluginStatuses: { ...s.pluginStatuses, [id]: 'error' },
+          channelStatuses: { ...s.channelStatuses, [id]: 'error' },
         }))
         return res.error ?? 'Unknown error'
       }
       set((s) => ({
-        pluginStatuses: { ...s.pluginStatuses, [id]: 'running' },
+        channelStatuses: { ...s.channelStatuses, [id]: 'running' },
       }))
       return undefined
     } catch (err) {
       set((s) => ({
-        pluginStatuses: { ...s.pluginStatuses, [id]: 'error' },
+        channelStatuses: { ...s.channelStatuses, [id]: 'error' },
       }))
       return err instanceof Error ? err.message : String(err)
     }
   },
 
-  stopPlugin: async (id) => {
+  stopChannel: async (id) => {
     try {
       await ipcClient.invoke(IPC.PLUGIN_STOP, id)
       set((s) => ({
-        pluginStatuses: { ...s.pluginStatuses, [id]: 'stopped' },
+        channelStatuses: { ...s.channelStatuses, [id]: 'stopped' },
       }))
     } catch {
       // ignore
     }
   },
 
-  refreshStatus: async (id) => {
+  refreshChannelStatus: async (id) => {
     try {
       const status = (await ipcClient.invoke(IPC.PLUGIN_STATUS, id)) as
         | 'running'
         | 'stopped'
         | 'error'
       set((s) => ({
-        pluginStatuses: { ...s.pluginStatuses, [id]: status },
+        channelStatuses: { ...s.channelStatuses, [id]: status },
       }))
     } catch {
       // ignore
     }
   },
 
-  setSelectedPlugin: (id) => set({ selectedPluginId: id }),
+  setSelectedChannel: (id) => set({ selectedChannelId: id }),
 
-  toggleActivePlugin: (id) => {
+  toggleActiveChannel: (id) => {
     set((s) => {
-      const isActive = s.activePluginIds.includes(id)
+      const isActive = s.activeChannelIds.includes(id)
       return {
-        activePluginIds: isActive
-          ? s.activePluginIds.filter((pid) => pid !== id)
-          : [...s.activePluginIds, id],
+        activeChannelIds: isActive
+          ? s.activeChannelIds.filter((pid) => pid !== id)
+          : [...s.activeChannelIds, id],
       }
     })
   },
 
-  clearActivePlugins: () => set({ activePluginIds: [] }),
+  clearActiveChannels: () => set({ activeChannelIds: [] }),
 
-  loadPluginSessions: async (pluginId) => {
+  loadChannelSessions: async (pluginId) => {
     try {
       const sessions = (await ipcClient.invoke(IPC.PLUGIN_SESSIONS_LIST, pluginId)) as unknown[]
       set((s) => ({
-        pluginSessions: { ...s.pluginSessions, [pluginId]: sessions },
+        channelSessions: { ...s.channelSessions, [pluginId]: sessions },
       }))
     } catch {
       // ignore
@@ -330,12 +330,13 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     return get().providers.find((p) => p.type === type)
   },
 
-  getConfiguredPlugins: () => {
-    return get().plugins.filter((p) => p.enabled)
+  getConfiguredChannels: () => {
+    return get().channels.filter((p) => p.enabled)
   },
 
-  getActivePlugins: () => {
-    const { plugins, activePluginIds } = get()
-    return plugins.filter((p) => activePluginIds.includes(p.id))
+  getActiveChannels: () => {
+    const { channels, activeChannelIds } = get()
+    return channels.filter((p) => activeChannelIds.includes(p.id))
   },
 }))
+

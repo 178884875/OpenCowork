@@ -30,7 +30,7 @@ import { useChatStore } from '@renderer/stores/chat-store'
 import { useTranslation } from 'react-i18next'
 import { SkillsMenu } from './SkillsMenu'
 import { ModelSwitcher } from './ModelSwitcher'
-import { usePluginStore } from '@renderer/stores/plugin-store'
+import { useChannelStore } from '@renderer/stores/channel-store'
 import { useMcpStore } from '@renderer/stores/mcp-store'
 import {
   getPendingSessionMessages,
@@ -137,23 +137,22 @@ function ContextRing(): React.JSX.Element | null {
   )
 }
 
-function ActivePluginsBadge(): React.JSX.Element | null {
-  const activePluginIds = usePluginStore((s) => s.activePluginIds)
-  const plugins = usePluginStore((s) => s.plugins)
-  if (activePluginIds.length === 0) return null
-  const activeNames = plugins.filter((p) => activePluginIds.includes(p.id)).map((p) => p.name)
+function ActiveChannelsBadge(): React.JSX.Element | null {
+  const { t } = useTranslation('chat')
+  const activeChannelIds = useChannelStore((s) => s.activeChannelIds)
+  const channels = useChannelStore((s) => s.channels)
+  if (activeChannelIds.length === 0) return null
+  const activeNames = channels.filter((p) => activeChannelIds.includes(p.id)).map((p) => p.name)
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <div className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary cursor-default">
           <span className="size-1.5 rounded-full bg-primary animate-pulse" />
-          <span>
-            {activePluginIds.length} plugin{activePluginIds.length > 1 ? 's' : ''}
-          </span>
+          <span>{t('skills.channelCount', { count: activeChannelIds.length })}</span>
         </div>
       </TooltipTrigger>
       <TooltipContent side="top">
-        <p className="text-xs font-medium">Active plugins:</p>
+        <p className="text-xs font-medium">{t('skills.activeChannels')}</p>
         {activeNames.map((n) => (
           <p key={n} className="text-xs text-muted-foreground">
             {n}
@@ -288,7 +287,7 @@ export function InputArea({
   const [selectedSkill, setSelectedSkill] = React.useState<string | null>(null)
   const [attachedImages, setAttachedImages] = React.useState<ImageAttachment[]>([])
   const [isOptimizing, setIsOptimizing] = React.useState(false)
-  const [optimizingText, setOptimizingText] = React.useState('')
+  const [, setOptimizingText] = React.useState('')
   const [optimizationOptions, setOptimizationOptions] = React.useState<Array<{title: string; focus: string; content: string}>>([])
   const [showOptimizationDialog, setShowOptimizationDialog] = React.useState(false)
   const [selectedOptionIndex, setSelectedOptionIndex] = React.useState(0)
@@ -446,9 +445,19 @@ export function InputArea({
   const resizeTextarea = React.useCallback(() => {
     const el = textareaRef.current
     if (!el) return
+    // Ensure we disable field-sizing: content to control height manually
+    el.style.setProperty('field-sizing', 'fixed')
+    if (inputHeight) {
+      el.style.height = '100%'
+      return
+    }
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
-  }, [])
+  }, [inputHeight])
+
+  React.useEffect(() => {
+    resizeTextarea()
+  }, [inputHeight, resizeTextarea])
   const focusInputAtEnd = React.useCallback(() => {
     const el = textareaRef.current
     if (!el) return
@@ -664,7 +673,11 @@ export function InputArea({
     setSelectedSkill(null)
     // Reset textarea height
     if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
+      if (inputHeight) {
+        textareaRef.current.style.height = '100%'
+      } else {
+        textareaRef.current.style.height = 'auto'
+      }
     }
   }
 
@@ -705,7 +718,10 @@ export function InputArea({
     if (isOptimizing) return // Disable input during optimization
     clearHistoryNavigation()
     setText(e.target.value)
+    if (inputHeight) return
     const el = e.target
+    // Ensure we disable field-sizing: content to control height manually
+    el.style.setProperty('field-sizing', 'fixed')
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }
@@ -1154,7 +1170,7 @@ export function InputArea({
 
           {/* Text input area */}
           <div
-            className={`relative px-3 flex-1 min-h-0 ${selectedSkill || attachedImages.length > 0 ? 'pt-1.5' : 'pt-3'}`}
+            className={`relative px-3 flex-1 min-h-0 flex flex-col ${selectedSkill || attachedImages.length > 0 ? 'pt-1.5' : 'pt-3'}`}
             onDrop={handleDropWrapped}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -1234,7 +1250,7 @@ export function InputArea({
                     }}
                     disabled={disabled || isStreaming}
                   />
-                  <ActivePluginsBadge />
+                  <ActiveChannelsBadge />
                   <ActiveMcpsBadge />
                 </>
               )}

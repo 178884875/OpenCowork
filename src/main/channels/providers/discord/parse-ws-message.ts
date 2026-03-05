@@ -1,10 +1,10 @@
-import type { PluginIncomingMessageData } from '../../plugin-types'
+import type { ChannelIncomingMessageData } from '../../channel-types'
 
 /**
  * Parse a Discord WebSocket message frame into normalized data.
  * Supports Discord Gateway MESSAGE_CREATE event and simple JSON envelope.
  */
-export function parseDiscordWsMessage(raw: string): PluginIncomingMessageData | null {
+export function parseDiscordWsMessage(raw: string): ChannelIncomingMessageData | null {
   try {
     const data = JSON.parse(raw)
 

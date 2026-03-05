@@ -9,8 +9,8 @@ export interface ConfigFieldSchema {
   required?: boolean
 }
 
-/** Static metadata describing a plugin provider type */
-export interface PluginProviderDescriptor {
+/** Static metadata describing a channel provider type */
+export interface ChannelProviderDescriptor {
   type: string
   displayName: string
   description: string
@@ -21,8 +21,8 @@ export interface PluginProviderDescriptor {
   tools?: string[]
 }
 
-/** Security permissions for a plugin instance */
-export interface PluginPermissions {
+/** Security permissions for a channel instance */
+export interface ChannelPermissions {
   /** Allow reading files outside the plugin working directory under home (~) */
   allowReadHome: boolean
   /** Whitelist of absolute path prefixes the plugin can read (when allowReadHome=false) */
@@ -35,8 +35,8 @@ export interface PluginPermissions {
   allowSubAgents: boolean
 }
 
-/** Feature toggles for a plugin instance */
-export interface PluginFeatures {
+/** Feature toggles for a channel instance */
+export interface ChannelFeatures {
   /** Auto-reply to incoming messages using the Agent */
   autoReply: boolean
   /** Stream responses back to the chat in real-time via CardKit */
@@ -45,8 +45,8 @@ export interface PluginFeatures {
   autoStart: boolean
 }
 
-/** Persisted plugin instance configuration */
-export interface PluginInstance {
+/** Persisted channel instance configuration */
+export interface ChannelInstance {
   id: string
   type: string
   name: string
@@ -62,13 +62,13 @@ export interface PluginInstance {
   /** Model override for this plugin's auto-reply agent (null = use global default) */
   model?: string | null
   /** Feature toggles */
-  features?: PluginFeatures
+  features?: ChannelFeatures
   /** Security permissions (defaults applied if missing) */
-  permissions?: PluginPermissions
+  permissions?: ChannelPermissions
 }
 
 /** Normalized message format returned by all providers */
-export interface PluginMessage {
+export interface ChannelMessage {
   id: string
   senderId: string
   senderName: string
@@ -80,15 +80,15 @@ export interface PluginMessage {
 }
 
 /** Normalized group/chat format */
-export interface PluginGroup {
+export interface ChannelGroup {
   id: string
   name: string
   memberCount?: number
   raw?: unknown
 }
 
-/** Events emitted by plugin services */
-export interface PluginEvent {
+/** Events emitted by channel services */
+export interface ChannelEvent {
   type: 'incoming_message' | 'error' | 'status_change'
   pluginId: string
   pluginType: string
@@ -96,7 +96,7 @@ export interface PluginEvent {
 }
 
 /** Incoming message event data */
-export interface PluginIncomingMessageData {
+export interface ChannelIncomingMessageData {
   chatId: string
   senderId: string
   senderName: string
@@ -117,15 +117,15 @@ export interface PluginIncomingMessageData {
 }
 
 /** Streaming message handle — allows incremental updates to a sent message */
-export interface StreamingHandle {
+export interface ChannelStreamingHandle {
   /** Update the streaming message content (accumulated, not delta) */
   update(content: string): Promise<void>
   /** Finalize the streaming message */
   finish(finalContent: string): Promise<void>
 }
 
-/** Runtime service interface — every messaging plugin must implement this */
-export interface MessagingPluginService {
+/** Runtime service interface — every messaging channel must implement this */
+export interface MessagingChannelService {
   readonly pluginId: string
   readonly pluginType: string
 
@@ -137,19 +137,19 @@ export interface MessagingPluginService {
   // Unified messaging operations
   sendMessage(chatId: string, content: string): Promise<{ messageId: string }>
   replyMessage(messageId: string, content: string): Promise<{ messageId: string }>
-  getGroupMessages(chatId: string, count?: number): Promise<PluginMessage[]>
-  listGroups(): Promise<PluginGroup[]>
+  getGroupMessages(chatId: string, count?: number): Promise<ChannelMessage[]>
+  listGroups(): Promise<ChannelGroup[]>
 
   // Streaming output (optional — override in services that support it)
   supportsStreaming?: boolean
-  sendStreamingMessage?(chatId: string, initialContent: string, replyToMessageId?: string): Promise<StreamingHandle>
+  sendStreamingMessage?(chatId: string, initialContent: string, replyToMessageId?: string): Promise<ChannelStreamingHandle>
 }
 
 /** Factory function type — registered per provider */
-export type ServiceFactory = (
-  instance: PluginInstance,
-  notify: (event: PluginEvent) => void
-) => MessagingPluginService
+export type ChannelServiceFactory = (
+  instance: ChannelInstance,
+  notify: (event: ChannelEvent) => void
+) => MessagingChannelService
 
 /** WebSocket message parser — converts raw WS frames to normalized data */
-export type WsMessageParser = (raw: string) => PluginIncomingMessageData | null
+export type ChannelWsMessageParser = (raw: string) => ChannelIncomingMessageData | null

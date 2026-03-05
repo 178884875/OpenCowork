@@ -1,10 +1,10 @@
-import type { PluginIncomingMessageData } from '../../plugin-types'
+import type { ChannelIncomingMessageData } from '../../channel-types'
 
 /**
  * Parse a Telegram WebSocket message frame into normalized data.
  * Supports Telegram Bot API update format and simple JSON envelope.
  */
-export function parseTelegramWsMessage(raw: string): PluginIncomingMessageData | null {
+export function parseTelegramWsMessage(raw: string): ChannelIncomingMessageData | null {
   try {
     const data = JSON.parse(raw)
 

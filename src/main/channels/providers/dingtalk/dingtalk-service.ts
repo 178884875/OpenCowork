@@ -2,14 +2,14 @@ import * as https from 'https'
 import { DWClient, TOPIC_ROBOT, EventAck } from 'dingtalk-stream'
 import type { DWClientDownStream } from 'dingtalk-stream'
 import type {
-  PluginInstance,
-  PluginEvent,
-  PluginMessage,
-  PluginGroup,
-  PluginIncomingMessageData,
-  MessagingPluginService,
-  StreamingHandle,
-} from '../../plugin-types'
+  ChannelInstance,
+  ChannelEvent,
+  ChannelMessage,
+  ChannelGroup,
+  ChannelIncomingMessageData,
+  MessagingChannelService,
+  ChannelStreamingHandle,
+} from '../../channel-types'
 import { BasePluginService } from '../../base-plugin-service'
 import { DingTalkApi } from './dingtalk-api'
 
@@ -153,7 +153,7 @@ export class DingTalkService extends BasePluginService {
     const senderId = String(payload.senderStaffId ?? payload.senderId ?? '')
     this.chatMetaCache.set(chatId, { conversationType: convType, senderId })
 
-    const parsed: PluginIncomingMessageData = {
+    const parsed: ChannelIncomingMessageData = {
       chatId,
       senderId: String(payload.senderStaffId ?? payload.senderId ?? ''),
       senderName: String(payload.senderNick ?? ''),
@@ -237,7 +237,7 @@ export class DingTalkService extends BasePluginService {
     return this.api.replyMessage(messageId, content, '')
   }
 
-  async getGroupMessages(chatId: string, count?: number): Promise<PluginMessage[]> {
+  async getGroupMessages(chatId: string, count?: number): Promise<ChannelMessage[]> {
     const messages = await this.api.getMessages(chatId, count)
     return messages.map((m) => ({
       id: m.messageId,
@@ -250,7 +250,7 @@ export class DingTalkService extends BasePluginService {
     }))
   }
 
-  async listGroups(): Promise<PluginGroup[]> {
+  async listGroups(): Promise<ChannelGroup[]> {
     const groups = await this.api.listGroups()
     return groups.map((g) => ({
       id: g.openConversationId,
@@ -275,7 +275,7 @@ export class DingTalkService extends BasePluginService {
     chatId: string,
     initialContent: string,
     _replyToMessageId?: string
-  ): Promise<StreamingHandle> {
+  ): Promise<ChannelStreamingHandle> {
     const cardTemplateId = this._instance.config.cardTemplateId
     if (!cardTemplateId) {
       throw new Error('cardTemplateId not configured — streaming not available')
@@ -301,7 +301,7 @@ export class DingTalkService extends BasePluginService {
 
     let lastUpdateTime = 0
 
-    const handle: StreamingHandle = {
+    const handle: ChannelStreamingHandle = {
       update: async (content: string) => {
         const now = Date.now()
         if (now - lastUpdateTime < STREAM_THROTTLE_MS) return
@@ -333,8 +333,8 @@ export class DingTalkService extends BasePluginService {
 }
 
 export function createDingTalkService(
-  instance: PluginInstance,
-  notify: (event: PluginEvent) => void
-): MessagingPluginService {
+  instance: ChannelInstance,
+  notify: (event: ChannelEvent) => void
+): MessagingChannelService {
   return new DingTalkService(instance, notify)
 }

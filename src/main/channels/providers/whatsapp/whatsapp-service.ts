@@ -1,10 +1,10 @@
 import type {
-  PluginInstance,
-  PluginEvent,
-  PluginMessage,
-  PluginGroup,
-  MessagingPluginService,
-} from '../../plugin-types'
+  ChannelInstance,
+  ChannelEvent,
+  ChannelMessage,
+  ChannelGroup,
+  MessagingChannelService,
+} from '../../channel-types'
 import { BasePluginService } from '../../base-plugin-service'
 import { WhatsAppApi } from './whatsapp-api'
 
@@ -29,18 +29,18 @@ export class WhatsAppService extends BasePluginService {
     return this.api.sendMessage('', content)
   }
 
-  async getGroupMessages(_chatId: string, _count?: number): Promise<PluginMessage[]> {
+  async getGroupMessages(_chatId: string, _count?: number): Promise<ChannelMessage[]> {
     return []
   }
 
-  async listGroups(): Promise<PluginGroup[]> {
+  async listGroups(): Promise<ChannelGroup[]> {
     return []
   }
 }
 
 export function createWhatsAppService(
-  instance: PluginInstance,
-  notify: (event: PluginEvent) => void
-): MessagingPluginService {
+  instance: ChannelInstance,
+  notify: (event: ChannelEvent) => void
+): MessagingChannelService {
   return new WhatsAppService(instance, notify)
 }

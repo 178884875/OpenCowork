@@ -3,10 +3,12 @@ import { ChevronDown, Check, Search, Eye, Wrench, Brain, Settings2 } from 'lucid
 import { useProviderStore } from '@renderer/stores/provider-store'
 import { useSettingsStore } from '@renderer/stores/settings-store'
 import { useChatStore } from '@renderer/stores/chat-store'
-import { usePluginStore } from '@renderer/stores/plugin-store'
+import { useChannelStore } from '@renderer/stores/channel-store'
+
 import { useTranslation } from 'react-i18next'
 import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip'
+
 import { ProviderIcon, ModelIcon } from '@renderer/components/settings/provider-icons'
 import { cn } from '@renderer/lib/utils'
 import type { AIModelConfig, AIProvider, ReasoningEffortLevel } from '@renderer/lib/api/types'
@@ -76,7 +78,7 @@ function selectModel(
     useChatStore.getState().updateSessionModel(sessionId, pid, modelId)
     const session = useChatStore.getState().sessions.find((s) => s.id === sessionId)
     if (session?.pluginId) {
-      void usePluginStore.getState().updatePlugin(session.pluginId, {
+      void useChannelStore.getState().updateChannel(session.pluginId, {
         providerId: pid,
         model: modelId,
       })

@@ -1,5 +1,26 @@
 import type { ProviderConfig } from './types'
 
+const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60 * 1000
+
+export type OpenAIImagesRequestErrorCode =
+  | 'timeout'
+  | 'network'
+  | 'request_aborted'
+  | 'api_error'
+  | 'unknown'
+
+export class OpenAIImagesRequestError extends Error {
+  readonly code: OpenAIImagesRequestErrorCode
+  readonly statusCode?: number
+
+  constructor(message: string, options: { code: OpenAIImagesRequestErrorCode; statusCode?: number }) {
+    super(message)
+    this.name = 'OpenAIImagesRequestError'
+    this.code = options.code
+    this.statusCode = options.statusCode
+  }
+}
+
 export interface Base64ImageInput {
   dataUrl: string
   mediaType?: string
@@ -76,6 +97,75 @@ function normalizeImageResults(items: OpenAiImageResponseItem[]): GeneratedImage
     .filter((item): item is GeneratedImage => Boolean(item))
 }
 
+function createRequestSignal(signal?: AbortSignal): {
+  signal: AbortSignal
+  didTimeout: () => boolean
+  cleanup: () => void
+} {
+  const timeoutController = new AbortController()
+  let timedOut = false
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+  const onParentAbort = (): void => {
+    timeoutController.abort(signal?.reason)
+  }
+
+  if (signal?.aborted) {
+    timeoutController.abort(signal.reason)
+  } else {
+    signal?.addEventListener('abort', onParentAbort, { once: true })
+  }
+
+  if (!timeoutController.signal.aborted) {
+    timeoutId = setTimeout(() => {
+      timedOut = true
+      timeoutController.abort(new DOMException('Image request timed out', 'TimeoutError'))
+    }, IMAGE_REQUEST_TIMEOUT_MS)
+  }
+
+  return {
+    signal: timeoutController.signal,
+    didTimeout: () => timedOut,
+    cleanup: () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+        timeoutId = null
+      }
+      signal?.removeEventListener('abort', onParentAbort)
+    },
+  }
+}
+
+function mapFetchError(error: unknown, didTimeout: boolean): OpenAIImagesRequestError {
+  if (didTimeout) {
+    return new OpenAIImagesRequestError('Image request timed out after 10 minutes', {
+      code: 'timeout',
+    })
+  }
+
+  if (error instanceof Error && error.name === 'AbortError') {
+    return new OpenAIImagesRequestError('Image request was cancelled', {
+      code: 'request_aborted',
+    })
+  }
+
+  if (error instanceof TypeError) {
+    return new OpenAIImagesRequestError(
+      `Network request failed while generating image. Please check your network, proxy, and Base URL settings. (${error.message})`,
+      { code: 'network' }
+    )
+  }
+
+  if (error instanceof OpenAIImagesRequestError) {
+    return error
+  }
+
+  const message = error instanceof Error ? error.message : String(error)
+  return new OpenAIImagesRequestError(message || 'Unknown image request error', {
+    code: 'unknown',
+  })
+}
+
 export async function generateImagesFromText(params: {
   config: ProviderConfig
   prompt: string
@@ -91,17 +181,25 @@ export async function generateImagesFromText(params: {
     prompt,
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-      ...(config.organization ? { 'OpenAI-Organization': config.organization } : {}),
-      ...(config.project ? { 'OpenAI-Project': config.project } : {}),
-    },
-    body: JSON.stringify(body),
-    signal,
-  })
+  const requestSignal = createRequestSignal(signal)
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+        ...(config.organization ? { 'OpenAI-Organization': config.organization } : {}),
+        ...(config.project ? { 'OpenAI-Project': config.project } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: requestSignal.signal,
+    })
+  } catch (error) {
+    throw mapFetchError(error, requestSignal.didTimeout())
+  } finally {
+    requestSignal.cleanup()
+  }
 
   if (!response.ok) {
     let errorMessage = `Image generation failed: ${response.status}`
@@ -119,13 +217,18 @@ export async function generateImagesFromText(params: {
       errorMessage = errorText
     }
     console.error('[OpenAI Images] Generation failed:', errorMessage)
-    throw new Error(errorMessage)
+    throw new OpenAIImagesRequestError(errorMessage, {
+      code: 'api_error',
+      statusCode: response.status,
+    })
   }
 
   const data = (await response.json()) as { data?: OpenAiImageResponseItem[] }
   const items = data.data ?? []
   if (items.length === 0) {
-    throw new Error('Image generation returned no results')
+    throw new OpenAIImagesRequestError('Image generation returned no results', {
+      code: 'api_error',
+    })
   }
 
   console.log('[OpenAI Images] Generation response:', items)
@@ -148,16 +251,24 @@ export async function editImageWithPrompt(params: {
   formData.append('prompt', prompt)
   formData.append('image', dataUrlToBlob(image), 'image.png')
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      ...(config.organization ? { 'OpenAI-Organization': config.organization } : {}),
-      ...(config.project ? { 'OpenAI-Project': config.project } : {}),
-    },
-    body: formData,
-    signal,
-  })
+  const requestSignal = createRequestSignal(signal)
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        ...(config.organization ? { 'OpenAI-Organization': config.organization } : {}),
+        ...(config.project ? { 'OpenAI-Project': config.project } : {}),
+      },
+      body: formData,
+      signal: requestSignal.signal,
+    })
+  } catch (error) {
+    throw mapFetchError(error, requestSignal.didTimeout())
+  } finally {
+    requestSignal.cleanup()
+  }
 
   if (!response.ok) {
     let errorMessage = `Image edit failed: ${response.status}`
@@ -175,13 +286,18 @@ export async function editImageWithPrompt(params: {
       errorMessage = errorText
     }
     console.error('[OpenAI Images] Edit failed:', errorMessage)
-    throw new Error(errorMessage)
+    throw new OpenAIImagesRequestError(errorMessage, {
+      code: 'api_error',
+      statusCode: response.status,
+    })
   }
 
   const data = (await response.json()) as { data?: OpenAiImageResponseItem[] }
   const items = data.data ?? []
   if (items.length === 0) {
-    throw new Error('Image edit returned no results')
+    throw new OpenAIImagesRequestError('Image edit returned no results', {
+      code: 'api_error',
+    })
   }
 
   console.log('[OpenAI Images] Edit response:', items)

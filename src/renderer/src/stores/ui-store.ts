@@ -4,7 +4,7 @@ import { create } from 'zustand'
 
 export type AppMode = 'chat' | 'cowork' | 'code'
 
-export type NavItem = 'chat' | 'plugins' | 'skills' | 'translate' | 'ssh'
+export type NavItem = 'chat' | 'channels' | 'skills' | 'translate' | 'ssh'
 
 export type ChatView = 'home' | 'session'
 
@@ -28,7 +28,7 @@ export interface PreviewPanelState {
 
 
 
-export type SettingsTab = 'general' | 'memory' | 'provider' | 'plugin' | 'mcp' | 'model' | 'websearch' | 'skillsmarket' | 'about'
+export type SettingsTab = 'general' | 'memory' | 'provider' | 'channel' | 'mcp' | 'model' | 'websearch' | 'skillsmarket' | 'about'
 
 export type DetailPanelContent =
 

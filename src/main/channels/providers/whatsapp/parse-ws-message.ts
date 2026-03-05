@@ -1,10 +1,10 @@
-import type { PluginIncomingMessageData } from '../../plugin-types'
+import type { ChannelIncomingMessageData } from '../../channel-types'
 
 /**
  * Parse a WhatsApp WebSocket message frame into normalized data.
  * Supports WhatsApp Cloud API webhook format and simple JSON envelope.
  */
-export function parseWhatsAppWsMessage(raw: string): PluginIncomingMessageData | null {
+export function parseWhatsAppWsMessage(raw: string): ChannelIncomingMessageData | null {
   try {
     const data = JSON.parse(raw)
 

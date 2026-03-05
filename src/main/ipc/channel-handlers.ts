@@ -2,14 +2,13 @@ import { ipcMain, BrowserWindow } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { FeishuApi } from '../plugins/providers/feishu/feishu-api'
+import { FeishuApi } from '../channels/providers/feishu/feishu-api'
 import { nanoid } from 'nanoid'
-import { PluginManager } from '../plugins/plugin-manager'
-import { PLUGIN_PROVIDERS } from '../plugins/plugin-descriptors'
+import { ChannelManager } from '../channels/channel-manager'
+import { CHANNEL_PROVIDERS } from '../channels/channel-descriptors'
 import { getDb } from '../db/database'
-import { handlePluginAutoReply } from '../plugins/auto-reply'
-import type { PluginInstance, PluginEvent } from '../plugins/plugin-types'
-import type { PluginProviderDescriptor } from '../plugins/plugin-types'
+import { handleChannelAutoReply } from '../channels/auto-reply'
+import type { ChannelInstance, ChannelEvent, ChannelProviderDescriptor } from '../channels/channel-types'
 
 const DATA_DIR = path.join(os.homedir(), '.open-cowork')
 const PLUGINS_FILE = path.join(DATA_DIR, 'plugins.json')
@@ -17,7 +16,7 @@ const PLUGINS_FILE = path.join(DATA_DIR, 'plugins.json')
 // ── Persistence helpers ──
 
 function buildToolsMap(
-  descriptor?: PluginProviderDescriptor,
+  descriptor?: ChannelProviderDescriptor,
   existing?: Record<string, boolean>
 ): Record<string, boolean> | undefined {
   if (!descriptor?.tools || descriptor.tools.length === 0) {
@@ -30,7 +29,7 @@ function buildToolsMap(
   return next
 }
 
-function readPlugins(): PluginInstance[] {
+function readPlugins(): ChannelInstance[] {
   try {
     if (fs.existsSync(PLUGINS_FILE)) {
       return JSON.parse(fs.readFileSync(PLUGINS_FILE, 'utf-8'))
@@ -41,7 +40,7 @@ function readPlugins(): PluginInstance[] {
   return []
 }
 
-function writePlugins(plugins: PluginInstance[]): void {
+function writePlugins(plugins: ChannelInstance[]): void {
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -52,9 +51,9 @@ function writePlugins(plugins: PluginInstance[]): void {
   }
 }
 
-// ── Notify renderer of plugin events ──
+// ── Notify renderer of channel events ──
 
-function notifyRenderer(event: PluginEvent): void {
+function notifyRenderer(event: ChannelEvent): void {
   const windows = BrowserWindow.getAllWindows()
   for (const win of windows) {
     win.webContents.send('plugin:incoming-message', event)
@@ -62,7 +61,7 @@ function notifyRenderer(event: PluginEvent): void {
 
   // Route incoming messages through auto-reply pipeline
   if (event.type === 'incoming_message') {
-    handlePluginAutoReply(event)
+    handleChannelAutoReply(event)
   }
 }
 
@@ -72,30 +71,30 @@ function notifyRenderer(event: PluginEvent): void {
  * Auto-start plugins that have features.autoStart = true and are enabled.
  * Called once at app startup after handlers are registered.
  */
-export async function autoStartPlugins(pluginManager: PluginManager): Promise<void> {
-  const plugins = readPlugins()
-  const toStart = plugins.filter(
+export async function autoStartChannels(channelManager: ChannelManager): Promise<void> {
+  const channels = readPlugins()
+  const toStart = channels.filter(
     (p) => p.enabled && (p.features?.autoStart ?? true) // default true for backward compat
   )
   for (const instance of toStart) {
     try {
-      await pluginManager.startPlugin(instance, notifyRenderer)
-      console.log(`[Plugins] Auto-started: ${instance.name} (${instance.type})`)
+      await channelManager.startPlugin(instance, notifyRenderer)
+      console.log(`[Channel Manager] Auto-started: ${instance.name} (${instance.type})`)
     } catch (err) {
-      console.error(`[Plugins] Auto-start failed for ${instance.name}:`, err)
+      console.error(`[Channel Manager] Auto-start failed for ${instance.name}:`, err)
     }
   }
 }
 
 let _handlersRegistered = false
 
-export function registerPluginHandlers(pluginManager: PluginManager): void {
+export function registerChannelHandlers(channelManager: ChannelManager): void {
   if (_handlersRegistered) return
   _handlersRegistered = true
 
   // List available provider descriptors
   ipcMain.handle('plugin:list-providers', () => {
-    return PLUGIN_PROVIDERS
+    return CHANNEL_PROVIDERS
   })
 
   // List persisted plugin instances (auto-provisions built-in plugins)
@@ -104,7 +103,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
     let changed = false
 
     // Auto-provision built-in plugins that don't exist yet
-    for (const descriptor of PLUGIN_PROVIDERS) {
+    for (const descriptor of CHANNEL_PROVIDERS) {
       const existing = plugins.find((p) => p.type === descriptor.type)
       if (!existing) {
         const config: Record<string, string> = {}
@@ -132,7 +131,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
 
     // Ensure old plugin instances have config keys matching their current schema
     for (const p of plugins) {
-      const desc = PLUGIN_PROVIDERS.find((d) => d.type === p.type)
+      const desc = CHANNEL_PROVIDERS.find((d) => d.type === p.type)
       if (!desc) continue
       const schemaKeys = new Set(desc.configSchema.map((f) => f.key))
       for (const field of desc.configSchema) {
@@ -157,14 +156,14 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
     }
 
     if (changed) writePlugins(plugins)
-    console.log(`[Plugins] Loaded ${plugins.length} plugins (${plugins.filter((p) => p.builtin).length} built-in)`)
+    console.log(`[Channels] Loaded ${plugins.length} channels (${plugins.filter((p) => p.builtin).length} built-in)`)
     return plugins
   })
 
   // Add a new plugin instance
-  ipcMain.handle('plugin:add', (_event, instance: PluginInstance) => {
+  ipcMain.handle('plugin:add', (_event, instance: ChannelInstance) => {
     const plugins = readPlugins()
-    const desc = PLUGIN_PROVIDERS.find((d) => d.type === instance.type)
+    const desc = CHANNEL_PROVIDERS.find((d) => d.type === instance.type)
     const nextTools = buildToolsMap(desc, instance.tools)
     plugins.push({
       ...instance,
@@ -177,7 +176,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   // Update a plugin instance
   ipcMain.handle(
     'plugin:update',
-    (_event, { id, patch }: { id: string; patch: Partial<PluginInstance> }) => {
+    (_event, { id, patch }: { id: string; patch: Partial<ChannelInstance> }) => {
       const plugins = readPlugins()
       const idx = plugins.findIndex((p) => p.id === id)
       if (idx === -1) return { success: false, error: 'Plugin not found' }
@@ -196,7 +195,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
           db.prepare('UPDATE sessions SET provider_id = ?, model_id = ? WHERE plugin_id = ?')
             .run(providerId, modelId, id)
         } catch (err) {
-          console.error('[Plugins] Failed to sync plugin session model:', err)
+          console.error('[Channels] Failed to sync channel session model:', err)
         }
       }
       return { success: true }
@@ -212,7 +211,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
       return { success: false, error: 'Built-in plugins cannot be removed' }
     }
     // Stop service if running
-    await pluginManager.stopPlugin(id)
+    await channelManager.stopPlugin(id)
     const plugins = allPlugins.filter((p) => p.id !== id)
     writePlugins(plugins)
     // Cascade-delete plugin sessions and their messages
@@ -229,7 +228,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
         db.prepare('DELETE FROM sessions WHERE plugin_id = ?').run(id)
       }
     } catch (err) {
-      console.error('[Plugins] Failed to cascade-delete sessions:', err)
+      console.error('[Channels] Failed to cascade-delete sessions:', err)
     }
     return { success: true }
   })
@@ -241,7 +240,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
     if (!instance) return { success: false, error: 'Plugin not found' }
 
     try {
-      await pluginManager.startPlugin(instance, notifyRenderer)
+      await channelManager.startPlugin(instance, notifyRenderer)
       return { success: true }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -251,13 +250,13 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
 
   // Stop a plugin service
   ipcMain.handle('plugin:stop', async (_event, id: string) => {
-    await pluginManager.stopPlugin(id)
+    await channelManager.stopPlugin(id)
     return { success: true }
   })
 
   // Get plugin status
   ipcMain.handle('plugin:status', (_event, id: string) => {
-    return pluginManager.getStatus(id)
+    return channelManager.getStatus(id)
   })
 
   // Unified action dispatch — routes to the correct MessagingPluginService method
@@ -267,7 +266,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
       _event,
       { pluginId, action, params }: { pluginId: string; action: string; params: Record<string, unknown> }
     ) => {
-      const service = pluginManager.getService(pluginId)
+      const service = channelManager.getService(pluginId)
       if (!service) {
         throw new Error(`Plugin ${pluginId} is not running`)
       }
@@ -340,7 +339,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   // ── Streaming output IPC ──
 
   // Active streaming handles keyed by `${pluginId}:${chatId}`
-  const streamHandles = new Map<string, import('../plugins/plugin-types').StreamingHandle>()
+  const streamHandles = new Map<string, import('../channels/channel-types').ChannelStreamingHandle>()
 
   /**
    * Start a streaming message for a plugin chat.
@@ -353,7 +352,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
       _event,
       args: { pluginId: string; chatId: string; initialContent: string; messageId?: string }
     ) => {
-      const service = pluginManager.getService(args.pluginId)
+      const service = channelManager.getService(args.pluginId)
       if (!service || !service.supportsStreaming || !service.sendStreamingMessage) {
         return { ok: false, supportsStreaming: false }
       }
@@ -435,7 +434,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:send-image',
     async (_event, args: { pluginId: string; chatId: string; filePath: string }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
 
       try {
@@ -478,7 +477,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:send-file',
     async (_event, args: { pluginId: string; chatId: string; filePath: string; fileType?: string }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
 
       try {
@@ -528,7 +527,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:send-mention',
     async (_event, args: { pluginId: string; chatId?: string; userIds?: string[]; atAll?: boolean; text?: string }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
 
       try {
@@ -574,7 +573,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:list-members',
     async (_event, args: { pluginId: string; chatId?: string; pageToken?: string; pageSize?: number; memberIdType?: 'open_id' | 'user_id' | 'union_id' }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
 
       try {
@@ -599,7 +598,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:send-urgent',
     async (_event, args: { pluginId: string; messageId: string; userIds: string[]; urgentTypes: Array<'app' | 'sms'> }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
 
       try {
@@ -625,7 +624,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:download-resource',
     async (_event, args: { pluginId: string; messageId: string; fileKey: string; type?: 'image' | 'file'; mediaType?: string }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
 
       try {
@@ -648,7 +647,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:bitable:list-apps',
     async (_event, args: { pluginId: string }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
       try {
         const data = await service.api.listBitableApps()
@@ -663,7 +662,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:bitable:list-tables',
     async (_event, args: { pluginId: string; appToken: string }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
       try {
         const data = await service.api.listBitableTables(args.appToken)
@@ -678,7 +677,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:bitable:list-fields',
     async (_event, args: { pluginId: string; appToken: string; tableId: string }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
       try {
         const data = await service.api.listBitableFields(args.appToken, args.tableId)
@@ -693,7 +692,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:bitable:get-records',
     async (_event, args: { pluginId: string; appToken: string; tableId: string; filter?: string; pageSize?: number; pageToken?: string }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
       try {
         const data = await service.api.getBitableRecords(args.appToken, args.tableId, {
@@ -712,7 +711,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:bitable:create-records',
     async (_event, args: { pluginId: string; appToken: string; tableId: string; records: unknown[] }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
       try {
         const data = await service.api.createBitableRecords(args.appToken, args.tableId, args.records)
@@ -727,7 +726,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:bitable:update-records',
     async (_event, args: { pluginId: string; appToken: string; tableId: string; records: unknown[] }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
       try {
         const data = await service.api.updateBitableRecords(args.appToken, args.tableId, args.records)
@@ -742,7 +741,7 @@ export function registerPluginHandlers(pluginManager: PluginManager): void {
   ipcMain.handle(
     'plugin:feishu:bitable:delete-records',
     async (_event, args: { pluginId: string; appToken: string; tableId: string; recordIds: string[] }) => {
-      const service = pluginManager.getService(args.pluginId) as import('../plugins/providers/feishu/feishu-service').FeishuService | undefined
+      const service = channelManager.getService(args.pluginId) as import('../channels/providers/feishu/feishu-service').FeishuService | undefined
       if (!service?.api) return { error: 'Feishu plugin not running or not found' }
       try {
         const data = await service.api.deleteBitableRecords(args.appToken, args.tableId, args.recordIds)

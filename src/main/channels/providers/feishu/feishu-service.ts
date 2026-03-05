@@ -1,13 +1,13 @@
 import * as Lark from '@larksuiteoapi/node-sdk'
 import type {
-  PluginInstance,
-  PluginEvent,
-  PluginMessage,
-  PluginGroup,
-  MessagingPluginService,
-  StreamingHandle,
-  PluginIncomingMessageData,
-} from '../../plugin-types'
+  ChannelInstance,
+  ChannelEvent,
+  ChannelMessage,
+  ChannelGroup,
+  MessagingChannelService,
+  ChannelStreamingHandle,
+  ChannelIncomingMessageData,
+} from '../../channel-types'
 import { FeishuApi } from './feishu-api'
 
 /** Throttle interval for card updates (ms) */
@@ -48,13 +48,13 @@ function buildFetchHttpInstance(): Lark.HttpInstance {
  * fetch-based httpInstance to bypass axios failures in Electron.
  * SDK handles protobuf frame parsing; we only handle event dispatch.
  */
-export class FeishuService implements MessagingPluginService {
+export class FeishuService implements MessagingChannelService {
   readonly pluginId: string
   readonly pluginType = 'feishu-bot'
   readonly supportsStreaming = true
 
-  private _instance: PluginInstance
-  private _notify: (event: PluginEvent) => void
+  private _instance: ChannelInstance
+  private _notify: (event: ChannelEvent) => void
   private _running = false
   api!: FeishuApi
   private wsClient: Lark.WSClient | null = null
@@ -68,7 +68,7 @@ export class FeishuService implements MessagingPluginService {
   /** Bot's own open_id — fetched once at startup for reliable @mention detection */
   private _botOpenId = ''
 
-  constructor(instance: PluginInstance, notify: (event: PluginEvent) => void) {
+  constructor(instance: ChannelInstance, notify: (event: ChannelEvent) => void) {
     this._instance = instance
     this._notify = notify
     this.pluginId = instance.id
@@ -153,7 +153,7 @@ export class FeishuService implements MessagingPluginService {
 
             let content = ''
             let images: Array<{ base64: string; mediaType: string }> | undefined
-            let audio: PluginIncomingMessageData['audio']
+            let audio: ChannelIncomingMessageData['audio']
 
             try {
               const parsed = JSON.parse(msg.message?.content ?? '{}')
@@ -234,7 +234,7 @@ export class FeishuService implements MessagingPluginService {
                 msgType,
                 chatName,
                 chatType,
-              } as PluginIncomingMessageData,
+              } as ChannelIncomingMessageData,
             })
           } catch (err) {
             console.error('[Feishu] Error handling message:', err)
@@ -296,7 +296,7 @@ export class FeishuService implements MessagingPluginService {
     return this.api.replyMessage(messageId, content)
   }
 
-  async getGroupMessages(chatId: string, count?: number): Promise<PluginMessage[]> {
+  async getGroupMessages(chatId: string, count?: number): Promise<ChannelMessage[]> {
     const messages = await this.api.getMessages(chatId, count)
     return messages.map((m) => ({
       id: m.message_id,
@@ -309,7 +309,7 @@ export class FeishuService implements MessagingPluginService {
     }))
   }
 
-  async listGroups(): Promise<PluginGroup[]> {
+  async listGroups(): Promise<ChannelGroup[]> {
     const chats = await this.api.listChats()
     return chats.map((c) => ({
       id: c.chat_id,
@@ -330,23 +330,22 @@ export class FeishuService implements MessagingPluginService {
   async sendStreamingMessage(
     chatId: string,
     initialContent: string,
-    replyToMessageId?: string
-  ): Promise<StreamingHandle> {
+    messageId?: string
+  ): Promise<ChannelStreamingHandle> {
     const { cardId } = await this.api.createCard(
       initialContent || '⏳ Thinking...',
       this._instance.name || 'AI Assistant'
     )
 
-    // Reply to the original message if messageId is provided, otherwise send as new message
-    if (replyToMessageId) {
-      await this.api.replyCardMessage(replyToMessageId, cardId)
+    if (messageId) {
+      await this.api.replyCardMessage(messageId, cardId)
     } else {
       await this.api.sendCardMessage(chatId, cardId)
     }
 
     let lastUpdateTime = 0
 
-    const handle: StreamingHandle = {
+    const handle: ChannelStreamingHandle = {
       update: async (content: string) => {
         const now = Date.now()
         if (now - lastUpdateTime < STREAM_THROTTLE_MS) return
@@ -366,8 +365,8 @@ export class FeishuService implements MessagingPluginService {
 }
 
 export function createFeishuService(
-  instance: PluginInstance,
-  notify: (event: PluginEvent) => void
-): MessagingPluginService {
+  instance: ChannelInstance,
+  notify: (event: ChannelEvent) => void
+): MessagingChannelService {
   return new FeishuService(instance, notify)
 }

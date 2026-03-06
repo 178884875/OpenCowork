@@ -3,6 +3,19 @@
 All notable changes to **OpenCowork** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com).
 
+## [0.4.2] - 2026-03-06
+
+### Added
+- **QQ 频道插件** — 新增 QQ 机器人消息收发支持,支持 WebSocket 连接和消息解析。
+- **应用插件系统** — 新增应用插件架构,支持扩展工具能力,首个插件为图片生成插件。
+- **图片插件功能** — 支持图片生成和附件处理,集成多个图片生成模型。
+
+### Changed
+- **设置面板优化** — 新增应用插件配置面板,改进插件管理界面。
+- **文档更新** — 添加 QQ 插件和应用插件使用说明文档。
+- **多语言翻译** — 更新中英文翻译文件,添加新功能相关文案。
+- **Web 搜索改进** — 优化 Web 搜索工具和提供商配置。
+
 ## [0.4.1] - 2026-03-06
 
 ### Added

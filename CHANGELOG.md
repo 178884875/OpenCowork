@@ -6,15 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com).
 ## [0.4.2] - 2026-03-06
 
 ### Added
-- **QQ 频道插件** — 新增 QQ 机器人消息收发支持,支持 WebSocket 连接和消息解析。
-- **应用插件系统** — 新增应用插件架构,支持扩展工具能力,首个插件为图片生成插件。
-- **图片插件功能** — 支持图片生成和附件处理,集成多个图片生成模型。
+- **QQ Channel Plugin** — new QQ bot integration with WebSocket message parsing and bidirectional messaging support for QQ channels.
+- **App Plugin System** — introduced extensible app plugin architecture enabling tool capability extensions; first plugin is the image generation plugin.
+- **Image Plugin** — integrated image generation capabilities with support for multiple models (Doubao SeedDream, etc.), inline image generation in chat, and attachment handling.
 
 ### Changed
-- **设置面板优化** — 新增应用插件配置面板,改进插件管理界面。
-- **文档更新** — 添加 QQ 插件和应用插件使用说明文档。
-- **多语言翻译** — 更新中英文翻译文件,添加新功能相关文案。
-- **Web 搜索改进** — 优化 Web 搜索工具和提供商配置。
+- **Settings Panel Enhancements** — added dedicated App Plugin configuration panel with improved plugin management UI and clearer layout.
+- **Documentation Updates** — added comprehensive guides for QQ plugin setup and app plugin system usage.
+- **Localization Improvements** — updated English and Chinese translation files with new feature strings and refined UI text.
+- **Web Search Refinements** — optimized web search tool implementation and provider configuration flow.
 
 ## [0.4.1] - 2026-03-06
 

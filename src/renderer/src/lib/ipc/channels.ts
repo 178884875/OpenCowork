@@ -37,6 +37,11 @@ export const IPC = {
   SHELL_EXEC: 'shell:exec',
   SHELL_ABORT: 'shell:abort',
 
+  // Agent Changes
+  AGENT_CHANGES_LIST: 'agent:changes:list',
+  AGENT_CHANGES_ACCEPT: 'agent:changes:accept',
+  AGENT_CHANGES_ROLLBACK: 'agent:changes:rollback',
+
   // Process Management
   PROCESS_SPAWN: 'process:spawn',
   PROCESS_KILL: 'process:kill',

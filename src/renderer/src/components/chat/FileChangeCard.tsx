@@ -6,6 +6,7 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { cn } from '@renderer/lib/utils'
 import type { ToolCallStatus } from '@renderer/lib/agent/types'
 import type { ToolResultContent } from '@renderer/lib/api/types'
+import type { AgentRunFileChange } from '@renderer/stores/agent-store'
 import { MONO_FONT } from '@renderer/lib/constants'
 import { AnimatePresence, motion } from 'motion/react'
 
@@ -20,6 +21,7 @@ interface FileChangeCardProps {
   error?: string
   startedAt?: number
   completedAt?: number
+  trackedChange?: AgentRunFileChange
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -88,6 +90,17 @@ function computeDiff(oldStr: string, newStr: string): DiffLine[] {
     }
   }
   return result.reverse()
+}
+
+function summarizeDiff(lines: DiffLine[]): { added: number; deleted: number } {
+  return lines.reduce(
+    (acc, line) => {
+      if (line.type === 'add') acc.added += 1
+      if (line.type === 'del') acc.deleted += 1
+      return acc
+    },
+    { added: 0, deleted: 0 }
+  )
 }
 
 type DiffChunk = { type: 'lines'; lines: DiffLine[] } | { type: 'collapsed'; count: number; lines: DiffLine[] }
@@ -159,8 +172,39 @@ function FileIcon({ name }: { name: string }): React.JSX.Element {
 
 // ── Change Stats Badge ───────────────────────────────────────────
 
-function ChangeStats({ name, input }: { name: string; input: Record<string, unknown> }): React.JSX.Element | null {
+function ChangeStats({
+  name,
+  input,
+  trackedChange,
+}: {
+  name: string
+  input: Record<string, unknown>
+  trackedChange?: AgentRunFileChange
+}): React.JSX.Element | null {
   const { t } = useTranslation('chat')
+
+  if (trackedChange) {
+    if (trackedChange.op === 'create') {
+      const lines = (trackedChange.after.text ?? '').split('\n').length
+      return (
+        <span className="flex items-center gap-1.5 text-[10px]">
+          <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-green-500 font-medium">{t('fileChange.new')}</span>
+          <span className="text-green-400/70">+{lines}</span>
+        </span>
+      )
+    }
+
+    const stats = summarizeDiff(
+      computeDiff(trackedChange.before.text ?? '', trackedChange.after.text ?? '')
+    )
+    return (
+      <span className="flex items-center gap-1 text-[10px]">
+        <span className="text-green-400/70">+{stats.added}</span>
+        <span className="text-red-400/70">-{stats.deleted}</span>
+      </span>
+    )
+  }
+
   if (name === 'Write') {
     const content = String(input.content ?? '')
     const lines = content.split('\n').length
@@ -305,6 +349,7 @@ export function FileChangeCard({
   error,
   startedAt,
   completedAt,
+  trackedChange,
 }: FileChangeCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
   const [collapsed, setCollapsed] = React.useState(false)
@@ -350,7 +395,7 @@ export function FileChangeCard({
         <span className="text-[10px] text-muted-foreground/40 font-mono truncate max-w-[120px] hidden sm:block" title={filePath}>
           {shortPath(filePath)}
         </span>
-        <ChangeStats name={name} input={input} />
+        <ChangeStats name={name} input={input} trackedChange={trackedChange} />
         {elapsed && (
           <span className="text-[9px] text-muted-foreground/30 tabular-nums shrink-0">{elapsed}</span>
         )}
@@ -368,13 +413,31 @@ export function FileChangeCard({
             className="border-t border-inherit bg-zinc-950 overflow-hidden"
           >
             {/* Edit: single diff */}
-            {name === 'Edit' && !!input.old_string && !!input.new_string && (
+            {name === 'Edit' && trackedChange && (
+              <InlineDiff
+                oldStr={trackedChange.before.text ?? ''}
+                newStr={trackedChange.after.text ?? ''}
+              />
+            )}
+            {name === 'Edit' && !trackedChange && !!input.old_string && !!input.new_string && (
               <InlineDiff oldStr={String(input.old_string)} newStr={String(input.new_string)} />
             )}
 
-
-            {/* Write: new file content */}
-            {name === 'Write' && !!input.content && (
+            {/* Write: new file content or overwrite diff */}
+            {name === 'Write' && trackedChange?.op === 'modify' && (
+              <InlineDiff
+                oldStr={trackedChange.before.text ?? ''}
+                newStr={trackedChange.after.text ?? ''}
+              />
+            )}
+            {name === 'Write' && trackedChange?.op === 'create' && (
+              <NewFileContent
+                content={trackedChange.after.text ?? ''}
+                filePath={filePath}
+                isStreaming={status === 'streaming'}
+              />
+            )}
+            {name === 'Write' && !trackedChange && !!input.content && (
               <NewFileContent content={String(input.content)} filePath={filePath} isStreaming={status === 'streaming'} />
             )}
 

@@ -17,6 +17,7 @@ import { ImagePreview } from './ImagePreview'
 import { ImagePluginToolCard } from './ImagePluginToolCard'
 import { useChatStore } from '@renderer/stores/chat-store'
 import { useAgentStore } from '@renderer/stores/agent-store'
+import type { AgentRunFileChange } from '@renderer/stores/agent-store'
 import { useShallow } from 'zustand/react/shallow'
 import type {
   ContentBlock,
@@ -28,6 +29,7 @@ import { useSettingsStore } from '@renderer/stores/settings-store'
 import { ToolCallCard } from './ToolCallCard'
 import { ToolCallGroup } from './ToolCallGroup'
 import { FileChangeCard } from './FileChangeCard'
+import { RunChangeReviewCard } from './RunChangeReviewCard'
 import { SubAgentCard } from './SubAgentCard'
 import { TaskCard } from './TodoCard'
 import { ThinkingBlock } from './ThinkingBlock'
@@ -604,6 +606,8 @@ export function AssistantMessage({
   const isGeneratingImage = useChatStore((s) =>
     msgId ? !!s.generatingImageMessages[msgId] : false
   )
+  const runChangeSet = useAgentStore((s) => (msgId ? s.runChangesByRunId[msgId] : undefined))
+  const refreshRunChanges = useAgentStore((s) => s.refreshRunChanges)
 
   const stringSegments = useMemo(
     () => (typeof content === 'string' ? parseThinkTags(content) : null),
@@ -617,6 +621,15 @@ export function AssistantMessage({
     () => normalizedContent?.filter((block) => block.type === 'tool_use').length ?? 0,
     [normalizedContent]
   )
+  const trackedChangeByToolUseId = useMemo(() => {
+    const map = new Map<string, AgentRunFileChange>()
+    for (const change of runChangeSet?.changes ?? []) {
+      if (change.toolUseId) {
+        map.set(change.toolUseId, change)
+      }
+    }
+    return map
+  }, [runChangeSet])
   const hasStructuredThinkingBlocks = useMemo(
     () => normalizedContent?.some((block) => block.type === 'thinking') ?? false,
     [normalizedContent]
@@ -625,6 +638,11 @@ export function AssistantMessage({
     if (!isStreaming || !normalizedContent) return -1
     return normalizedContent.reduce((acc: number, block, idx) => (block.type === 'text' ? idx : acc), -1)
   }, [isStreaming, normalizedContent])
+  useEffect(() => {
+    if (!msgId || isStreaming) return
+    void refreshRunChanges(msgId)
+  }, [isStreaming, msgId, refreshRunChanges])
+
   const renderItems = useMemo(() => {
     if (!normalizedContent) return []
     type RenderItem =
@@ -825,6 +843,7 @@ export function AssistantMessage({
               error={liveTc?.error}
               startedAt={liveTc?.startedAt}
               completedAt={liveTc?.completedAt}
+              trackedChange={trackedChangeByToolUseId.get(block.id)}
             />
           </ScaleIn>
         )
@@ -1128,6 +1147,9 @@ export function AssistantMessage({
           )}
         </div>
         {renderContent()}
+        {!isStreaming && runChangeSet && runChangeSet.changes.length > 0 && (
+          <RunChangeReviewCard runId={runChangeSet.runId} changeSet={runChangeSet} />
+        )}
         {!isStreaming && plainText && (
           <p className="mt-1 text-[10px] text-muted-foreground/40 tabular-nums">
             {usage

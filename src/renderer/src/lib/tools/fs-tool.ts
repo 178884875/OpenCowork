@@ -45,6 +45,28 @@ function sshArgs(ctx: ToolContext, extra: Record<string, unknown>): Record<strin
   return { connectionId: ctx.sshConnectionId, ...extra }
 }
 
+function localWriteArgs(
+  ctx: ToolContext,
+  path: string,
+  content: string,
+  toolName: 'Write' | 'Edit'
+): Record<string, unknown> {
+  return {
+    path,
+    content,
+    ...(ctx.agentRunId
+      ? {
+          changeMeta: {
+            runId: ctx.agentRunId,
+            sessionId: ctx.sessionId,
+            toolUseId: ctx.currentToolUseId,
+            toolName,
+          },
+        }
+      : {}),
+  }
+}
+
 // ── Plugin path permission helpers ──
 
 function normalizePath(p: string): string {
@@ -186,10 +208,10 @@ const writeHandler: ToolHandler = {
       if (isErrorResult(result)) throw new Error(`Write failed: ${result.error}`)
       return JSON.stringify({ success: true, path: resolvedPath })
     }
-    const result = await ctx.ipc.invoke(IPC.FS_WRITE_FILE, {
-      path: resolvedPath,
-      content: input.content,
-    })
+    const result = await ctx.ipc.invoke(
+      IPC.FS_WRITE_FILE,
+      localWriteArgs(ctx, resolvedPath, input.content, 'Write')
+    )
     if (isErrorResult(result)) {
       throw new Error(`Write failed: ${result.error}`)
     }
@@ -257,7 +279,7 @@ const editHandler: ToolHandler = {
       const writeChFallback = isSsh(ctx) ? IPC.SSH_FS_WRITE_FILE : IPC.FS_WRITE_FILE
       const writeArgsFallback = isSsh(ctx)
         ? sshArgs(ctx, { path: resolvedPath, content: updatedFallback })
-        : { path: resolvedPath, content: updatedFallback }
+        : localWriteArgs(ctx, resolvedPath, updatedFallback, 'Edit')
       await ctx.ipc.invoke(writeChFallback, writeArgsFallback)
       return JSON.stringify({ success: true })
     }
@@ -275,7 +297,7 @@ const editHandler: ToolHandler = {
     const writeCh = isSsh(ctx) ? IPC.SSH_FS_WRITE_FILE : IPC.FS_WRITE_FILE
     const writeArgs = isSsh(ctx)
       ? sshArgs(ctx, { path: resolvedPath, content: updated })
-      : { path: resolvedPath, content: updated }
+      : localWriteArgs(ctx, resolvedPath, updated, 'Edit')
     await ctx.ipc.invoke(writeCh, writeArgs)
     return JSON.stringify({ success: true })
   },

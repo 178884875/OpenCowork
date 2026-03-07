@@ -12,6 +12,7 @@ let is: any
 import icon from '../../resources/icon.png?asset'
 
 import { registerFsHandlers } from './ipc/fs-handlers'
+import { registerAgentChangeHandlers } from './ipc/agent-change-handlers'
 
 import { registerShellHandlers } from './ipc/shell-handlers'
 
@@ -359,6 +360,7 @@ if (gotSingleInstanceLock) {
     // Register IPC handlers
 
     registerFsHandlers()
+    registerAgentChangeHandlers()
 
     registerShellHandlers()
 

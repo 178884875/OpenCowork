@@ -2,6 +2,7 @@ import { ipcMain, dialog, BrowserWindow, app } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { globSync } from 'glob'
+import { recordLocalTextWriteChange } from './agent-change-handlers'
 
 const IMAGE_EXTENSIONS = new Set([
   '.png',
@@ -62,18 +63,37 @@ export function registerFsHandlers(): void {
     }
   )
 
-  ipcMain.handle('fs:write-file', async (_event, args: { path: string; content: string }) => {
-    try {
-      const dir = path.dirname(args.path)
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true })
+  ipcMain.handle(
+    'fs:write-file',
+    async (
+      _event,
+      args: {
+        path: string
+        content: string
+        changeMeta?: { runId?: string; sessionId?: string; toolUseId?: string; toolName?: string }
       }
-      fs.writeFileSync(args.path, args.content, 'utf-8')
-      return { success: true }
-    } catch (err) {
-      return { error: String(err) }
+    ) => {
+      try {
+        const beforeExists = fs.existsSync(args.path)
+        const beforeText = beforeExists ? fs.readFileSync(args.path, 'utf-8') : undefined
+        const dir = path.dirname(args.path)
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true })
+        }
+        fs.writeFileSync(args.path, args.content, 'utf-8')
+        recordLocalTextWriteChange({
+          meta: args.changeMeta,
+          filePath: args.path,
+          beforeExists,
+          beforeText,
+          afterText: args.content,
+        })
+        return { success: true }
+      } catch (err) {
+        return { error: String(err) }
+      }
     }
-  })
+  )
 
   ipcMain.handle('fs:list-dir', async (_event, args: { path: string; ignore?: string[] }) => {
     try {

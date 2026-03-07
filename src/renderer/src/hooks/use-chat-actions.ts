@@ -1219,6 +1219,7 @@ export function useChatActions(): {
               sshConnectionId: session?.sshConnectionId,
               signal: abortController.signal,
               ipc: ipcClient,
+              agentRunId: assistantMsgId,
               ...(sessionChannelId &&
                 sessionChannelChatId && {
                   pluginId: sessionChannelId,
@@ -1472,6 +1473,12 @@ export function useChatActions(): {
                   error: event.toolCall.error,
                   completedAt: event.toolCall.completedAt
                 })
+                if (
+                  event.toolCall.status === 'completed' &&
+                  (event.toolCall.name === 'Write' || event.toolCall.name === 'Edit')
+                ) {
+                  void useAgentStore.getState().refreshRunChanges(assistantMsgId)
+                }
                 break
 
               case 'iteration_end':

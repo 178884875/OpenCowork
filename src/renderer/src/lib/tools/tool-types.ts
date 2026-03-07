@@ -11,6 +11,8 @@ export interface ToolContext {
   ipc: IPCClient
   /** The tool_use block id currently being executed (set by agent-loop) */
   currentToolUseId?: string
+  /** Current top-level agent run id, reused for post-run change review and rollback. */
+  agentRunId?: string
   /** Identifies the calling agent (e.g. 'CronAgent') — used to restrict certain tool behaviors */
   callerAgent?: string
   /** Plugin ID when running inside a plugin auto-reply session */

@@ -23,6 +23,7 @@ const MAX_TOOL_ERROR_CHARS = 2_000
 const MAX_IMAGE_BASE64_CHARS = 4_096
 const MAX_BACKGROUND_PROCESS_OUTPUT_CHARS = 20_000
 const MAX_BACKGROUND_PROCESS_ENTRIES = 120
+const MAX_RUN_CHANGESETS = 120
 
 function truncateText(value: string, max: number): string {
   if (value.length <= max) return value
@@ -221,11 +222,58 @@ function trimBackgroundProcessMap(map: Record<string, BackgroundProcessState>): 
 
 export type { SubAgentState }
 
+export interface AgentFileSnapshot {
+  exists: boolean
+  text?: string
+  hash: string | null
+  size: number
+}
+
+export interface AgentRunFileChange {
+  id: string
+  runId: string
+  sessionId?: string
+  toolUseId?: string
+  toolName?: string
+  filePath: string
+  op: 'create' | 'modify'
+  before: AgentFileSnapshot
+  after: AgentFileSnapshot
+  createdAt: number
+  revertedAt?: number
+  conflict?: string
+}
+
+export interface AgentRunChangeSet {
+  runId: string
+  sessionId?: string
+  assistantMessageId: string
+  status: 'open' | 'accepted' | 'reverting' | 'reverted' | 'conflicted'
+  changes: AgentRunFileChange[]
+  createdAt: number
+  updatedAt: number
+}
+
+function isAgentChangeError(value: unknown): value is { error: string } {
+  if (!value || typeof value !== 'object') return false
+  return typeof (value as { error?: unknown }).error === 'string'
+}
+
+function trimRunChangesMap(map: Record<string, AgentRunChangeSet>): void {
+  const entries = Object.entries(map).sort((a, b) => a[1].updatedAt - b[1].updatedAt)
+  if (entries.length <= MAX_RUN_CHANGESETS) return
+  const removeCount = entries.length - MAX_RUN_CHANGESETS
+  for (let index = 0; index < removeCount; index += 1) {
+    delete map[entries[index][0]]
+  }
+}
+
 interface AgentStore {
   isRunning: boolean
   currentLoopId: string | null
   pendingToolCalls: ToolCallState[]
   executedToolCalls: ToolCallState[]
+  runChangesByRunId: Record<string, AgentRunChangeSet>
 
   /** Per-session agent running state for sidebar indicators */
   runningSessions: Record<string, 'running' | 'completed'>
@@ -273,6 +321,9 @@ interface AgentStore {
   switchToolCallSession: (prevSessionId: string | null, nextSessionId: string | null) => void
   addToolCall: (tc: ToolCallState) => void
   updateToolCall: (id: string, patch: Partial<ToolCallState>) => void
+  refreshRunChanges: (runId: string) => Promise<void>
+  acceptRunChanges: (runId: string) => Promise<{ error?: string }>
+  rollbackRunChanges: (runId: string) => Promise<{ error?: string }>
   clearToolCalls: () => void
   abort: () => void
 
@@ -298,6 +349,7 @@ export const useAgentStore = create<AgentStore>()(
       currentLoopId: null,
       pendingToolCalls: [],
       executedToolCalls: [],
+      runChangesByRunId: {},
       runningSessions: {},
       sessionToolCallsCache: {},
       activeSubAgents: {},
@@ -623,6 +675,66 @@ export const useAgentStore = create<AgentStore>()(
         })
       },
 
+      refreshRunChanges: async (runId) => {
+        if (!runId) return
+        try {
+          const result = await ipcClient.invoke(IPC.AGENT_CHANGES_LIST, { runId })
+          if (isAgentChangeError(result)) return
+          set((state) => {
+            if (result && typeof result === 'object' && 'runId' in result) {
+              state.runChangesByRunId[runId] = result as AgentRunChangeSet
+              trimRunChangesMap(state.runChangesByRunId)
+            } else {
+              delete state.runChangesByRunId[runId]
+            }
+          })
+        } catch {
+          // ignore fetch failures for ephemeral change journal state
+        }
+      },
+
+      acceptRunChanges: async (runId) => {
+        if (!runId) return { error: 'runId is required' }
+        try {
+          const result = await ipcClient.invoke(IPC.AGENT_CHANGES_ACCEPT, { runId })
+          if (isAgentChangeError(result)) return { error: result.error }
+          const changeset =
+            result && typeof result === 'object' && 'changeset' in result
+              ? (result as { changeset?: AgentRunChangeSet }).changeset
+              : undefined
+          set((state) => {
+            if (changeset) {
+              state.runChangesByRunId[runId] = changeset
+              trimRunChangesMap(state.runChangesByRunId)
+            }
+          })
+          return {}
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : String(error) }
+        }
+      },
+
+      rollbackRunChanges: async (runId) => {
+        if (!runId) return { error: 'runId is required' }
+        try {
+          const result = await ipcClient.invoke(IPC.AGENT_CHANGES_ROLLBACK, { runId })
+          if (isAgentChangeError(result)) return { error: result.error }
+          const changeset =
+            result && typeof result === 'object' && 'changeset' in result
+              ? (result as { changeset?: AgentRunChangeSet }).changeset
+              : undefined
+          set((state) => {
+            if (changeset) {
+              state.runChangesByRunId[runId] = changeset
+              trimRunChangesMap(state.runChangesByRunId)
+            }
+          })
+          return {}
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : String(error) }
+        }
+      },
+
       handleSubAgentEvent: (event, sessionId) => {
         set((state) => {
           const id = event.toolUseId
@@ -714,6 +826,12 @@ export const useAgentStore = create<AgentStore>()(
 
           // Remove cached tool calls for this session
           delete state.sessionToolCallsCache[sessionId]
+
+          for (const [runId, changeSet] of Object.entries(state.runChangesByRunId)) {
+            if (changeSet.sessionId === sessionId) {
+              delete state.runChangesByRunId[runId]
+            }
+          }
 
           // Remove background processes bound to this session
           for (const [key, process] of Object.entries(state.backgroundProcesses)) {

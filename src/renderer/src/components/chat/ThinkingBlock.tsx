@@ -5,7 +5,6 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { MONO_FONT } from '@renderer/lib/constants'
 import { motion, AnimatePresence } from 'motion/react'
-import { useTypewriter } from '@renderer/hooks/use-typewriter'
 
 interface ThinkingBlockProps {
   thinking: string
@@ -16,10 +15,7 @@ interface ThinkingBlockProps {
 
 export function ThinkingBlock({ thinking, isStreaming = false, startedAt, completedAt }: ThinkingBlockProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  // isThinking: thinking is actively streaming (has content, no completedAt yet, message still streaming)
   const isThinking = isStreaming && thinking.length > 0 && !completedAt
-
-  const displayedThinking = useTypewriter(thinking, isThinking)
 
   const [expanded, setExpanded] = useState(false)
   const wasThinkingRef = useRef(isThinking)
@@ -35,15 +31,11 @@ export function ThinkingBlock({ thinking, isStreaming = false, startedAt, comple
     return () => clearInterval(interval)
   }, [isThinking, startedAt])
 
-  // Auto-expand while thinking, auto-collapse when thinking completes
   useEffect(() => {
-    if (isThinking) {
-      setExpanded(true)
-    }
-    if (wasThinkingRef.current && !isThinking) {
-      setExpanded(false)
-    }
+    const nextExpanded = isThinking ? true : wasThinkingRef.current && !isThinking ? false : null
     wasThinkingRef.current = isThinking
+    if (nextExpanded === null) return
+    setExpanded((prev) => (prev === nextExpanded ? prev : nextExpanded))
   }, [isThinking])
 
   // Auto-scroll to bottom while thinking is streaming
@@ -51,7 +43,7 @@ export function ThinkingBlock({ thinking, isStreaming = false, startedAt, comple
     if (isThinking && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [isThinking, displayedThinking])
+  }, [isThinking, thinking])
 
   // Compute duration label from persisted timestamps
   const persistedDuration = startedAt && completedAt
@@ -92,32 +84,36 @@ export function ThinkingBlock({ thinking, isStreaming = false, startedAt, comple
               ref={scrollRef}
               className="mt-1.5 pl-2 border-l-2 border-muted text-sm text-muted-foreground/80 leading-relaxed max-h-80 overflow-y-auto"
             >
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  code: ({ children, className, ...props }) => {
-                    const isInline = !className
-                    if (isInline) {
+              {isThinking ? (
+                <div className="whitespace-pre-wrap break-words">{thinking}</div>
+              ) : (
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    code: ({ children, className, ...props }) => {
+                      const isInline = !className
+                      if (isInline) {
+                        return (
+                          <code
+                            className="rounded bg-muted px-1 py-0.5 text-xs font-mono"
+                            style={{ fontFamily: MONO_FONT }}
+                            {...props}
+                          >
+                            {children}
+                          </code>
+                        )
+                      }
                       return (
-                        <code
-                          className="rounded bg-muted px-1 py-0.5 text-xs font-mono"
-                          style={{ fontFamily: MONO_FONT }}
-                          {...props}
-                        >
+                        <code className={className} style={{ fontFamily: MONO_FONT }} {...props}>
                           {children}
                         </code>
                       )
-                    }
-                    return (
-                      <code className={className} style={{ fontFamily: MONO_FONT }} {...props}>
-                        {children}
-                      </code>
-                    )
-                  },
-                }}
-              >
-                {displayedThinking}
-              </Markdown>
+                    },
+                  }}
+                >
+                  {thinking}
+                </Markdown>
+              )}
               {isThinking && <span className="inline-block w-1.5 h-3.5 bg-primary/40 animate-pulse ml-0.5 rounded-sm" />}
             </div>
           </motion.div>

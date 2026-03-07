@@ -30,6 +30,7 @@ import { useUIStore } from '@renderer/stores/ui-store'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { LazySyntaxHighlighter } from './LazySyntaxHighlighter'
+import { inputSummary } from './tool-call-summary'
 
 interface ToolCallCardProps {
   toolUseId?: string
@@ -55,55 +56,6 @@ function outputAsString(output: ToolResultContent | undefined): string | undefin
 /** Check if output contains image blocks */
 function hasImageBlocks(output: ToolResultContent | undefined): boolean {
   return Array.isArray(output) && output.some((b) => b.type === 'image')
-}
-
-export function inputSummary(name: string, input: Record<string, unknown>): string {
-  // Tool-specific smart summaries
-  if (name === 'Bash' && input.command) return String(input.command).slice(0, 80)
-  if (['Read', 'Write', 'LS'].includes(name)) {
-    const p = String(input.file_path ?? input.path ?? '')
-    return p.split(/[\\/]/).slice(-2).join('/')
-  }
-  if (name === 'Edit') {
-    const p = String(input.file_path ?? input.path ?? '')
-      .split(/[\\/]/)
-      .slice(-2)
-      .join('/')
-    const expl = typeof input.explanation === 'string' ? ` — ${input.explanation.slice(0, 50)}` : ''
-    return `${p}${expl}`
-  }
-  if (name === 'Delete') {
-    const p = String(input.file_path ?? input.path ?? '')
-    return `delete: ${p.split(/[\\/]/).slice(-2).join('/')}`
-  }
-  if (name === 'Glob' && input.pattern) return `pattern: ${input.pattern}`
-  if (name === 'Grep' && input.pattern) return `grep: ${input.pattern}`
-  if (name === 'TaskCreate' && input.subject) return String(input.subject).slice(0, 60)
-  if (name === 'TaskUpdate' && input.taskId) return `#${input.taskId}${input.status ? ` → ${input.status}` : ''}`
-  if (name === 'TaskGet' && input.taskId) return `#${input.taskId}`
-  if (name === 'TaskList') return 'list tasks'
-  if (name === 'CronAdd') {
-    const n = input.name ? String(input.name) : ''
-    const sched = input.schedule as { kind?: string; expr?: string } | undefined
-    const kindLabel = sched?.kind ?? ''
-    const expr = sched?.expr ?? ''
-    return n ? `${n} (${kindLabel}${expr ? ` ${expr}` : ''})` : kindLabel
-  }
-  if (name === 'CronUpdate' && input.jobId) return `update: ${String(input.jobId)}`
-  if (name === 'CronRemove' && input.jobId) return `remove: ${String(input.jobId)}`
-  if (name === 'CronList') return 'list cron jobs'
-  if (name === 'AskUserQuestion') {
-    const qs = input.questions as Array<{ question?: string }> | undefined
-    if (qs && qs.length > 0) return String(qs[0].question ?? '').slice(0, 60)
-    return 'asking user...'
-  }
-  if (name === 'Task')
-    return `[${input.subagent_type ?? '?'}] ${String(input.description ?? '').slice(0, 50)}`
-  const keys = Object.keys(input)
-  if (keys.length === 0) return ''
-  const first = input[keys[0]]
-  const val = typeof first === 'string' ? first : JSON.stringify(first)
-  return val.length > 60 ? val.slice(0, 60) + '…' : val
 }
 
 function CopyBtn({ text, title }: { text: string; title?: string }): React.JSX.Element {
@@ -246,9 +198,62 @@ function ReadOutputBlock({
           onClick={() => setExpanded(!expanded)}
           className="mt-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
         >
-          {expanded ? t('toolCall.showFirst40') : t('toolCall.showAllLines', { count: lines.length })}
+          {expanded
+            ? t('toolCall.showFirst40')
+            : t('toolCall.showAllLines', { count: lines.length })}
         </button>
       )}
+    </div>
+  )
+}
+
+interface ShellOutputSummary {
+  live?: boolean
+  mode?: 'full' | 'compact' | 'tail'
+  noisy?: boolean
+  totalChars?: number
+  totalLines?: number
+  stdoutLines?: number
+  stderrLines?: number
+  errorLikeLines?: number
+  warningLikeLines?: number
+}
+
+function ShellTextPane({
+  title,
+  text,
+  expanded,
+  tone = 'default'
+}: {
+  title: string
+  text: string
+  expanded: boolean
+  tone?: 'default' | 'error'
+}): React.JSX.Element | null {
+  if (!text) return null
+  const isLong = text.length > 1000
+  const displayed = isLong && !expanded ? `...\n${text.slice(-1000)}` : text
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground/50">
+        <span
+          className={cn(
+            'inline-flex rounded px-1 py-0.5',
+            tone === 'error' ? 'bg-red-500/10 text-red-300/80' : 'bg-zinc-800/70 text-zinc-300/70'
+          )}
+        >
+          {title}
+        </span>
+        <span>{text.split('\n').length} lines</span>
+      </div>
+      <pre
+        className={cn(
+          'whitespace-pre-wrap break-words text-[11px]',
+          tone === 'error' ? 'text-red-200/85' : 'text-zinc-300/80'
+        )}
+      >
+        {displayed}
+      </pre>
     </div>
   )
 }
@@ -256,7 +261,7 @@ function ReadOutputBlock({
 function BashOutputBlock({
   output,
   toolUseId,
-  status,
+  status
 }: {
   output: string
   toolUseId?: string
@@ -283,6 +288,7 @@ function BashOutputBlock({
         exitCode?: number
         output?: string
         processId?: string
+        summary?: ShellOutputSummary
       }
       if (
         typeof obj === 'object' &&
@@ -298,14 +304,13 @@ function BashOutputBlock({
   }, [output])
 
   const processId = parsed?.processId ? String(parsed.processId) : null
-  const process = useAgentStore((s) =>
-    processId ? s.backgroundProcesses[processId] : undefined
-  )
+  const process = useAgentStore((s) => (processId ? s.backgroundProcesses[processId] : undefined))
 
-  const fallbackText = parsed
-    ? (parsed.stdout ?? parsed.output ?? '') + (parsed.stderr ? `\n${parsed.stderr}` : '')
-    : output
-  const text = process?.output || fallbackText
+  const summary = parsed?.summary ?? null
+  const stdoutText = process ? process.output : (parsed?.stdout ?? parsed?.output ?? '')
+  const stderrText = process ? '' : (parsed?.stderr ?? '')
+  const hasStructuredStreams = !process && !!parsed && (Boolean(stdoutText) || Boolean(stderrText))
+  const text = process ? process.output : [stderrText, stdoutText].filter(Boolean).join('\n\n')
   const exitCode = process?.exitCode ?? parsed?.exitCode
   const isProcessRunning = process?.status === 'running'
   const statusText = process ? t(`toolCall.processStatus.${process.status}`) : null
@@ -368,7 +373,45 @@ function BashOutputBlock({
         style={{ fontFamily: MONO_FONT }}
       >
         {text ? (
-          <pre className="px-3 py-2 whitespace-pre-wrap break-words text-zinc-300/80">{displayed}</pre>
+          <div className="px-3 py-2 space-y-2">
+            {summary && (
+              <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground/50">
+                <span className="rounded bg-zinc-800/80 px-1 py-0.5">{summary.mode ?? 'full'}</span>
+                {summary.noisy && (
+                  <span className="rounded bg-amber-500/10 px-1 py-0.5 text-amber-300/80">
+                    noise reduced
+                  </span>
+                )}
+                {typeof summary.totalLines === 'number' && (
+                  <span className="rounded bg-zinc-800/60 px-1 py-0.5">
+                    {summary.totalLines} lines
+                  </span>
+                )}
+                {typeof summary.errorLikeLines === 'number' && summary.errorLikeLines > 0 && (
+                  <span className="rounded bg-red-500/10 px-1 py-0.5 text-red-300/80">
+                    {summary.errorLikeLines} error-like
+                  </span>
+                )}
+                {typeof summary.warningLikeLines === 'number' && summary.warningLikeLines > 0 && (
+                  <span className="rounded bg-amber-500/10 px-1 py-0.5 text-amber-300/80">
+                    {summary.warningLikeLines} warning-like
+                  </span>
+                )}
+              </div>
+            )}
+            {hasStructuredStreams ? (
+              <>
+                <ShellTextPane title="stderr" text={stderrText} expanded={expanded} tone="error" />
+                <ShellTextPane
+                  title={stderrText ? 'stdout' : 'output'}
+                  text={stdoutText}
+                  expanded={expanded}
+                />
+              </>
+            ) : (
+              <pre className="whitespace-pre-wrap break-words text-zinc-300/80">{displayed}</pre>
+            )}
+          </div>
         ) : (
           <pre className="px-3 py-2 whitespace-pre-wrap break-words text-zinc-500/70">
             {t('toolCall.noOutputYet')}
@@ -467,28 +510,28 @@ function BashOutputBlock({
 
 function HighlightText({ text, pattern }: { text: string; pattern?: string }): React.JSX.Element {
   if (!pattern) return <>{text}</>
+  let parts: string[] | null = null
   try {
     const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const re = new RegExp(`(${escaped})`, 'gi')
-    const parts = text.split(re)
-    if (parts.length <= 1) return <>{text}</>
-    // split with capture group: odd indices are matched groups
-    return (
-      <>
-        {parts.map((part, i) =>
-          i % 2 === 1 ? (
-            <span key={i} className="bg-amber-500/25 text-amber-300 rounded-sm px-px">
-              {part}
-            </span>
-          ) : (
-            <span key={i}>{part}</span>
-          )
-        )}
-      </>
-    )
+    parts = text.split(re)
   } catch {
-    return <>{text}</>
+    parts = null
   }
+  if (!parts || parts.length <= 1) return <>{text}</>
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <span key={i} className="bg-amber-500/25 text-amber-300 rounded-sm px-px">
+            {part}
+          </span>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  )
 }
 
 function GrepOutputBlock({
@@ -626,7 +669,9 @@ function LSOutputBlock({ output }: { output: string }): React.JSX.Element {
     <div>
       <div className="mb-1 flex items-center gap-1.5">
         <FolderTree className="size-3 text-amber-400" />
-        <p className="text-xs font-medium text-muted-foreground">{t('toolCall.directoryListing')}</p>
+        <p className="text-xs font-medium text-muted-foreground">
+          {t('toolCall.directoryListing')}
+        </p>
         <span className="text-[9px] text-muted-foreground/40">
           {t('toolCall.foldersAndFiles', { folders: dirs.length, files: files.length })}
         </span>
@@ -663,7 +708,11 @@ function LSOutputBlock({ output }: { output: string }): React.JSX.Element {
   )
 }
 
-function TaskCreateInputBlock({ input }: { input: Record<string, unknown> }): React.JSX.Element | null {
+function TaskCreateInputBlock({
+  input
+}: {
+  input: Record<string, unknown>
+}): React.JSX.Element | null {
   const { t } = useTranslation('chat')
   const subject = input.subject ? String(input.subject) : null
   const description = input.description ? String(input.description) : null
@@ -693,7 +742,13 @@ function TaskListOutputBlock({ output }: { output: string }): React.JSX.Element 
   const parsed = React.useMemo(() => {
     try {
       const data = JSON.parse(output)
-      if (data.tasks && Array.isArray(data.tasks)) return data.tasks as Array<{ id: string; subject: string; status: string; owner?: string | null }>
+      if (data.tasks && Array.isArray(data.tasks))
+        return data.tasks as Array<{
+          id: string
+          subject: string
+          status: string
+          owner?: string | null
+        }>
     } catch {
       /* not JSON */
     }
@@ -879,11 +934,24 @@ function InlineDiff({ oldStr, newStr }: { oldStr: string; newStr: string }): Rea
   const [expandedChunks, setExpandedChunks] = React.useState<Set<number>>(new Set())
 
   const renderLine = (line: DiffLine, key: number): React.JSX.Element => (
-    <div key={key} className={cn('flex', line.type === 'del' && 'bg-red-500/10', line.type === 'add' && 'bg-green-500/10')}>
-      <span className={cn(
-        'select-none w-5 shrink-0 text-right pr-1',
-        line.type === 'del' ? 'text-red-400/40' : line.type === 'add' ? 'text-green-400/40' : 'text-zinc-600'
-      )}>
+    <div
+      key={key}
+      className={cn(
+        'flex',
+        line.type === 'del' && 'bg-red-500/10',
+        line.type === 'add' && 'bg-green-500/10'
+      )}
+    >
+      <span
+        className={cn(
+          'select-none w-5 shrink-0 text-right pr-1',
+          line.type === 'del'
+            ? 'text-red-400/40'
+            : line.type === 'add'
+              ? 'text-green-400/40'
+              : 'text-zinc-600'
+        )}
+      >
         {line.oldNum ?? line.newNum ?? ''}
       </span>
       <span
@@ -1031,10 +1099,7 @@ function StructuredInput({
     return (
       <div className="flex items-center gap-1.5 text-xs">
         <Folder className="size-3 text-amber-400" />
-        <span
-          className="font-mono text-[11px]"
-          style={{ fontFamily: MONO_FONT }}
-        >
+        <span className="font-mono text-[11px]" style={{ fontFamily: MONO_FONT }}>
           {path}
         </span>
       </div>
@@ -1133,7 +1198,9 @@ function StructuredInput({
   // CronAdd: schedule kind + name + prompt
   if (name === 'CronAdd') {
     const jobName = input.name ? String(input.name) : null
-    const schedule = input.schedule as { kind?: string; at?: string; every?: number; expr?: string; tz?: string } | undefined
+    const schedule = input.schedule as
+      | { kind?: string; at?: string; every?: number; expr?: string; tz?: string }
+      | undefined
     const prompt = input.prompt ? String(input.prompt) : null
     const deleteAfterRun = Boolean(input.deleteAfterRun)
     const agentId = input.agentId ? String(input.agentId) : null
@@ -1141,7 +1208,7 @@ function StructuredInput({
     const kindColors: Record<string, string> = {
       at: 'bg-amber-500/10 text-amber-400',
       every: 'bg-cyan-500/10 text-cyan-400',
-      cron: 'bg-violet-500/10 text-violet-400',
+      cron: 'bg-violet-500/10 text-violet-400'
     }
     const kind = schedule?.kind ?? 'cron'
     return (
@@ -1149,24 +1216,45 @@ function StructuredInput({
         <div className="flex items-center gap-1.5 text-xs">
           <Clock className="size-3 text-blue-400" />
           {schedule?.expr && (
-            <span className="font-mono text-[11px] text-blue-400/80" style={{ fontFamily: MONO_FONT }}>
+            <span
+              className="font-mono text-[11px] text-blue-400/80"
+              style={{ fontFamily: MONO_FONT }}
+            >
               {schedule.expr}
             </span>
           )}
           {schedule?.every && (
-            <span className="font-mono text-[11px] text-cyan-400/80" style={{ fontFamily: MONO_FONT }}>
-              every {schedule.every >= 3600000 ? `${(schedule.every / 3600000).toFixed(1)}h` : `${Math.round(schedule.every / 60000)}m`}
+            <span
+              className="font-mono text-[11px] text-cyan-400/80"
+              style={{ fontFamily: MONO_FONT }}
+            >
+              every{' '}
+              {schedule.every >= 3600000
+                ? `${(schedule.every / 3600000).toFixed(1)}h`
+                : `${Math.round(schedule.every / 60000)}m`}
             </span>
           )}
           {schedule?.at && (
-            <span className="font-mono text-[11px] text-amber-400/80" style={{ fontFamily: MONO_FONT }}>
+            <span
+              className="font-mono text-[11px] text-amber-400/80"
+              style={{ fontFamily: MONO_FONT }}
+            >
               {String(schedule.at).slice(0, 19)}
             </span>
           )}
-          <span className={cn('text-[9px] px-1 rounded', kindColors[kind] ?? 'bg-zinc-700/60 text-zinc-400')}>
+          <span
+            className={cn(
+              'text-[9px] px-1 rounded',
+              kindColors[kind] ?? 'bg-zinc-700/60 text-zinc-400'
+            )}
+          >
             {kindLabels[kind] ?? kind}
           </span>
-          {deleteAfterRun && <span className="text-[9px] px-1 rounded bg-amber-500/10 text-amber-400/80">auto-delete</span>}
+          {deleteAfterRun && (
+            <span className="text-[9px] px-1 rounded bg-amber-500/10 text-amber-400/80">
+              auto-delete
+            </span>
+          )}
           {schedule?.tz && schedule.tz !== 'UTC' && (
             <span className="text-[9px] text-muted-foreground/40">{schedule.tz}</span>
           )}
@@ -1175,12 +1263,16 @@ function StructuredInput({
         {prompt && (
           <div className="pl-[18px] flex items-center gap-1.5">
             <Bot className="size-2.5 text-violet-400" />
-            <span className="text-[10px] text-violet-400/70 truncate max-w-[260px]">{prompt.slice(0, 100)}</span>
+            <span className="text-[10px] text-violet-400/70 truncate max-w-[260px]">
+              {prompt.slice(0, 100)}
+            </span>
           </div>
         )}
         {agentId && agentId !== 'CronAgent' && (
           <div className="pl-[18px]">
-            <span className="text-[9px] px-1 rounded bg-violet-500/10 text-violet-400">agent: {agentId}</span>
+            <span className="text-[9px] px-1 rounded bg-violet-500/10 text-violet-400">
+              agent: {agentId}
+            </span>
           </div>
         )}
       </div>
@@ -1207,7 +1299,10 @@ function StructuredInput({
     return (
       <div className="flex items-center gap-1.5 text-xs">
         <Clock className="size-3 text-muted-foreground/50" />
-        <span className="font-mono text-[11px] text-muted-foreground/70" style={{ fontFamily: MONO_FONT }}>
+        <span
+          className="font-mono text-[11px] text-muted-foreground/70"
+          style={{ fontFamily: MONO_FONT }}
+        >
           {jobId}
         </span>
       </div>
@@ -1307,7 +1402,10 @@ export function ToolCallCard({
 }: ToolCallCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
   // Auto-expand for errors and mutation tools with output; keep read-heavy tools collapsed
-  const shouldAutoExpand = status === 'error' || (!!output && EXPAND_TOOLS.has(name)) || (name === 'Bash' && status === 'running')
+  const shouldAutoExpand =
+    status === 'error' ||
+    (!!output && EXPAND_TOOLS.has(name)) ||
+    (name === 'Bash' && status === 'running')
   const [open, setOpen] = React.useState(shouldAutoExpand)
 
   React.useEffect(() => {
@@ -1331,11 +1429,18 @@ export function ToolCallCard({
           <>
             {name === 'Write' && (input.file_path || input.path) ? (
               <span className="text-blue-400/70 text-[10px] animate-pulse">
-                写入: {String(input.file_path || input.path).split(/[\\/]/).slice(-2).join('/')}
-                {typeof input.content === 'string' && ` (${input.content.split('\n').length} lines)`}
+                写入:{' '}
+                {String(input.file_path || input.path)
+                  .split(/[\\/]/)
+                  .slice(-2)
+                  .join('/')}
+                {typeof input.content === 'string' &&
+                  ` (${input.content.split('\n').length} lines)`}
               </span>
             ) : (
-              <span className="text-violet-400/70 text-[10px] animate-pulse">{t('toolCall.receivingArgs')}</span>
+              <span className="text-violet-400/70 text-[10px] animate-pulse">
+                {t('toolCall.receivingArgs')}
+              </span>
             )}
           </>
         )}

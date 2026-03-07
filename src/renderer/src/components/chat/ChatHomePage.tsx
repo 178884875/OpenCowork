@@ -11,9 +11,7 @@ import {
   ChevronDown,
   Plus,
   ArrowRight,
-  Sparkles,
-  Keyboard,
-  CheckCircle2
+  Sparkles
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@renderer/components/ui/badge'
@@ -43,15 +41,6 @@ const modes: { value: AppMode; labelKey: string; icon: React.ReactNode }[] = [
   { value: 'code', labelKey: 'mode.code', icon: <Code2 className="size-3.5" /> }
 ]
 const DEFAULT_SSH_WORKDIR = ''
-const shortcutItems = [
-  { combo: 'Ctrl+N', labelKey: 'messageList.newChat' },
-  { combo: 'Ctrl+K', labelKey: 'messageList.commands' },
-  { combo: 'Ctrl+B', labelKey: 'messageList.sidebarShortcut' },
-  { combo: 'Ctrl+/', labelKey: 'messageList.shortcutsShortcut' },
-  { combo: 'Ctrl+,', labelKey: 'messageList.settingsShortcut' },
-  { combo: 'Ctrl+D', labelKey: 'messageList.duplicateShortcut' }
-] as const
-
 interface DesktopDirectoryOption {
   name: string
   path: string
@@ -296,9 +285,6 @@ export function ChatHomePage(): React.JSX.Element {
     cowork: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
     code: 'bg-violet-500/10 text-violet-600 dark:text-violet-400'
   }[mode]
-
-  const activeSshConnection =
-    sshConnections.find((connection) => connection.id === sshConnectionId) ?? null
 
   const handleSuggestionClick = (prompt: string): void => {
     useUIStore.getState().setPendingInsertText(prompt)

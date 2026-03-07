@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
+import type { ToolResultContent } from '@renderer/lib/api/types'
 import { useTaskStore, type TaskItem } from '@renderer/stores/task-store'
 
 function StatusDot({ status }: { status: TaskItem['status'] }): React.JSX.Element {
@@ -32,28 +32,73 @@ function StatusDot({ status }: { status: TaskItem['status'] }): React.JSX.Elemen
 interface TaskCardProps {
   name: string
   input: Record<string, unknown>
-  isLive?: boolean
+  output?: ToolResultContent
 }
 
-export function TaskCard({ name, input, isLive }: TaskCardProps): React.JSX.Element {
+function outputAsString(output: ToolResultContent | undefined): string | undefined {
+  if (output === undefined) return undefined
+  if (typeof output === 'string') return output
+  const texts = output
+    .filter((block) => block.type === 'text')
+    .map((block) => (block.type === 'text' ? block.text : ''))
+  return texts.join('\n') || undefined
+}
+
+function parseTaskSnapshot(output: ToolResultContent | undefined): {
+  taskId?: string
+  tasks: TaskItem[]
+} | null {
+  const text = outputAsString(output)
+  if (!text) return null
+
+  try {
+    const parsed = JSON.parse(text) as {
+      task_id?: unknown
+      tasks?: Array<Partial<TaskItem>>
+    }
+    if (!Array.isArray(parsed.tasks)) return null
+
+    const tasks = parsed.tasks
+      .filter(
+        (task): task is Partial<TaskItem> & Pick<TaskItem, 'id' | 'subject' | 'status'> =>
+          typeof task?.id === 'string' &&
+          typeof task?.subject === 'string' &&
+          typeof task?.status === 'string'
+      )
+      .map((task) => ({
+        id: task.id,
+        subject: task.subject,
+        description: typeof task.description === 'string' ? task.description : '',
+        activeForm: typeof task.activeForm === 'string' ? task.activeForm : undefined,
+        status: task.status as TaskItem['status'],
+        owner: typeof task.owner === 'string' || task.owner === null ? task.owner : undefined,
+        blocks: Array.isArray(task.blocks) ? task.blocks.map(String) : [],
+        blockedBy: Array.isArray(task.blockedBy) ? task.blockedBy.map(String) : [],
+        metadata: task.metadata,
+        createdAt: typeof task.createdAt === 'number' ? task.createdAt : 0,
+        updatedAt: typeof task.updatedAt === 'number' ? task.updatedAt : 0
+      }))
+
+    return {
+      taskId: typeof parsed.task_id === 'string' ? parsed.task_id : undefined,
+      tasks
+    }
+  } catch {
+    return null
+  }
+}
+
+export function TaskCard({ name, input, output }: TaskCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  const [expanded, setExpanded] = React.useState(false)
-  const [showPending, setShowPending] = React.useState(false)
-
-  // Use live store state during streaming
   const liveTasks = useTaskStore((s) => s.tasks)
-  const tasks: TaskItem[] = isLive ? liveTasks : liveTasks
+  const snapshot = React.useMemo(() => parseTaskSnapshot(output), [output])
+  const tasks: TaskItem[] = snapshot?.tasks ?? liveTasks
+  const focusedTaskId =
+    snapshot?.taskId ?? (typeof input.taskId === 'string' ? input.taskId : undefined)
 
-  const total = tasks.length
+  const total = tasks.length || (name === 'TaskCreate' && input.subject ? 1 : 0)
   const completed = tasks.filter((t) => t.status === 'completed').length
-  const hasInProgress = tasks.some((t) => t.status === 'in_progress')
 
-  // Split: visible = completed + in_progress; hidden = trailing pending (only when in_progress exists)
-  const lastActiveIdx = tasks.reduce((acc, t, i) => (t.status !== 'pending' ? i : acc), -1)
-  const visibleTasks = hasInProgress && !showPending ? tasks.slice(0, lastActiveIdx + 1) : tasks
-  const hiddenCount = hasInProgress && !showPending ? tasks.length - (lastActiveIdx + 1) : 0
-
-  // For TaskCreate: show the subject being created even if store hasn't updated yet
   const pendingSubject = name === 'TaskCreate' && input.subject ? String(input.subject) : null
 
   if (total === 0 && !pendingSubject) {
@@ -62,65 +107,49 @@ export function TaskCard({ name, input, isLive }: TaskCardProps): React.JSX.Elem
 
   return (
     <div className="my-5">
-      {/* Header — click to toggle */}
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-      >
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <span>{t('todo.tasksDone', { completed, total })}</span>
-        <ChevronDown
-          className={cn(
-            'size-3 text-muted-foreground/40 transition-transform duration-200',
-            !expanded && '-rotate-90'
-          )}
-        />
-      </button>
+      </div>
 
-      {/* Expanded task list */}
-      {expanded && (
-        <div className="mt-1.5 space-y-0.5 pl-1">
-          {visibleTasks.map((task) => (
-            <div
-              key={task.id}
-              className="flex items-start gap-2 py-0.5"
-            >
-              <span className="mt-0.5">
-                <StatusDot status={task.status} />
-              </span>
-              <span
+      <div className="mt-1.5 space-y-0.5 pl-1">
+        {tasks.map((task) => (
+          <div
+            key={task.id}
+            className={cn(
+              'flex items-start gap-2 rounded-md px-1.5 py-1',
+              task.id === focusedTaskId && 'bg-muted/40'
+            )}
+          >
+            <span className="mt-0.5">
+              <StatusDot status={task.status} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div
                 className={cn(
                   'text-xs leading-relaxed',
                   task.status === 'completed' && 'text-muted-foreground line-through',
                   task.status === 'pending' && 'text-muted-foreground/70'
                 )}
               >
-                {task.status === 'in_progress' && task.activeForm
-                  ? task.activeForm
-                  : task.subject}
-              </span>
+                {task.status === 'in_progress' && task.activeForm ? task.activeForm : task.subject}
+              </div>
+              {task.owner && (
+                <div className="text-[10px] text-muted-foreground/50">{task.owner}</div>
+              )}
             </div>
-          ))}
-          {hiddenCount > 0 && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowPending(true) }}
-              className="flex items-center gap-1.5 py-0.5 text-[11px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-            >
-              <span className="relative flex size-3.5 shrink-0 items-center justify-center">
-                <span className="size-2.5 rounded-full border border-muted-foreground/20" />
-              </span>
-              {t('todo.moreTasks', { count: hiddenCount })}
-            </button>
-          )}
-          {showPending && hasInProgress && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowPending(false) }}
-              className="py-0.5 pl-5.5 text-[11px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-            >
-              {t('todo.showLess')}
-            </button>
-          )}
-        </div>
-      )}
+          </div>
+        ))}
+        {total === 0 && pendingSubject && (
+          <div className="flex items-start gap-2 rounded-md px-1.5 py-1">
+            <span className="mt-0.5">
+              <StatusDot status="pending" />
+            </span>
+            <span className="text-xs leading-relaxed text-muted-foreground/70">
+              {pendingSubject}
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

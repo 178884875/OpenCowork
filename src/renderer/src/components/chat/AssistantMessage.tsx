@@ -9,7 +9,6 @@ import {
   useMermaidThemeVersion
 } from '@renderer/lib/utils/mermaid-theme'
 import { Avatar, AvatarFallback } from '@renderer/components/ui/avatar'
-import { useTypewriter } from '@renderer/hooks/use-typewriter'
 import { Copy, Check, ChevronsDownUp, ChevronsUpDown, Bug, ImageDown } from 'lucide-react'
 import { FadeIn, ScaleIn } from '@renderer/components/animate-ui'
 import { ImageGeneratingLoader } from './ImageGeneratingLoader'
@@ -17,6 +16,8 @@ import { ImageGenerationErrorCard } from './ImageGenerationErrorCard'
 import { ImagePreview } from './ImagePreview'
 import { ImagePluginToolCard } from './ImagePluginToolCard'
 import { useChatStore } from '@renderer/stores/chat-store'
+import { useAgentStore } from '@renderer/stores/agent-store'
+import { useShallow } from 'zustand/react/shallow'
 import type {
   ContentBlock,
   TokenUsage,
@@ -48,15 +49,21 @@ interface AssistantMessageProps {
   content: string | ContentBlock[]
   isStreaming?: boolean
   usage?: TokenUsage
-  /** Map of toolUseId → output for completed tool results (from next user message) */
   toolResults?: Map<string, { content: ToolResultContent; isError?: boolean }>
-  /** Live tool-call states for the currently streaming assistant message */
-  liveToolCallMap?: Map<string, ToolCallState> | null
   msgId?: string
 }
 
 const MARKDOWN_WRAPPER_CLASS = 'text-sm leading-relaxed text-foreground break-words'
 const THINK_OPEN_TAG_RE = /<\s*think\s*>/i
+const SPECIAL_TOOLS = new Set([
+  'TaskCreate',
+  'TaskUpdate',
+  'Write',
+  'Edit',
+  'Delete',
+  'AskUserQuestion',
+  IMAGE_GENERATE_TOOL_NAME
+])
 
 function stripThinkTagMarkers(text: string): string {
   return text.replace(/<\s*\/?\s*think\s*>/gi, '')
@@ -469,8 +476,10 @@ function StreamingMarkdownContent({
   text: string
   isStreaming: boolean
 }): React.JSX.Element {
-  const displayed = useTypewriter(text, isStreaming)
-  return <MarkdownContent text={displayed} isStreaming={isStreaming} />
+  if (isStreaming) {
+    return <div className="whitespace-pre-wrap break-words leading-relaxed">{text}</div>
+  }
+  return <MarkdownContent text={text} isStreaming={false} />
 }
 
 interface ThinkSegment {
@@ -560,7 +569,6 @@ export function AssistantMessage({
   isStreaming,
   usage,
   toolResults,
-  liveToolCallMap,
   msgId
 }: AssistantMessageProps): React.JSX.Element {
   const { t } = useTranslation('chat')
@@ -579,12 +587,71 @@ export function AssistantMessage({
       .join('\n')
   }, [content, usage, isStreaming])
   const fallbackTokens = useMemoizedTokens(plainTextForTokens)
-
-  const effectiveLiveToolCallMap = isStreaming ? (liveToolCallMap ?? null) : null
+  const toolCallsData = useAgentStore(
+    useShallow((s) => {
+      if (!isStreaming) return null
+      return { executed: s.executedToolCalls, pending: s.pendingToolCalls }
+    })
+  )
+  const effectiveLiveToolCallMap = useMemo(() => {
+    if (!toolCallsData) return null
+    const map = new Map<string, ToolCallState>()
+    for (const t of toolCallsData.executed) map.set(t.id, t)
+    for (const t of toolCallsData.pending) map.set(t.id, t)
+    return map
+  }, [toolCallsData])
 
   const isGeneratingImage = useChatStore((s) =>
     msgId ? !!s.generatingImageMessages[msgId] : false
   )
+
+  const stringSegments = useMemo(
+    () => (typeof content === 'string' ? parseThinkTags(content) : null),
+    [content]
+  )
+  const normalizedContent = useMemo(
+    () => (Array.isArray(content) ? normalizeStructuredBlocks(content) : null),
+    [content]
+  )
+  const structuredToolCount = useMemo(
+    () => normalizedContent?.filter((block) => block.type === 'tool_use').length ?? 0,
+    [normalizedContent]
+  )
+  const hasStructuredThinkingBlocks = useMemo(
+    () => normalizedContent?.some((block) => block.type === 'thinking') ?? false,
+    [normalizedContent]
+  )
+  const lastStructuredTextIdx = useMemo(() => {
+    if (!isStreaming || !normalizedContent) return -1
+    return normalizedContent.reduce((acc: number, block, idx) => (block.type === 'text' ? idx : acc), -1)
+  }, [isStreaming, normalizedContent])
+  const renderItems = useMemo(() => {
+    if (!normalizedContent) return []
+    type RenderItem =
+      | { kind: 'block'; index: number }
+      | { kind: 'group'; toolName: string; indices: number[] }
+
+    const items: RenderItem[] = []
+    for (let i = 0; i < normalizedContent.length; i++) {
+      const block = normalizedContent[i]
+      if (
+        block.type === 'tool_use' &&
+        !SPECIAL_TOOLS.has(block.name) &&
+        !TEAM_TOOL_NAMES.has(block.name) &&
+        block.name !== TASK_TOOL_NAME
+      ) {
+        const last = items[items.length - 1]
+        if (last && last.kind === 'group' && last.toolName === block.name) {
+          last.indices.push(i)
+        } else {
+          items.push({ kind: 'group', toolName: block.name, indices: [i] })
+        }
+        continue
+      }
+      items.push({ kind: 'block', index: i })
+    }
+    return items
+  }, [normalizedContent])
 
   const renderContent = (): React.JSX.Element => {
     // Show image generation loader when generating images
@@ -616,7 +683,7 @@ export function AssistantMessage({
     }
 
     if (typeof content === 'string') {
-      const segments = parseThinkTags(content)
+      const segments = stringSegments ?? []
       const hasThink = segments.some((s) => s.type === 'think')
 
       if (!hasThink) {
@@ -665,66 +732,38 @@ export function AssistantMessage({
       )
     }
 
-    const normalizedContent = normalizeStructuredBlocks(content)
-    const toolCount = normalizedContent.filter((b) => b.type === 'tool_use').length
-    const hasStructuredThinkingBlocks = normalizedContent.some((b) => b.type === 'thinking')
-    const lastTextIdx = isStreaming
-      ? normalizedContent.reduce((acc: number, b, idx) => (b.type === 'text' ? idx : acc), -1)
-      : -1
-
-    // Tools that have special renderers and should NOT be grouped
-    const SPECIAL_TOOLS = new Set([
-      'TaskCreate',
-      'TaskUpdate',
-      'Write',
-      'Edit',
-      'Delete',
-      'AskUserQuestion',
-      IMAGE_GENERATE_TOOL_NAME
-    ])
-
-    /** Check if a tool_use block should use the generic ToolCallCard (groupable) */
-    const isGroupableTool = (name: string): boolean =>
-      !SPECIAL_TOOLS.has(name) && !TEAM_TOOL_NAMES.has(name) && name !== TASK_TOOL_NAME
-
-    // Pre-process: group consecutive same-name groupable tool_use blocks
-    type RenderItem =
-      | { kind: 'block'; index: number }
-      | { kind: 'group'; toolName: string; indices: number[] }
-
-    const renderItems: RenderItem[] = []
-    for (let i = 0; i < normalizedContent.length; i++) {
-      const block = normalizedContent[i]
-      if (block.type === 'tool_use' && isGroupableTool(block.name)) {
-        // Check if last item is a group of the same tool name
-        const last = renderItems[renderItems.length - 1]
-        if (last && last.kind === 'group' && last.toolName === block.name) {
-          last.indices.push(i)
-        } else {
-          renderItems.push({ kind: 'group', toolName: block.name, indices: [i] })
-        }
-      } else {
-        renderItems.push({ kind: 'block', index: i })
-      }
+    if (!normalizedContent) {
+      return <div className={MARKDOWN_WRAPPER_CLASS} />
     }
 
-    /** Render a single tool_use block (special or generic) */
     const renderToolBlock = (
       block: Extract<ContentBlock, { type: 'tool_use' }>,
       key: string
     ): React.JSX.Element | null => {
       if (toolsCollapsed) return null
       if (block.name === 'TaskCreate') {
+        const result = toolResults?.get(block.id)
+        const liveTc = effectiveLiveToolCallMap?.get(block.id)
         return (
           <ScaleIn key={key} className="w-full origin-left">
-            <TaskCard name={block.name} input={block.input} isLive={!!isStreaming} />
+            <TaskCard
+              name={block.name}
+              input={block.input}
+              output={liveTc?.output ?? result?.content}
+            />
           </ScaleIn>
         )
       }
       if (block.name === 'TaskUpdate') {
+        const result = toolResults?.get(block.id)
+        const liveTc = effectiveLiveToolCallMap?.get(block.id)
         return (
           <ScaleIn key={key} className="w-full origin-left">
-            <TaskCard name={block.name} input={block.input} isLive={!!isStreaming} />
+            <TaskCard
+              name={block.name}
+              input={block.input}
+              output={liveTc?.output ?? result?.content}
+            />
           </ScaleIn>
         )
       }
@@ -825,7 +864,7 @@ export function AssistantMessage({
 
     return (
       <div className="space-y-2">
-        {toolCount >= 2 && (
+        {structuredToolCount >= 2 && (
           <button
             onClick={() => setToolsCollapsed((v) => !v)}
             className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted-foreground/10 transition-colors"
@@ -836,8 +875,8 @@ export function AssistantMessage({
               <ChevronsDownUp className="size-3" />
             )}
             {toolsCollapsed
-              ? t('assistantMessage.showToolCalls', { count: toolCount })
-              : t('assistantMessage.collapseToolCalls', { count: toolCount })}
+              ? t('assistantMessage.showToolCalls', { count: structuredToolCount })
+              : t('assistantMessage.collapseToolCalls', { count: structuredToolCount })}
           </button>
         )}
         {renderItems.map((item) => {
@@ -864,7 +903,7 @@ export function AssistantMessage({
                     <div key={item.index} className={MARKDOWN_WRAPPER_CLASS}>
                       <StreamingMarkdownContent
                         text={visibleText}
-                        isStreaming={item.index === lastTextIdx}
+                        isStreaming={item.index === lastStructuredTextIdx}
                       />
                     </div>
                   )
@@ -877,12 +916,12 @@ export function AssistantMessage({
                     <div key={item.index} className={MARKDOWN_WRAPPER_CLASS}>
                       <StreamingMarkdownContent
                         text={block.text}
-                        isStreaming={item.index === lastTextIdx}
+                        isStreaming={item.index === lastStructuredTextIdx}
                       />
                     </div>
                   )
                 }
-                const isBlockStreaming = !!(isStreaming && item.index === lastTextIdx)
+                const isBlockStreaming = !!(isStreaming && item.index === lastStructuredTextIdx)
                 const lastTxtSeg = textSegments.reduce(
                   (acc: number, s, j) => (s.type === 'text' ? j : acc),
                   -1

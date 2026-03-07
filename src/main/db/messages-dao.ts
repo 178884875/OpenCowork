@@ -17,6 +17,13 @@ export function getMessages(sessionId: string): MessageRow[] {
     .all(sessionId) as MessageRow[]
 }
 
+export function getMessagesPage(sessionId: string, limit: number, offset: number): MessageRow[] {
+  const db = getDb()
+  return db
+    .prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY sort_order ASC LIMIT ? OFFSET ?')
+    .all(sessionId, limit, offset) as MessageRow[]
+}
+
 export function addMessage(msg: {
   id: string
   sessionId: string

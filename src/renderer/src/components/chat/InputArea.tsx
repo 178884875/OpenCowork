@@ -577,7 +577,7 @@ export function InputArea({
 
   React.useEffect(() => {
     if (!activeSessionId) return
-    void useChatStore.getState().loadSessionMessages(activeSessionId)
+    void useChatStore.getState().loadRecentSessionMessages(activeSessionId)
   }, [activeSessionId])
 
   React.useEffect(() => {

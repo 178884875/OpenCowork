@@ -1,8 +1,48 @@
 import { ipcMain, shell, BrowserWindow } from 'electron'
 import { spawn } from 'child_process'
 
+const ANSI_ESCAPE_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-~]`, 'g')
+const COMPACT_OUTPUT_CHAR_THRESHOLD = 6000
+const COMPACT_OUTPUT_LINE_THRESHOLD = 160
+const MAX_RETURNED_STDOUT_CHARS = 12000
+const MAX_RETURNED_STDERR_CHARS = 8000
+const HEAD_LINE_COUNT = 8
+const TAIL_LINE_COUNT = 60
+const MAX_ERROR_LINE_COUNT = 30
+const MAX_WARNING_LINE_COUNT = 20
+const ERROR_LIKE_RE =
+  /\b(error|failed|exception|traceback|fatal|panic|cannot|unable|undefined reference|syntax error|test(?:s)? failed?)\b/i
+const WARNING_LIKE_RE = /\bwarn(?:ing)?\b/i
+
+type ShellStream = 'stdout' | 'stderr'
+
+interface ShellOutputSummary {
+  mode: 'full' | 'compact'
+  noisy: boolean
+  totalChars: number
+  totalLines: number
+  stdoutLines: number
+  stderrLines: number
+  errorLikeLines: number
+  warningLikeLines: number
+}
+
+interface CompactStreamResult {
+  text: string
+  totalChars: number
+  totalLines: number
+  errorLikeLines: number
+  warningLikeLines: number
+  compacted: boolean
+}
+
+function stripAnsi(raw: string): string {
+  return raw.replace(ANSI_ESCAPE_RE, '')
+}
+
 function sanitizeOutput(raw: string, maxLen: number): string {
-  const trimmed = raw.slice(0, maxLen)
+  const normalized = stripAnsi(raw)
+  const trimmed = normalized.slice(0, maxLen)
   // Detect binary / non-text output by sampling the first 256 chars
   const sample = trimmed.slice(0, 256)
   let bad = 0
@@ -12,9 +52,130 @@ function sanitizeOutput(raw: string, maxLen: number): string {
     if ((c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) || c === 0xfffd) bad++
   }
   if (sample.length > 0 && bad / sample.length > 0.1) {
-    return `[Binary or non-text output, ${raw.length} bytes — content omitted]`
+    return `[Binary or non-text output, ${raw.length} bytes - content omitted]`
   }
   return trimmed
+}
+
+function splitLines(raw: string): string[] {
+  const normalized = stripAnsi(raw).replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  return normalized.split('\n')
+}
+
+function collectMatchingLines(lines: string[], pattern: RegExp, limit: number): string[] {
+  const seen = new Set<string>()
+  const matches: string[] = []
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim()
+    if (!line || !pattern.test(line)) continue
+    const key = line.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    matches.unshift(line)
+    if (matches.length >= limit) break
+  }
+  return matches
+}
+
+function compactStreamOutput(
+  raw: string,
+  stream: ShellStream,
+  exitCode: number,
+  maxLen: number
+): CompactStreamResult {
+  const sanitized = sanitizeOutput(raw, maxLen)
+  const lines = splitLines(raw)
+  const errorLines = collectMatchingLines(lines, ERROR_LIKE_RE, MAX_ERROR_LINE_COUNT)
+  const warningLines = collectMatchingLines(lines, WARNING_LIKE_RE, MAX_WARNING_LINE_COUNT)
+  const noisy =
+    stripAnsi(raw).length > COMPACT_OUTPUT_CHAR_THRESHOLD ||
+    lines.length > COMPACT_OUTPUT_LINE_THRESHOLD
+
+  if (!noisy) {
+    return {
+      text: sanitized,
+      totalChars: stripAnsi(raw).length,
+      totalLines: lines.length,
+      errorLikeLines: errorLines.length,
+      warningLikeLines: warningLines.length,
+      compacted: false
+    }
+  }
+
+  const head = lines.slice(0, HEAD_LINE_COUNT)
+  const tail = lines.slice(-TAIL_LINE_COUNT)
+  const sections: string[] = []
+
+  if (head.length > 0) {
+    sections.push(head.join('\n'))
+  }
+
+  if (stream === 'stderr' && errorLines.length > 0) {
+    sections.push(`[error-like lines]\n${errorLines.join('\n')}`)
+  } else if (stream === 'stdout' && exitCode === 0 && warningLines.length > 0) {
+    sections.push(`[warning-like lines]\n${warningLines.join('\n')}`)
+  }
+
+  const omittedLineCount = Math.max(lines.length - head.length - tail.length, 0)
+  if (tail.length > 0) {
+    const header =
+      omittedLineCount > 0
+        ? `[last ${tail.length} lines, omitted ${omittedLineCount} earlier lines]`
+        : `[last ${tail.length} lines]`
+    sections.push(`${header}\n${tail.join('\n')}`)
+  }
+
+  return {
+    text: sanitizeOutput(sections.join('\n\n'), maxLen),
+    totalChars: stripAnsi(raw).length,
+    totalLines: lines.length,
+    errorLikeLines: errorLines.length,
+    warningLikeLines: warningLines.length,
+    compacted: true
+  }
+}
+
+function buildShellResult(payload: {
+  exitCode: number
+  stdout: string
+  stderr: string
+  error?: string
+}): {
+  exitCode: number
+  stdout: string
+  stderr: string
+  error?: string
+  summary: ShellOutputSummary
+} {
+  const stdout = compactStreamOutput(
+    payload.stdout,
+    'stdout',
+    payload.exitCode,
+    MAX_RETURNED_STDOUT_CHARS
+  )
+  const stderr = compactStreamOutput(
+    payload.stderr,
+    'stderr',
+    payload.exitCode,
+    MAX_RETURNED_STDERR_CHARS
+  )
+
+  return {
+    exitCode: payload.exitCode,
+    stdout: stdout.text,
+    stderr: stderr.text,
+    ...(payload.error ? { error: payload.error } : {}),
+    summary: {
+      mode: stdout.compacted || stderr.compacted ? 'compact' : 'full',
+      noisy: stdout.compacted || stderr.compacted,
+      totalChars: stdout.totalChars + stderr.totalChars,
+      totalLines: stdout.totalLines + stderr.totalLines,
+      stdoutLines: stdout.totalLines,
+      stderrLines: stderr.totalLines,
+      errorLikeLines: stdout.errorLikeLines + stderr.errorLikeLines,
+      warningLikeLines: stdout.warningLikeLines + stderr.warningLikeLines
+    }
+  }
 }
 
 async function terminateChildProcess(child: ReturnType<typeof spawn>): Promise<void> {
@@ -26,7 +187,7 @@ async function terminateChildProcess(child: ReturnType<typeof spawn>): Promise<v
       await new Promise<void>((resolve) => {
         const killer = spawn('taskkill', ['/pid', String(pid), '/f', '/t'], {
           shell: true,
-          windowsHide: true,
+          windowsHide: true
         })
         killer.on('error', () => resolve())
         killer.on('close', () => resolve())
@@ -67,10 +228,7 @@ export function registerShellHandlers(): void {
 
       // On Windows, default cmd.exe code page (e.g. CP936) != UTF-8.
       // Prepend chcp 65001 to switch console to UTF-8 before running the command.
-      const cmd =
-        process.platform === 'win32'
-          ? `chcp 65001 >nul & ${args.command}`
-          : args.command
+      const cmd = process.platform === 'win32' ? `chcp 65001 >nul & ${args.command}` : args.command
 
       return new Promise((resolve) => {
         let stdout = ''
@@ -89,11 +247,16 @@ export function registerShellHandlers(): void {
             PYTHONIOENCODING: 'utf-8',
             PYTHONUTF8: '1',
             // Disable Python output buffering so streaming output arrives in real-time
-            PYTHONUNBUFFERED: '1',
-          },
+            PYTHONUNBUFFERED: '1'
+          }
         })
 
-        const finalize = (payload: { exitCode: number; stdout: string; stderr: string; error?: string }): void => {
+        const finalize = (payload: {
+          exitCode: number
+          stdout: string
+          stderr: string
+          error?: string
+        }): void => {
           if (settled) return
           settled = true
           if (execId) runningShellProcesses.delete(execId)
@@ -105,7 +268,7 @@ export function registerShellHandlers(): void {
           child.stderr?.removeAllListeners('data')
           child.removeAllListeners('error')
           child.removeAllListeners('close')
-          resolve(payload)
+          resolve(buildShellResult(payload))
         }
 
         const requestAbort = (): void => {
@@ -117,8 +280,8 @@ export function registerShellHandlers(): void {
             if (child.exitCode !== null || settled) return
             finalize({
               exitCode: 1,
-              stdout: sanitizeOutput(stdout, 50000),
-              stderr: sanitizeOutput(`${stderr}\n[Process termination timed out]`, 10000),
+              stdout,
+              stderr: `${stderr}\n[Process termination timed out]`
             })
           }, 2000)
         }
@@ -127,40 +290,40 @@ export function registerShellHandlers(): void {
           runningShellProcesses.set(execId, { child, abort: requestAbort })
         }
 
-        const sendChunk = (chunk: string): void => {
+        const sendChunk = (chunk: string, stream: ShellStream): void => {
           if (!execId) return
           const win = BrowserWindow.getAllWindows()[0]
           if (win && !win.isDestroyed()) {
-            win.webContents.send('shell:output', { execId, chunk })
+            win.webContents.send('shell:output', { execId, chunk, stream })
           }
         }
 
         child.stdout?.on('data', (data: Buffer) => {
           const text = data.toString('utf8')
           stdout += text
-          sendChunk(text)
+          sendChunk(text, 'stdout')
         })
 
         child.stderr?.on('data', (data: Buffer) => {
           const text = data.toString('utf8')
           stderr += text
-          sendChunk(text)
+          sendChunk(text, 'stderr')
         })
 
         child.on('close', (code) => {
           finalize({
             exitCode: killed ? 1 : (code ?? 0),
-            stdout: sanitizeOutput(stdout, 50000),
-            stderr: sanitizeOutput(stderr, 10000),
+            stdout,
+            stderr
           })
         })
 
         child.on('error', (err) => {
           finalize({
             exitCode: 1,
-            stdout: sanitizeOutput(stdout, 50000),
-            stderr: sanitizeOutput(stderr, 10000),
-            error: err.message,
+            stdout,
+            stderr,
+            error: err.message
           })
         })
 

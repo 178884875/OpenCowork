@@ -4,7 +4,8 @@ import { ChevronRight, ChevronDown, Loader2 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import type { ToolCallStatus } from '@renderer/lib/agent/types'
 import type { ToolResultContent } from '@renderer/lib/api/types'
-import { inputSummary, ToolStatusDot } from './ToolCallCard'
+import { ToolStatusDot } from './ToolCallCard'
+import { inputSummary } from './tool-call-summary'
 
 interface ToolCallGroupItem {
   id: string
@@ -34,12 +35,14 @@ function groupStatus(items: ToolCallGroupItem[]): ToolCallStatus | 'completed' {
 }
 
 /** Generate a summary label for the collapsed group header */
-function groupSummaryLabel(toolName: string, items: ToolCallGroupItem[], t: (key: string, opts?: Record<string, unknown>) => string): string {
+function groupSummaryLabel(
+  toolName: string,
+  items: ToolCallGroupItem[],
+  t: (key: string, opts?: Record<string, unknown>) => string
+): string {
   const count = items.length
   // Collect unique short summaries for display
-  const summaries = items
-    .map((item) => inputSummary(item.name, item.input))
-    .filter(Boolean)
+  const summaries = items.map((item) => inputSummary(item.name, item.input)).filter(Boolean)
   const uniqueSummaries = [...new Set(summaries)]
 
   if (toolName === 'Read') {
@@ -61,7 +64,11 @@ function groupSummaryLabel(toolName: string, items: ToolCallGroupItem[], t: (key
   return `${toolName} × ${count}`
 }
 
-export function ToolCallGroup({ toolName, items, children }: ToolCallGroupProps): React.JSX.Element {
+export function ToolCallGroup({
+  toolName,
+  items,
+  children
+}: ToolCallGroupProps): React.JSX.Element {
   const { t } = useTranslation('chat')
   const status = groupStatus(items)
   const isActive = status === 'running' || status === 'streaming' || status === 'pending_approval'
@@ -69,15 +76,11 @@ export function ToolCallGroup({ toolName, items, children }: ToolCallGroupProps)
   const [expanded, setExpanded] = useState(true)
   const wasActiveRef = useRef(isActive)
 
-  // Auto-expand while group is active, auto-collapse when all complete
   useEffect(() => {
-    if (isActive) {
-      setExpanded(true)
-    }
-    if (wasActiveRef.current && !isActive) {
-      setExpanded(false)
-    }
+    const nextExpanded = isActive ? true : wasActiveRef.current && !isActive ? false : null
     wasActiveRef.current = isActive
+    if (nextExpanded === null) return
+    setExpanded((prev) => (prev === nextExpanded ? prev : nextExpanded))
   }, [isActive])
 
   const summaryLabel = groupSummaryLabel(toolName, items, t)
@@ -90,13 +93,12 @@ export function ToolCallGroup({ toolName, items, children }: ToolCallGroupProps)
       >
         <ToolStatusDot status={status} />
         <span className="font-medium">{summaryLabel}</span>
-        {isActive && (
-          <Loader2 className="size-3 animate-spin text-blue-400/70" />
+        {isActive && <Loader2 className="size-3 animate-spin text-blue-400/70" />}
+        {expanded ? (
+          <ChevronDown className="size-3 text-muted-foreground/40" />
+        ) : (
+          <ChevronRight className="size-3 text-muted-foreground/40" />
         )}
-        {expanded
-          ? <ChevronDown className="size-3 text-muted-foreground/40" />
-          : <ChevronRight className="size-3 text-muted-foreground/40" />
-        }
       </button>
 
       <AnimatePresence initial={false}>

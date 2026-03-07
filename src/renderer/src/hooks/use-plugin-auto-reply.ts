@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Plugin Auto-Reply Hook
  *
  * Listens for `plugin:auto-reply-task` window events and runs an
@@ -56,6 +56,8 @@ interface PluginAutoReplyTask {
   images?: Array<{ base64: string; mediaType: string }>
   audio?: { fileKey: string; fileName?: string; mediaType?: string; durationMs?: number }
 }
+
+const PLUGIN_STREAM_DELTA_FLUSH_MS = 66
 
 
 async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
@@ -556,10 +558,54 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
 
   let fullText = ''
   let lastError: string | null = null
+  let pendingText = ''
+  let pendingPluginContent = ''
+  const pendingToolInputs = new Map<string, Record<string, unknown>>()
+  let streamFlushTimer: ReturnType<typeof setTimeout> | null = null
   const toolInputThrottle = new Map<
     string,
     { lastFlush: number; pending?: Record<string, unknown>; timer?: ReturnType<typeof setTimeout> }
   >()
+
+  const flushStreamingState = (): void => {
+    if (streamFlushTimer) {
+      clearTimeout(streamFlushTimer)
+      streamFlushTimer = null
+    }
+    if (pendingText) {
+      useChatStore.getState().appendTextDelta(sessionId, assistantMsgId, pendingText)
+      pendingText = ''
+    }
+    if (pendingToolInputs.size > 0) {
+      for (const [toolCallId, partialInput] of pendingToolInputs) {
+        useChatStore.getState().updateToolUseInput(
+          sessionId,
+          assistantMsgId,
+          toolCallId,
+          partialInput
+        )
+      }
+      pendingToolInputs.clear()
+    }
+    if (streamingActive && pendingPluginContent !== fullText) {
+      pendingPluginContent = fullText
+      ipcClient
+        .invoke('plugin:stream:update', {
+          pluginId,
+          chatId,
+          content: pendingPluginContent,
+        })
+        .catch(() => {})
+    }
+  }
+
+  const scheduleStreamingFlush = (): void => {
+    if (streamFlushTimer) return
+    streamFlushTimer = setTimeout(() => {
+      streamFlushTimer = null
+      flushStreamingState()
+    }, PLUGIN_STREAM_DELTA_FLUSH_MS)
+  }
 
   const flushToolInput = (toolCallId: string): void => {
     const entry = toolInputThrottle.get(toolCallId)
@@ -610,14 +656,8 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
 
       case 'text_delta':
         fullText += event.text
-        useChatStore.getState().appendTextDelta(sessionId, assistantMsgId, event.text)
-
-        // Forward to CardKit card
-        if (streamingActive) {
-          ipcClient.invoke('plugin:stream:update', {
-            pluginId, chatId, content: fullText,
-          }).catch(() => {})
-        }
+        pendingText += event.text
+        scheduleStreamingFlush()
         break
 
       case 'tool_use_streaming_start':
@@ -638,11 +678,13 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
         break
 
       case 'tool_use_args_delta':
-        useChatStore.getState().updateToolUseInput(sessionId, assistantMsgId, event.toolCallId, event.partialInput)
+        pendingToolInputs.set(event.toolCallId, event.partialInput)
+        scheduleStreamingFlush()
         scheduleToolInputUpdate(event.toolCallId, event.partialInput)
         break
 
       case 'tool_use_generated':
+        flushStreamingState()
         console.log(`[PluginAutoReply] Tool call: ${event.toolUseBlock.name}`)
         useChatStore.getState().updateToolUseInput(sessionId, assistantMsgId, event.toolUseBlock.id, event.toolUseBlock.input)
         flushToolInput(event.toolUseBlock.id)
@@ -696,6 +738,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
   }
 
   // ── Finalize ──
+  flushStreamingState()
   useChatStore.getState().setStreamingMessageId(sessionId, null)
 
   // Persist the final message state to DB.
@@ -879,7 +922,8 @@ async function transcribeFeishuAudio(params: {
   return result.text ?? ''
 }
 
-function hasQueuedPluginTasks(_sessionId: string): boolean {
+function hasQueuedPluginTasks(sessionId: string): boolean {
+  void sessionId
   // Check if there are any queued plugin auto-reply tasks for this session
   // This is a simplified check - in a real implementation, you'd track queued tasks
   return false

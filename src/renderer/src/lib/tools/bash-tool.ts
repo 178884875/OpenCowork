@@ -14,13 +14,121 @@ const LONG_RUNNING_COMMAND_PATTERNS: RegExp[] = [
   /\b(tail|less)\s+-f\b/i,
   /\b(nodemon|ts-node-dev)\b/i,
   /\b(uvicorn|gunicorn)\b.*\b(--reload|--workers|--bind|--host)\b/i,
-  /\bpython\b.*\b-m\s+http\.server\b/i,
+  /\bpython\b.*\b-m\s+http\.server\b/i
 ]
+const LIVE_PREVIEW_MAX_LINES = 80
+const LIVE_PREVIEW_MAX_CHARS = 4000
+const LIVE_ERROR_PREVIEW_MAX_LINES = 24
+const ERROR_LIKE_RE =
+  /\b(error|failed|exception|traceback|fatal|panic|cannot|unable|undefined reference|syntax error|test(?:s)? failed?)\b/i
+
+type ShellStream = 'stdout' | 'stderr'
+
+interface ShellOutputEvent {
+  execId: string
+  chunk: string
+  stream?: ShellStream
+}
+
+interface LiveShellPreview {
+  stdout: string
+  stderr: string
+  errorLines: string[]
+  stdoutChars: number
+  stderrChars: number
+  stdoutTruncated: boolean
+  stderrTruncated: boolean
+}
 
 function isLikelyLongRunningCommand(command: string): boolean {
   const normalized = command.trim()
   if (!normalized) return false
   return LONG_RUNNING_COMMAND_PATTERNS.some((pattern) => pattern.test(normalized))
+}
+
+function keepLastLines(
+  value: string,
+  maxLines: number,
+  maxChars: number
+): {
+  text: string
+  truncated: boolean
+} {
+  const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines = normalized.split('\n')
+  const trimmedLines = lines.length > maxLines ? lines.slice(-maxLines) : lines
+  const joined = trimmedLines.join('\n')
+  if (joined.length <= maxChars) {
+    return {
+      text: joined,
+      truncated: lines.length > maxLines
+    }
+  }
+  return {
+    text: joined.slice(-maxChars),
+    truncated: true
+  }
+}
+
+function collectErrorLines(existing: string[], chunk: string): string[] {
+  const next = [...existing]
+  for (const line of chunk.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')) {
+    const text = line.trim()
+    if (!text || !ERROR_LIKE_RE.test(text)) continue
+    if (next.includes(text)) continue
+    next.push(text)
+    if (next.length > LIVE_ERROR_PREVIEW_MAX_LINES) next.shift()
+  }
+  return next
+}
+
+function appendPreview(
+  preview: LiveShellPreview,
+  stream: ShellStream,
+  chunk: string
+): LiveShellPreview {
+  const next = { ...preview }
+  if (stream === 'stderr') {
+    const result = keepLastLines(
+      `${next.stderr}${chunk}`,
+      LIVE_PREVIEW_MAX_LINES,
+      LIVE_PREVIEW_MAX_CHARS
+    )
+    next.stderr = result.text
+    next.stderrTruncated = next.stderrTruncated || result.truncated
+    next.stderrChars += chunk.length
+    next.errorLines = collectErrorLines(next.errorLines, chunk)
+    return next
+  }
+
+  const result = keepLastLines(
+    `${next.stdout}${chunk}`,
+    LIVE_PREVIEW_MAX_LINES,
+    LIVE_PREVIEW_MAX_CHARS
+  )
+  next.stdout = result.text
+  next.stdoutTruncated = next.stdoutTruncated || result.truncated
+  next.stdoutChars += chunk.length
+  next.errorLines = collectErrorLines(next.errorLines, chunk)
+  return next
+}
+
+function buildLivePreviewPayload(preview: LiveShellPreview): string {
+  const stderr =
+    preview.errorLines.length > 0
+      ? `${preview.errorLines.join('\n')}${preview.stderr ? `\n\n[last stderr lines]\n${preview.stderr}` : ''}`
+      : preview.stderr
+  return JSON.stringify({
+    stdout: preview.stdout,
+    stderr,
+    summary: {
+      live: true,
+      mode: 'tail',
+      noisy: preview.stdoutTruncated || preview.stderrTruncated,
+      totalChars: preview.stdoutChars + preview.stderrChars,
+      errorLikeLines: preview.errorLines.length
+    }
+  })
 }
 
 const bashHandler: ToolHandler = {
@@ -33,22 +141,22 @@ const bashHandler: ToolHandler = {
         command: { type: 'string', description: 'The command to execute' },
         timeout: {
           type: 'number',
-          description: 'Timeout in milliseconds (max 3600000, default 600000)',
+          description: 'Timeout in milliseconds (max 3600000, default 600000)'
         },
         run_in_background: {
           type: 'boolean',
           description:
-            'Run command in background without blocking; if omitted, long-running commands are auto-detected',
+            'Run command in background without blocking; if omitted, long-running commands are auto-detected'
         },
         force_foreground: {
           type: 'boolean',
           description:
-            'Force foreground execution for long-running commands (default false; use only when necessary)',
+            'Force foreground execution for long-running commands (default false; use only when necessary)'
         },
-        description: { type: 'string', description: '5-10 word description of the command' },
+        description: { type: 'string', description: '5-10 word description of the command' }
       },
-      required: ['command'],
-    },
+      required: ['command']
+    }
   },
   execute: async (input, ctx) => {
     const command = String(input.command ?? '')
@@ -61,7 +169,7 @@ const bashHandler: ToolHandler = {
       const result = (await ctx.ipc.invoke(IPC.SSH_EXEC, {
         connectionId: ctx.sshConnectionId,
         command: ctx.workingFolder ? `cd ${ctx.workingFolder} && ${command}` : command,
-        timeout: input.timeout ?? DEFAULT_BASH_TIMEOUT_MS,
+        timeout: input.timeout ?? DEFAULT_BASH_TIMEOUT_MS
       })) as { exitCode?: number; stdout?: string; stderr?: string; error?: string }
 
       if (result.error) {
@@ -75,8 +183,11 @@ const bashHandler: ToolHandler = {
     const isLongRunning = isLikelyLongRunningCommand(command)
     const forceForeground = Boolean(input.force_foreground)
     const autoBackground = isLongRunning && !forceForeground
-    const runInBackground =
-      forceForeground ? false : isLongRunning ? true : (explicitBackground ?? false)
+    const runInBackground = forceForeground
+      ? false
+      : isLongRunning
+        ? true
+        : (explicitBackground ?? false)
     const execId = `exec-${Date.now()}-${++execCounter}`
     const toolUseId = ctx.currentToolUseId
 
@@ -93,14 +204,14 @@ const bashHandler: ToolHandler = {
               ? input.description
               : autoBackground
                 ? 'Auto-detected long-running command'
-                : undefined,
-        },
+                : undefined
+        }
       })) as { id?: string; error?: string }
 
       if (!result?.id) {
         return JSON.stringify({
           exitCode: 1,
-          stderr: result?.error ?? 'Failed to start background process',
+          stderr: result?.error ?? 'Failed to start background process'
         })
       }
 
@@ -116,7 +227,7 @@ const bashHandler: ToolHandler = {
             ? input.description
             : autoBackground
               ? 'Auto-detected long-running command'
-              : undefined,
+              : undefined
       })
 
       return JSON.stringify({
@@ -128,12 +239,20 @@ const bashHandler: ToolHandler = {
         sessionId: ctx.sessionId ?? null,
         stdout: autoBackground
           ? `Auto-background started for long-running command (id=${result.id}). Open Context panel to monitor, stop, or interact.`
-          : `Background process started (id=${result.id}). Open Context panel to monitor, stop, or interact.`,
+          : `Background process started (id=${result.id}). Open Context panel to monitor, stop, or interact.`
       })
     }
 
     // Listen for streaming output chunks from main process
-    let accumulated = ''
+    let preview: LiveShellPreview = {
+      stdout: '',
+      stderr: '',
+      errorLines: [],
+      stdoutChars: 0,
+      stderrChars: 0,
+      stdoutTruncated: false,
+      stderrTruncated: false
+    }
     let outputTimer: ReturnType<typeof setTimeout> | null = null
     let lastOutputFlush = 0
     const flushOutput = (): void => {
@@ -141,15 +260,15 @@ const bashHandler: ToolHandler = {
       lastOutputFlush = Date.now()
       if (toolUseId) {
         useAgentStore.getState().updateToolCall(toolUseId, {
-          output: accumulated,
+          output: buildLivePreviewPayload(preview)
         })
       }
     }
 
     const cleanup = ctx.ipc.on('shell:output', (...args: unknown[]) => {
-      const data = args[0] as { execId: string; chunk: string }
+      const data = args[0] as ShellOutputEvent
       if (data.execId !== execId) return
-      accumulated += data.chunk
+      preview = appendPreview(preview, data.stream === 'stderr' ? 'stderr' : 'stdout', data.chunk)
       const now = Date.now()
       if (now - lastOutputFlush >= 60) {
         if (outputTimer) {
@@ -179,7 +298,7 @@ const bashHandler: ToolHandler = {
         command,
         timeout: input.timeout ?? DEFAULT_BASH_TIMEOUT_MS,
         cwd: ctx.workingFolder,
-        execId,
+        execId
       })
       return JSON.stringify(result)
     } finally {
@@ -199,7 +318,7 @@ const bashHandler: ToolHandler = {
     // Plugin context: respect allowShell permission
     if (ctx.channelPermissions) return !ctx.channelPermissions.allowShell
     return true // Normal sessions: always require approval
-  },
+  }
 }
 
 export function registerBashTools(): void {

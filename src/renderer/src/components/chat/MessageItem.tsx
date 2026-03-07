@@ -1,6 +1,7 @@
 import * as React from 'react'
-import type { UnifiedMessage, ToolResultContent } from '@renderer/lib/api/types'
-import type { ToolCallState } from '@renderer/lib/agent/types'
+import type { ToolResultContent } from '@renderer/lib/api/types'
+import { useChatStore } from '@renderer/stores/chat-store'
+import { useShallow } from 'zustand/react/shallow'
 import { UserMessage } from './UserMessage'
 import { AssistantMessage } from './AssistantMessage'
 import { Users, ChevronDown } from 'lucide-react'
@@ -8,14 +9,33 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { SlideIn } from '@renderer/components/animate-ui'
 import type { EditableUserMessageDraft } from '@renderer/lib/image-attachments'
+import type { UnifiedMessage } from '@renderer/lib/api/types'
 
 interface MessageItemProps {
-  message: UnifiedMessage
+  sessionId: string
+  messageId: string
   isStreaming?: boolean
   isLastUserMessage?: boolean
   onEditUserMessage?: (draft: EditableUserMessageDraft) => void
   toolResults?: Map<string, { content: ToolResultContent; isError?: boolean }>
-  liveToolCallMap?: Map<string, ToolCallState> | null
+}
+
+function getContentSignal(content: UnifiedMessage['content']): string {
+  if (typeof content === 'string') return `s:${content.length}:${content.slice(-32)}`
+  const last = content[content.length - 1]
+  if (!last) return 'a:0'
+  if (last.type === 'text') return `a:${content.length}:t:${last.text.length}:${last.text.slice(-32)}`
+  if (last.type === 'thinking') {
+    return `a:${content.length}:h:${last.thinking.length}:${last.completedAt ?? 0}`
+  }
+  if (last.type === 'tool_use') {
+    return `a:${content.length}:u:${last.id}:${JSON.stringify(last.input).length}`
+  }
+  if (last.type === 'tool_result') {
+    return `a:${content.length}:r:${last.toolUseId}:${typeof last.content === 'string' ? last.content.length : last.content.length}`
+  }
+  if (last.type === 'image_error') return `a:${content.length}:e:${last.code}:${last.message.length}`
+  return `a:${content.length}:i:${last.source.type}:${last.source.url ?? last.source.data?.length ?? 0}`
 }
 
 function formatTime(ts: number): string {
@@ -60,13 +80,36 @@ function TeamNotification({ content }: { content: string }): React.JSX.Element {
 }
 
 function MessageItemInner({
-  message,
+  sessionId,
+  messageId,
   isStreaming,
   isLastUserMessage,
   onEditUserMessage,
-  toolResults,
-  liveToolCallMap
+  toolResults
 }: MessageItemProps): React.JSX.Element | null {
+  const message = useChatStore(
+    useShallow((s) => {
+      const current = s.sessions
+        .find((session) => session.id === sessionId)
+        ?.messages.find((item) => item.id === messageId)
+      if (!current) return null
+      return {
+        id: current.id,
+        role: current.role,
+        content: current.content,
+        createdAt: current.createdAt,
+        usage: current.usage,
+        source: current.source,
+        contentSignal: getContentSignal(current.content),
+        usageSignal: current.usage
+          ? `${current.usage.inputTokens}:${current.usage.outputTokens}:${current.usage.totalDurationMs ?? 0}`
+          : ''
+      }
+    })
+  )
+
+  if (!message) return null
+
   const inner = (() => {
     switch (message.role) {
       case 'user': {
@@ -99,7 +142,6 @@ function MessageItemInner({
             isStreaming={isStreaming}
             usage={message.usage}
             toolResults={toolResults}
-            liveToolCallMap={liveToolCallMap}
             msgId={message.id}
           />
         )
@@ -140,11 +182,11 @@ function areToolResultsEqual(
 
 function areEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
   return (
-    prev.message === next.message &&
+    prev.sessionId === next.sessionId &&
+    prev.messageId === next.messageId &&
     prev.isStreaming === next.isStreaming &&
     prev.isLastUserMessage === next.isLastUserMessage &&
     prev.onEditUserMessage === next.onEditUserMessage &&
-    prev.liveToolCallMap === next.liveToolCallMap &&
     areToolResultsEqual(prev.toolResults, next.toolResults)
   )
 }

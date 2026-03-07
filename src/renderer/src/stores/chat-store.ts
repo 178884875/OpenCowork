@@ -149,9 +149,7 @@ function stripThinkTagMarkers(text: string): string {
   return text.replace(/<\s*\/?\s*think\s*>/gi, '')
 }
 
-function dbFlushMessage(_sessionId: string, msg: UnifiedMessage, _sortOrder: number): void {
-  void _sessionId
-  void _sortOrder
+function dbFlushMessage(msg: UnifiedMessage): void {
   const key = msg.id
   const existing = _pendingFlush.get(key)
   if (existing) clearTimeout(existing)
@@ -164,13 +162,7 @@ function dbFlushMessage(_sessionId: string, msg: UnifiedMessage, _sortOrder: num
   )
 }
 
-function dbFlushMessageImmediate(
-  _sessionId: string,
-  msg: UnifiedMessage,
-  _sortOrder: number
-): void {
-  void _sessionId
-  void _sortOrder
+function dbFlushMessageImmediate(msg: UnifiedMessage): void {
   const existing = _pendingFlush.get(msg.id)
   if (existing) {
     clearTimeout(existing)
@@ -190,6 +182,8 @@ interface ChatStore {
 
   // Initialization
   loadFromDb: () => Promise<void>
+  loadRecentSessionMessages: (sessionId: string, force?: boolean) => Promise<void>
+  loadOlderSessionMessages: (sessionId: string, limit?: number) => Promise<number>
   loadSessionMessages: (sessionId: string, force?: boolean) => Promise<void>
   ensureDefaultProject: () => Promise<Project | null>
 
@@ -302,6 +296,8 @@ interface MessageRow {
   usage: string | null
   sort_order: number
 }
+
+const RECENT_SESSION_MESSAGE_PAGE_SIZE = 160
 
 function rowToProject(row: ProjectRow): Project {
   return {
@@ -475,7 +471,7 @@ export const useChatStore = create<ChatStore>()(
         }
       })
       if (nextSessionId) {
-        void get().loadSessionMessages(nextSessionId)
+        void get().loadRecentSessionMessages(nextSessionId)
       }
     },
 
@@ -685,6 +681,78 @@ export const useChatStore = create<ChatStore>()(
       }
     },
 
+    loadRecentSessionMessages: async (sessionId, force = false) => {
+      const session = get().sessions.find((s) => s.id === sessionId)
+      if (!session) return
+      const knownCount = session.messageCount ?? session.messages.length
+      if (!force && session.messagesLoaded && session.messages.length > 0) return
+      if (knownCount === 0) {
+        set((state) => {
+          const target = state.sessions.find((s) => s.id === sessionId)
+          if (!target) return
+          target.messages = []
+          target.messagesLoaded = true
+          target.messageCount = 0
+        })
+        return
+      }
+      try {
+        const limit = Math.min(RECENT_SESSION_MESSAGE_PAGE_SIZE, knownCount)
+        const offset = Math.max(0, knownCount - limit)
+        const msgRows = (await ipcClient.invoke('db:messages:list-page', {
+          sessionId,
+          limit,
+          offset
+        })) as MessageRow[]
+        const messages = msgRows.map(rowToMessage)
+        set((state) => {
+          const target = state.sessions.find((s) => s.id === sessionId)
+          if (!target) return
+          target.messages = messages
+          target.messagesLoaded = true
+          target.messageCount = knownCount
+        })
+      } catch (err) {
+        console.error('[ChatStore] Failed to load recent session messages:', err)
+      }
+    },
+
+    loadOlderSessionMessages: async (sessionId, limit = RECENT_SESSION_MESSAGE_PAGE_SIZE) => {
+      const session = get().sessions.find((s) => s.id === sessionId)
+      if (!session) return 0
+      if (!session.messagesLoaded) {
+        await get().loadRecentSessionMessages(sessionId)
+      }
+      const latest = get().sessions.find((s) => s.id === sessionId)
+      if (!latest) return 0
+      const olderCount = Math.max(0, latest.messageCount - latest.messages.length)
+      if (olderCount === 0) return 0
+      const nextCount = Math.min(limit, olderCount)
+      const offset = olderCount - nextCount
+      try {
+        const msgRows = (await ipcClient.invoke('db:messages:list-page', {
+          sessionId,
+          limit: nextCount,
+          offset
+        })) as MessageRow[]
+        const olderMessages = msgRows.map(rowToMessage)
+        if (olderMessages.length === 0) return 0
+        set((state) => {
+          const target = state.sessions.find((s) => s.id === sessionId)
+          if (!target) return
+          const existingIds = new Set(target.messages.map((message) => message.id))
+          const merged = olderMessages.filter((message) => !existingIds.has(message.id))
+          if (merged.length === 0) return
+          target.messages = [...merged, ...target.messages]
+          target.messagesLoaded = true
+        })
+        return olderMessages.length
+      } catch (err) {
+        console.error('[ChatStore] Failed to load older session messages:', err)
+        return 0
+      }
+    },
+
     loadSessionMessages: async (sessionId, force = false) => {
       const session = get().sessions.find((s) => s.id === sessionId)
       if (!session) return
@@ -771,7 +839,7 @@ export const useChatStore = create<ChatStore>()(
               providerStore.setActiveModel(activeSession.modelId)
             }
           }
-          await get().loadSessionMessages(nextActiveSessionId)
+          await get().loadRecentSessionMessages(nextActiveSessionId)
           await useTaskStore.getState().loadTasksForSession(nextActiveSessionId)
           const activePlan = usePlanStore.getState().getPlanBySession(nextActiveSessionId)
           usePlanStore.getState().setActivePlan(activePlan?.id ?? null)
@@ -876,7 +944,7 @@ export const useChatStore = create<ChatStore>()(
         delete state.streamingMessages[id]
       })
       if (nextActiveId) {
-        void get().loadSessionMessages(nextActiveId)
+        void get().loadRecentSessionMessages(nextActiveId)
         void useTaskStore.getState().loadTasksForSession(nextActiveId)
         const activePlan = usePlanStore.getState().getPlanBySession(nextActiveId)
         usePlanStore.getState().setActivePlan(activePlan?.id ?? null)
@@ -926,7 +994,7 @@ export const useChatStore = create<ChatStore>()(
       // Load tasks for the new session
       if (id) {
         void useTaskStore.getState().loadTasksForSession(id)
-        void get().loadSessionMessages(id)
+        void get().loadRecentSessionMessages(id)
         const activePlan = usePlanStore.getState().getPlanBySession(id)
         usePlanStore.getState().setActivePlan(activePlan?.id ?? null)
       } else {
@@ -1349,8 +1417,7 @@ export const useChatStore = create<ChatStore>()(
       // Debounced persist for streaming
       const session = get().sessions.find((s) => s.id === sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
-      const idx = session?.messages.indexOf(msg!) ?? 0
-      if (msg) dbFlushMessage(sessionId, msg, idx)
+      if (msg) dbFlushMessage(msg)
     },
 
     appendThinkingDelta: (sessionId, msgId, thinking) => {
@@ -1395,8 +1462,7 @@ export const useChatStore = create<ChatStore>()(
       // Debounced persist
       const session = get().sessions.find((s) => s.id === sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
-      const idx = session?.messages.indexOf(msg!) ?? 0
-      if (msg) dbFlushMessage(sessionId, msg, idx)
+      if (msg) dbFlushMessage(msg)
     },
 
     setThinkingEncryptedContent: (sessionId, msgId, encryptedContent, provider) => {
@@ -1466,8 +1532,7 @@ export const useChatStore = create<ChatStore>()(
 
       const session = get().sessions.find((s) => s.id === sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
-      const idx = session?.messages.indexOf(msg!) ?? 0
-      if (msg) dbFlushMessage(sessionId, msg, idx)
+      if (msg) dbFlushMessage(msg)
     },
 
     completeThinking: (sessionId, msgId) => {
@@ -1487,8 +1552,7 @@ export const useChatStore = create<ChatStore>()(
       // Immediate persist after thinking completes
       const session = get().sessions.find((s) => s.id === sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
-      const idx = session?.messages.indexOf(msg!) ?? 0
-      if (msg) dbFlushMessageImmediate(sessionId, msg, idx)
+      if (msg) dbFlushMessageImmediate(msg)
     },
 
     appendToolUse: (sessionId, msgId, toolUse) => {
@@ -1507,8 +1571,7 @@ export const useChatStore = create<ChatStore>()(
       // Persist immediately for tool use blocks
       const session = get().sessions.find((s) => s.id === sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
-      const idx = session?.messages.indexOf(msg!) ?? 0
-      if (msg) dbFlushMessageImmediate(sessionId, msg, idx)
+      if (msg) dbFlushMessageImmediate(msg)
     },
 
     updateToolUseInput: (sessionId, msgId, toolUseId, input) => {
@@ -1525,8 +1588,7 @@ export const useChatStore = create<ChatStore>()(
       })
       const session = get().sessions.find((s) => s.id === sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
-      const idx = session?.messages.indexOf(msg!) ?? 0
-      if (msg) dbFlushMessage(sessionId, msg, idx)
+      if (msg) dbFlushMessage(msg)
     },
 
     appendContentBlock: (sessionId, msgId, block) => {
@@ -1544,8 +1606,7 @@ export const useChatStore = create<ChatStore>()(
       })
       const session = get().sessions.find((s) => s.id === sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
-      const idx = session?.messages.indexOf(msg!) ?? 0
-      if (msg) dbFlushMessageImmediate(sessionId, msg, idx)
+      if (msg) dbFlushMessageImmediate(msg)
     },
 
     setStreamingMessageId: (sessionId, id) =>

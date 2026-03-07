@@ -164,6 +164,13 @@ export function registerDbHandlers(): void {
   })
 
   ipcMain.handle(
+    'db:messages:list-page',
+    (_event, args: { sessionId: string; limit: number; offset: number }) => {
+      return messagesDao.getMessagesPage(args.sessionId, args.limit, args.offset)
+    }
+  )
+
+  ipcMain.handle(
     'db:messages:add',
     (
       _event,

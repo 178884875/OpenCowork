@@ -2,13 +2,12 @@ import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useChatStore } from '@renderer/stores/chat-store'
 import { useUIStore } from '@renderer/stores/ui-store'
-import { useAgentStore } from '@renderer/stores/agent-store'
+import { useShallow } from 'zustand/react/shallow'
 import { MessageItem } from './MessageItem'
 import { MessageSquare, Briefcase, Code2, RefreshCw, ArrowDown, Loader2 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
 
 import type { ContentBlock, ToolResultContent, UnifiedMessage } from '@renderer/lib/api/types'
-import type { ToolCallState } from '@renderer/lib/agent/types'
 import {
   isEditableUserMessage,
   type EditableUserMessageDraft
@@ -38,7 +37,7 @@ interface MessageListProps {
 }
 
 interface RenderableMessage {
-  message: UnifiedMessage
+  messageId: string
   isLastUserMessage: boolean
   toolResults?: Map<string, { content: ToolResultContent; isError?: boolean }>
 }
@@ -55,6 +54,7 @@ interface RenderableMetaBuildResult {
 }
 
 const EMPTY_MESSAGES: UnifiedMessage[] = []
+const EMPTY_MESSAGE_IDS: string[] = []
 const INITIAL_VISIBLE_MESSAGE_COUNT = 120
 const LOAD_MORE_MESSAGE_STEP = 80
 
@@ -140,11 +140,25 @@ function buildRenderableMessageMeta(
 
 export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  const activeSession = useChatStore((s) =>
-    s.sessions.find((session) => session.id === s.activeSessionId)
+  const { activeSessionId, streamingMessageId, activeSessionLoaded, activeSessionMessageCount, activeWorkingFolder } =
+    useChatStore(
+      useShallow((s) => {
+        const activeSession = s.sessions.find((session) => session.id === s.activeSessionId)
+        return {
+          activeSessionId: s.activeSessionId,
+          streamingMessageId: s.streamingMessageId,
+          activeSessionLoaded: activeSession?.messagesLoaded ?? true,
+          activeSessionMessageCount: activeSession?.messageCount ?? 0,
+          activeWorkingFolder: activeSession?.workingFolder
+        }
+      })
+    )
+  const messageIds = useChatStore(
+    useShallow((s) => {
+      const activeSession = s.sessions.find((session) => session.id === s.activeSessionId)
+      return activeSession?.messages.map((message) => message.id) ?? EMPTY_MESSAGE_IDS
+    })
   )
-  const activeSessionId = useChatStore((s) => s.activeSessionId)
-  const streamingMessageId = useChatStore((s) => s.streamingMessageId)
   const mode = useUIStore((s) => s.mode)
   const scrollContainerRef = React.useRef<HTMLDivElement>(null)
   const bottomRef = React.useRef<HTMLDivElement>(null)
@@ -152,19 +166,20 @@ export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): R
   const isStreamingRef = React.useRef(false)
   isStreamingRef.current = !!streamingMessageId
 
-  const messages = activeSession?.messages ?? EMPTY_MESSAGES
+  const messages = React.useMemo(
+    () => (activeSessionId ? useChatStore.getState().getSessionMessages(activeSessionId) : EMPTY_MESSAGES),
+    [activeSessionId, messageIds]
+  )
   React.useEffect(() => {
     if (!activeSessionId) return
-    void useChatStore.getState().loadSessionMessages(activeSessionId)
+    void useChatStore.getState().loadRecentSessionMessages(activeSessionId)
   }, [activeSessionId])
 
-  const messageShapeHeadId = messages[0]?.id ?? null
-  const messageShapeTailId = messages[messages.length - 1]?.id ?? null
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const renderableMeta = React.useMemo(
     () => buildRenderableMessageMeta(messages, streamingMessageId),
     // Structural deps only: avoid re-running expensive content scan for each streaming text delta.
-    [activeSessionId, streamingMessageId, messages.length, messageShapeHeadId, messageShapeTailId]
+    [activeSessionId, streamingMessageId, messageIds]
   )
   const [visibleCount, setVisibleCount] = React.useState(INITIAL_VISIBLE_MESSAGE_COUNT)
   const visibleRenderableMeta = React.useMemo(() => {
@@ -177,48 +192,45 @@ export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): R
       const message = messages[item.messageIndex]
       if (!message || isToolResultOnlyUserMessage(message)) continue
       result.push({
-        message,
+        messageId: message.id,
         isLastUserMessage: item.isLastUserMessage,
         toolResults: item.toolResults
       })
     }
     return result
   }, [visibleRenderableMeta, messages])
-  const hiddenMessageCount = Math.max(0, renderableMeta.items.length - visibleRenderableMeta.length)
+  const hiddenLoadedMessageCount = Math.max(0, renderableMeta.items.length - visibleRenderableMeta.length)
+  const olderUnloadedMessageCount = Math.max(0, activeSessionMessageCount - messages.length)
+  const hiddenMessageCount = hiddenLoadedMessageCount + olderUnloadedMessageCount
   const contentRef = React.useRef<HTMLDivElement>(null)
   const hasAssistantMessages = renderableMeta.hasAssistantMessages
 
   React.useEffect(() => {
     setVisibleCount(INITIAL_VISIBLE_MESSAGE_COUNT)
+    setIsAtBottom(true)
   }, [activeSessionId])
 
-  // Use content reference as a lightweight streaming update signal (avoid JSON.stringify on large blocks)
-  const streamingMsg = React.useMemo(
-    () =>
-      streamingMessageId
-        ? (messages.find((message) => message.id === streamingMessageId) ?? null)
-        : null,
-    [messages, streamingMessageId]
-  )
-  const streamContentSignal = streamingMsg?.content
-
-  // Track tool call state changes as additional scroll trigger
-  // (tool cards render/expand during streaming → running → completed transitions)
-  const executedToolCalls = useAgentStore((s) => s.executedToolCalls)
-  const pendingToolCalls = useAgentStore((s) => s.pendingToolCalls)
-  const liveToolCallMap = React.useMemo<Map<string, ToolCallState> | null>(() => {
-    if (!streamingMessageId) return null
-    const map = new Map<string, ToolCallState>()
-    for (const toolCall of executedToolCalls) map.set(toolCall.id, toolCall)
-    for (const toolCall of pendingToolCalls) map.set(toolCall.id, toolCall)
-    return map
-  }, [streamingMessageId, executedToolCalls, pendingToolCalls])
-  const toolCallFingerprint = React.useMemo(() => {
-    const parts: string[] = []
-    for (const tc of executedToolCalls) parts.push(`${tc.id}:${tc.status}`)
-    for (const tc of pendingToolCalls) parts.push(`${tc.id}:${tc.status}`)
-    return parts.join(',')
-  }, [executedToolCalls, pendingToolCalls])
+  React.useLayoutEffect(() => {
+    const container = scrollContainerRef.current
+    const content = contentRef.current
+    if (!container || !activeSessionId) return
+    const scroll = (): void => {
+      container.scrollTop = container.scrollHeight
+    }
+    scroll()
+    const id = setTimeout(scroll, 100)
+    if (content) {
+      const observer = new ResizeObserver(() => scroll())
+      observer.observe(content)
+      const stopObserving = setTimeout(() => observer.disconnect(), 500)
+      return () => {
+        clearTimeout(id)
+        clearTimeout(stopObserving)
+        observer.disconnect()
+      }
+    }
+    return () => clearTimeout(id)
+  }, [activeSessionId, messageIds])
 
   // Track if user is near the bottom via scroll position
   // Use larger threshold during streaming so rapid content growth doesn't break auto-scroll
@@ -246,39 +258,28 @@ export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): R
     if (!container) return
 
     if (isStreamingRef.current) {
-      // Instant scroll during streaming — smooth animation can't keep up with rapid updates
       container.scrollTop = container.scrollHeight
     } else {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [messages.length, streamingMessageId, streamContentSignal, toolCallFingerprint, isAtBottom])
+  }, [messageIds.length, streamingMessageId, isAtBottom])
 
-  // Follow DOM height changes during streaming (covers typewriter-driven growth
-  // that happens between store updates and is not caught by streamContentLen).
   React.useEffect(() => {
     if (!streamingMessageId) return
     const container = scrollContainerRef.current
-    if (!container) return
+    const content = contentRef.current
+    if (!container || !content) return
 
-    let lastHeight = container.scrollHeight
-    let lastTick = 0
-    let rafId: number
-
-    const follow = (now: number): void => {
-      if (now - lastTick >= 33) {
-        lastTick = now
-        const h = container.scrollHeight
-        if (h !== lastHeight) {
-          lastHeight = h
-          const dist = h - container.scrollTop - container.clientHeight
-          if (dist <= 150) container.scrollTop = h
-        }
+    const observer = new ResizeObserver(() => {
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight
+      if (distanceFromBottom <= 150) {
+        container.scrollTop = container.scrollHeight
       }
-      rafId = requestAnimationFrame(follow)
-    }
+    })
 
-    rafId = requestAnimationFrame(follow)
-    return () => cancelAnimationFrame(rafId)
+    observer.observe(content)
+    return () => observer.disconnect()
   }, [streamingMessageId])
 
   const scrollToBottom = React.useCallback(() => {
@@ -286,7 +287,7 @@ export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): R
     if (container) container.scrollTop = container.scrollHeight
   }, [])
 
-  if (activeSession && !activeSession.messagesLoaded && activeSession.messageCount > 0) {
+  if (!activeSessionLoaded && activeSessionMessageCount > 0) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground/70">
         <Loader2 className="size-4 animate-spin" />
@@ -319,7 +320,7 @@ export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): R
                 t('messageList.writeRegex')
               ]
             : mode === 'cowork'
-              ? activeSession?.workingFolder
+              ? activeWorkingFolder
                 ? [
                     t('messageList.summarizeProject'),
                     t('messageList.findBugs'),
@@ -330,7 +331,7 @@ export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): R
                     t('messageList.addTests'),
                     t('messageList.refactorError')
                   ]
-              : activeSession?.workingFolder
+              : activeWorkingFolder
                 ? [
                     t('messageList.addFeature'),
                     t('messageList.writeTestsExisting'),
@@ -418,27 +419,41 @@ export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): R
             <div className="flex justify-center">
               <button
                 className="rounded-md border px-3 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
-                onClick={() => setVisibleCount((prev) => prev + LOAD_MORE_MESSAGE_STEP)}
+                onClick={() => {
+                  if (hiddenLoadedMessageCount > 0) {
+                    setVisibleCount((prev) => prev + LOAD_MORE_MESSAGE_STEP)
+                    return
+                  }
+                  if (!activeSessionId || olderUnloadedMessageCount === 0) return
+                  void useChatStore
+                    .getState()
+                    .loadOlderSessionMessages(activeSessionId, LOAD_MORE_MESSAGE_STEP)
+                    .then((loaded) => {
+                      if (loaded > 0) {
+                        setVisibleCount((prev) => prev + loaded)
+                      }
+                    })
+                }}
               >
                 {t('messageList.loadMoreMessages', { defaultValue: '加载更早消息' })} (
                 {hiddenMessageCount})
               </button>
             </div>
           )}
-          {visibleRenderableMessages.map(({ message, isLastUserMessage, toolResults }) => {
+          {visibleRenderableMessages.map(({ messageId, isLastUserMessage, toolResults }) => {
             return (
               <MessageItem
-                key={message.id}
-                message={message}
-                isStreaming={message.id === streamingMessageId}
+                key={messageId}
+                sessionId={activeSessionId ?? ''}
+                messageId={messageId}
+                isStreaming={messageId === streamingMessageId}
                 isLastUserMessage={isLastUserMessage}
                 onEditUserMessage={onEditUserMessage}
                 toolResults={toolResults}
-                liveToolCallMap={message.id === streamingMessageId ? liveToolCallMap : null}
               />
             )
           })}
-          {!streamingMessageId && messages.length > 0 && hasAssistantMessages && onRetry && (
+          {!streamingMessageId && messageIds.length > 0 && hasAssistantMessages && onRetry && (
             <div className="flex justify-center">
               <Button
                 variant="ghost"
@@ -456,7 +471,7 @@ export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): R
       </div>
 
       {/* Scroll to bottom button */}
-      {!isAtBottom && messages.length > 0 && (
+      {!isAtBottom && messageIds.length > 0 && (
         <button
           onClick={scrollToBottom}
           className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 flex items-center gap-1.5 rounded-full border bg-background/90 backdrop-blur-sm px-3 py-1.5 text-xs text-muted-foreground shadow-lg hover:text-foreground hover:shadow-xl transition-all duration-200 hover:-translate-y-0.5"

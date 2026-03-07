@@ -33,6 +33,37 @@ function ensureStepsPanelVisible(): void {
   ui.setRightPanelOpen(true)
 }
 
+function toTaskSnapshot(
+  task: Pick<TaskItem, 'id' | 'subject' | 'activeForm' | 'status' | 'owner'>
+): {
+  id: string
+  subject: string
+  activeForm?: string
+  status: TaskItem['status']
+  owner?: string | null
+} {
+  return {
+    id: task.id,
+    subject: task.subject,
+    activeForm: task.activeForm,
+    status: task.status,
+    owner: task.owner
+  }
+}
+
+function buildStandaloneTaskSnapshot(sessionId?: string): {
+  total: number
+  completed: number
+  tasks: Array<ReturnType<typeof toTaskSnapshot>>
+} {
+  const tasks = getStandaloneTasks(sessionId)
+  return {
+    total: tasks.length,
+    completed: tasks.filter((task) => task.status === 'completed').length,
+    tasks: tasks.map(toTaskSnapshot)
+  }
+}
+
 // ── TaskCreate ──
 
 const taskCreateHandler: ToolHandler = {
@@ -45,24 +76,24 @@ const taskCreateHandler: ToolHandler = {
       properties: {
         subject: {
           type: 'string',
-          description: 'A brief title for the task',
+          description: 'A brief title for the task'
         },
         description: {
           type: 'string',
-          description: 'A detailed description of what needs to be done',
+          description: 'A detailed description of what needs to be done'
         },
         activeForm: {
           type: 'string',
           description:
-            'Present continuous form shown in spinner when in_progress (e.g., "Running tests")',
+            'Present continuous form shown in spinner when in_progress (e.g., "Running tests")'
         },
         metadata: {
           type: 'object',
-          description: 'Arbitrary metadata to attach to the task',
-        },
+          description: 'Arbitrary metadata to attach to the task'
+        }
       },
-      required: ['subject', 'description'],
-    },
+      required: ['subject', 'description']
+    }
   },
   execute: async (input, ctx) => {
     const subject = String(input.subject)
@@ -79,7 +110,7 @@ const taskCreateHandler: ToolHandler = {
           success: true,
           task_id: existing.id,
           subject: existing.subject,
-          note: 'Task with this subject already exists, returning existing task.',
+          note: 'Task with this subject already exists, returning existing task.'
         })
       }
       const task: TeamTask = {
@@ -89,7 +120,7 @@ const taskCreateHandler: ToolHandler = {
         status: 'pending',
         owner: null,
         dependsOn: [],
-        activeForm,
+        activeForm
       }
       teamEvents.emit({ type: 'team_task_add', task })
       ensureStepsPanelVisible()
@@ -113,13 +144,19 @@ const taskCreateHandler: ToolHandler = {
       blockedBy: [],
       metadata,
       createdAt: Date.now(),
-      updatedAt: Date.now(),
+      updatedAt: Date.now()
     }
     useTaskStore.getState().addTask(task)
     ensureStepsPanelVisible()
-    return JSON.stringify({ success: true, task_id: id, subject })
+    return JSON.stringify({
+      success: true,
+      task_id: id,
+      subject,
+      task: toTaskSnapshot(task),
+      ...buildStandaloneTaskSnapshot(ctx.sessionId)
+    })
   },
-  requiresApproval: () => false,
+  requiresApproval: () => false
 }
 
 // ── TaskGet ──
@@ -127,17 +164,18 @@ const taskCreateHandler: ToolHandler = {
 const taskGetHandler: ToolHandler = {
   definition: {
     name: 'TaskGet',
-    description: 'Retrieve a task by its ID to see full details including description and dependencies.',
+    description:
+      'Retrieve a task by its ID to see full details including description and dependencies.',
     inputSchema: {
       type: 'object',
       properties: {
         taskId: {
           type: 'string',
-          description: 'The ID of the task to retrieve',
-        },
+          description: 'The ID of the task to retrieve'
+        }
       },
-      required: ['taskId'],
-    },
+      required: ['taskId']
+    }
   },
   execute: async (input, ctx) => {
     const taskId = String(input.taskId)
@@ -152,7 +190,7 @@ const taskGetHandler: ToolHandler = {
         status: task.status,
         owner: task.owner,
         activeForm: task.activeForm,
-        dependsOn: task.dependsOn,
+        dependsOn: task.dependsOn
       })
     }
 
@@ -168,10 +206,10 @@ const taskGetHandler: ToolHandler = {
       activeForm: task.activeForm,
       blocks: task.blocks,
       blockedBy: task.blockedBy,
-      metadata: task.metadata,
+      metadata: task.metadata
     })
   },
-  requiresApproval: () => false,
+  requiresApproval: () => false
 }
 
 // ── TaskUpdate ──
@@ -190,31 +228,31 @@ const taskUpdateHandler: ToolHandler = {
         activeForm: {
           type: 'string',
           description:
-            'Present continuous form shown in spinner when in_progress (e.g., "Running tests")',
+            'Present continuous form shown in spinner when in_progress (e.g., "Running tests")'
         },
         status: {
           type: 'string',
           enum: ['pending', 'in_progress', 'completed', 'deleted'],
-          description: 'New status for the task',
+          description: 'New status for the task'
         },
         addBlocks: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Task IDs that this task blocks',
+          description: 'Task IDs that this task blocks'
         },
         addBlockedBy: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Task IDs that block this task',
+          description: 'Task IDs that block this task'
         },
         owner: { type: 'string', description: 'New owner for the task' },
         metadata: {
           type: 'object',
-          description: 'Metadata keys to merge into the task. Set a key to null to delete it.',
-        },
+          description: 'Metadata keys to merge into the task. Set a key to null to delete it.'
+        }
       },
-      required: ['taskId'],
-    },
+      required: ['taskId']
+    }
   },
   execute: async (input, ctx) => {
     const taskId = String(input.taskId)
@@ -231,7 +269,7 @@ const taskUpdateHandler: ToolHandler = {
         teamEvents.emit({
           type: 'team_task_update',
           taskId,
-          patch: { status: 'completed', report: '[deleted]' },
+          patch: { status: 'completed', report: '[deleted]' }
         })
         return JSON.stringify({ success: true, task_id: taskId, deleted: true })
       }
@@ -240,7 +278,7 @@ const taskUpdateHandler: ToolHandler = {
       if (newStatus && ['pending', 'in_progress', 'completed'].includes(newStatus)) {
         if (task.status === 'completed' && newStatus !== 'completed') {
           return JSON.stringify({
-            error: `Task "${taskId}" is already completed and cannot be reverted.`,
+            error: `Task "${taskId}" is already completed and cannot be reverted.`
           })
         }
         patch.status = newStatus
@@ -285,7 +323,7 @@ const taskUpdateHandler: ToolHandler = {
         const blocked = getStandaloneTask(blockedId, ctx.sessionId)
         if (blocked) {
           store.updateTask(blockedId, {
-            blockedBy: [...new Set([...blocked.blockedBy, taskId])],
+            blockedBy: [...new Set([...blocked.blockedBy, taskId])]
           })
         }
       }
@@ -298,7 +336,7 @@ const taskUpdateHandler: ToolHandler = {
         const dep = getStandaloneTask(depId, ctx.sessionId)
         if (dep) {
           store.updateTask(depId, {
-            blocks: [...new Set([...dep.blocks, taskId])],
+            blocks: [...new Set([...dep.blocks, taskId])]
           })
         }
       }
@@ -314,10 +352,16 @@ const taskUpdateHandler: ToolHandler = {
       patch.metadata = merged
     }
 
-    store.updateTask(taskId, patch)
-    return JSON.stringify({ success: true, task_id: taskId, updated: patch })
+    const updatedTask = store.updateTask(taskId, patch)
+    return JSON.stringify({
+      success: true,
+      task_id: taskId,
+      updated: patch,
+      task: updatedTask ? toTaskSnapshot(updatedTask) : undefined,
+      ...buildStandaloneTaskSnapshot(ctx.sessionId)
+    })
   },
-  requiresApproval: () => false,
+  requiresApproval: () => false
 }
 
 // ── TaskList ──
@@ -325,11 +369,12 @@ const taskUpdateHandler: ToolHandler = {
 const taskListHandler: ToolHandler = {
   definition: {
     name: 'TaskList',
-    description: 'List all tasks in the current session with their status, owner, and dependencies.',
+    description:
+      'List all tasks in the current session with their status, owner, and dependencies.',
     inputSchema: {
       type: 'object',
-      properties: {},
-    },
+      properties: {}
+    }
   },
   execute: async (_input, ctx) => {
     if (hasActiveTeam()) {
@@ -344,8 +389,8 @@ const taskListHandler: ToolHandler = {
           subject: t.subject,
           status: t.status,
           owner: t.owner,
-          dependsOn: t.dependsOn,
-        })),
+          dependsOn: t.dependsOn
+        }))
       })
     }
 
@@ -361,11 +406,11 @@ const taskListHandler: ToolHandler = {
         owner: t.owner,
         blockedBy: t.blockedBy.filter(
           (bid) => getStandaloneTask(bid, ctx.sessionId)?.status !== 'completed'
-        ),
-      })),
+        )
+      }))
     })
   },
-  requiresApproval: () => false,
+  requiresApproval: () => false
 }
 
 // ── Registration ──

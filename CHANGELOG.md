@@ -3,6 +3,29 @@
 All notable changes to **OpenCowork** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com).
 
+## [0.4.5] - 2026-03-07
+
+### Added
+- **Agent change tracking** — new file change tracking system that records all file modifications during agent runs, enabling review, accept, and rollback operations.
+- **RunChangeReviewCard component** — dedicated UI for reviewing changes made by agents with accept/rollback controls.
+- **Change tracking integration** — file write operations now automatically track changes via IPC handlers.
+
+### Changed
+- **Code formatting** — cleaned up code formatting and improved readability across multiple files including `agent-change-handlers.ts`, `fs-handlers.ts`, and various React components.
+- **State management** — enhanced `useAgentStore` to manage run change sets with methods for accepting and rolling back changes.
+
+## [0.4.4] - 2026-03-07
+
+### Added
+- **Message pagination** — new `getMessagesPage` function in `messages-dao.ts` for paginated message fetching, improving performance for long conversations.
+- **Tool call summary** — new `tool-call-summary.ts` module for improved input summaries in tool call cards.
+
+### Changed
+- **Chat components enhancement** — refactored `AssistantMessage`, `MessageList`, `ToolCallCard`, and `ThinkingBlock` components to utilize new pagination logic.
+- **TaskCard refactoring** — improved handling of task output with better summary display.
+- **Bash tool improvements** — enhanced shell execution with better output handling.
+- **Plugin auto-reply** — improved message handling in `use-plugin-auto-reply.ts`.
+
 ## [0.4.3] - 2026-03-06
 
 ### Fixed

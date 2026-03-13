@@ -5,94 +5,60 @@
   <h1 align="center">OpenCowork</h1>
   <p align="center">
     <strong>开源桌面多智能体协作平台</strong><br>
-    在本地用真实工具驱动 AI 代理协作与自动化。
+    为 AI 智能体赋予本地工具、并行团队协作及无缝办公集成能力。
   </p>
-  <p align="center">
-    <a href="README.md">English</a> •
-    <a href="#项目概述">概述</a> •
-    <a href="#核心能力">能力</a> •
-    <a href="#架构概览">架构</a> •
-    <a href="#快速开始">快速开始</a> •
-    <a href="#开发指南">开发</a> •
-    <a href="#star-历史">Star 历史</a>
-  </p>
+</p>
+
+<p align="center">
+  <img src="images/image.png" alt="OpenCowork 界面预览" width="800">
+  <br>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> •
+  <a href="#为什么选择-opencowork">为什么选择 OpenCowork</a> •
+  <a href="#核心特性">核心特性</a> •
+  <a href="#灵感来源">灵感来源</a> •
+  <a href="#快速开始">快速开始</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/License-Apache_2.0-green" alt="License">
   <img src="https://img.shields.io/badge/Version-0.3.6-orange" alt="Version">
-  <img src="https://img.shields.io/github/stars/AIDotNet/OpenCoWork?style=social" alt="Version">
-  <img src="https://img.shields.io/github/forks/AIDotNet/OpenCoWork?style=social" alt="Version">
-  <img src="https://gitcode.com/AIDotNet/OpenCoWork/star/badge.svg" alt="Version">
+  <img src="https://img.shields.io/github/stars/AIDotNet/OpenCoWork?style=social" alt="Stars">
+  <img src="https://img.shields.io/github/forks/AIDotNet/OpenCoWork?style=social" alt="Forks">
+  <img src="https://gitcode.com/AIDotNet/OpenCoWork/star/badge.svg" alt="GitCode Stars">
 </p>
 
 ---
 
-## WeChat
-<img width="1080" height="1518" alt="image" src="https://github.com/user-attachments/assets/c6a42f37-b1f0-4b30-8b95-2e3412861a1c" />
+## 🚀 为什么选择 OpenCowork？
 
+传统的 LLM 界面往往是“环境孤岛”。开发者通常需要花费 50% 的时间在聊天窗口和 IDE 之间手动复制粘贴代码、终端日志和文件内容。
 
-## 项目概述
+**OpenCowork 通过以下方式解决这一问题：**
+- **本地代理能力：** 智能体可以在您的许可下直接读写文件并执行 Shell 命令。
+- **上下文感知：** 无需再手动喂数据。智能体会自主探索您的代码库和日志。
+- **任务编排：** 复杂的任务（如“重构此模块并更新测试”）会被拆解并由专门的子智能体处理。
+- **人在回路：** 通过透明的工具调用审批系统，您始终拥有最终控制权。
 
-OpenCowork 是基于 Electron、React、TypeScript 构建的桌面多智能体协作平台，强调本地工具驱动的自动化，而不是单纯聊天。代理可以读写文件、执行 Shell、搜索代码、调度任务，并与队友协作完成复杂工作。
+## 💡 灵感来源
 
-核心理念：
+OpenCowork 的灵感深受 **Claude CoWork** 的启发。我们相信，生产力的未来在于“协作（Co-Working）”关系——由人类提供方向，AI 负责迭代执行、工具操作以及跨平台沟通。
 
-- 本地优先，危险操作需显式审批。
-- 多智能体协作，拆分任务并行推进。
-- 插件化消息平台集成，落地到真实工作场景。
+## ✨ 核心特性
 
-## 核心能力
+- **多智能体循环：** 主智能体协调并行队友，攻克多维度复杂问题。
+- **原生工具箱：** 内置文件 I/O、PowerShell/Bash、代码搜索及 UI 预览工具。
+- **消息平台集成：** 将本地智能体连接至飞书、钉钉、Discord 等办公软件。
+- **持久化任务：** 基于 Cron 的调度系统，用于自动化日报或监控任��。
+- **可扩展技能：** 通过简单的 Markdown 定义即可加载自定义逻辑和智能体。
 
-- Lead Agent 统筹与并行 Teammate 协作。
-- 工具体系覆盖文件、Shell、搜索、任务管理与预览。
-- SubAgent 预设与 Skill 模块由 Markdown 定义加载。
-- 支持飞书、钉钉、Telegram、Discord、WhatsApp、企业微信等插件接入。
-- 支持 cron 与 interval 的持久化调度。
-- MCP 接入外部工具与资源。
-- 本地 SQLite 存储与 `~/.open-cowork/` 用户数据目录。
-
-## 架构概览
-
-OpenCowork 采用三进程 Electron 架构。
-
-```mermaid
-graph TB
-  subgraph "Renderer"
-    A[React UI] --> B[Agent Loop]
-    B --> C[Tool System]
-    C --> D[State Stores]
-  end
-
-  subgraph "Preload"
-    E[contextBridge]
-  end
-
-  subgraph "Main"
-    F[SQLite]
-    G[File System]
-    H[Shell]
-    I[API Proxy]
-    J[Plugins]
-  end
-
-  A -.->|window.electron| E
-  E -.->|IPC invoke/send| F
-  E -.->|IPC invoke/send| G
-  E -.->|IPC invoke/send| H
-  E -.->|IPC invoke/send| I
-  E -.->|IPC invoke/send| J
-```
-
-## 快速开始
+## 🛠️ 快速开始
 
 环境要求：
-
 - Node.js >= 18
 - npm >= 9
-- Git
-
-安装和运行：
 
 ```bash
 git clone https://github.com/AIDotNet/OpenCowork.git
@@ -101,80 +67,54 @@ npm install
 npm run dev
 ```
 
-常用命令：
+## 🏗️ 架构概览
 
-```bash
-npm run lint
-npm run typecheck
-npm run build
-npm run build:win
-npm run build:mac
-npm run build:linux
+OpenCowork 采用三进程 Electron 架构，兼顾安全与性能。
+
+```mermaid
+graph TB
+  subgraph "渲染进程 (智能体逻辑)"
+    A[React UI] --> B[Agent 循环]
+    B --> C[工具系统]
+  end
+
+  subgraph "主进程 (系统访问)"
+    F[SQLite]
+    G[文件系统]
+    H[Shell]
+    J[插件系统]
+  end
+
+  A -.->|IPC| F
+  A -.->|IPC| G
+  A -.->|IPC| H
+  A -.->|IPC| J
 ```
 
-## 配置说明
+## 🌟 使用场景
 
-1. 打开设置，添加 AI Provider 的 API Key。
-2. 选择默认模型。
-3. 按需启用消息平台插件并配置 Token。
+- **自主编程：** 让智能体直接在您的工作区重构代码、修复 Bug 并编写测试。
+- **自动化运维：** 调度智能体监控日志或系统状态，并汇报至飞书/Slack。
+- **数据调研：** 智能体可以抓取网页数据、处理本地 CSV 并生成可视化报告。
 
-## 项目结构
-
-```
-src/main       Electron 主进程，IPC、插件、定时任务
-src/preload    安全桥接 API
-src/renderer   React UI、状态管理与代理逻辑
-resources      内置 agents 与 skills
-docs           文档站点（Next.js）
-```
-
-用户数据目录在 `~/.open-cowork/`，包含 `data.db`、`settings.json`、`config.json`。
-
-## 开发指南
-
-新增工具：
-
-1. 在 `src/renderer/src/lib/tools/` 新建 ToolHandler。
-2. 在 `src/renderer/src/lib/tools/index.ts` 注册。
-
-新增 SubAgent：
-
-1. 编写 Markdown 定义文件。
-2. 放到 `~/.open-cowork/agents/` 或 `resources/agents/`。
-
-新增 Skill：
-
-1. 创建包含 `SKILL.md` 的技能目录，可选脚本文件。
-2. 放到 `~/.open-cowork/skills/` 或 `resources/skills/`。
-
-## 使用场景
-
-- 代码审查、重构与调试。
-- 项目规划、任务拆分与进度跟踪。
-- 本地数据分析与报告生成。
-- 定时报告与消息平台自动推送。
-
-## Star 历史
+## 📈 Star 历史
 
 [![Star History Chart](https://api.star-history.com/svg?repos=AIDotNet/OpenCowork&type=Date)](https://star-history.com/#AIDotNet/OpenCowork&Date)
 
-## 贡献指南
+## 🤝 参与贡献
 
-1. Fork 仓库。
-2. 创建功能分支。
-3. 使用简洁的祈使句提交信息。
-4. 提交 PR，并写清摘要与验证步骤。
+我们欢迎任何形式的贡献！请参阅我们的 [开发指南](docs/development.md) 了解更多细节。
 
-## 许可证
+## 📜 许可证
 
-本项目采用 [Apache License 2.0](LICENSE)。
+本项目采用 [Apache License 2.0](LICENSE) 开源协议。
 
 ---
 
 <div align="center">
 
-如果这个项目对你有帮助，请点一个 Star。
+如果这个项目对您有帮助，请点亮一颗 Star ⭐
 
-OpenCowork Team
+由 **AIDotNet** 团队倾情打造 ❤️
 
 </div>

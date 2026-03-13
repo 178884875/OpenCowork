@@ -5,94 +5,61 @@
   <h1 align="center">OpenCowork</h1>
   <p align="center">
     <strong>Open-source desktop platform for multi-agent collaboration</strong><br>
-    Run AI agents locally with real tools, parallel teammates, and messaging plugins.
+    Empowering AI agents with local tools, parallel teamwork, and seamless workplace integration.
   </p>
-  <p align="center">
-    <a href="README.zh.md">中文</a> •
-    <a href="#project-overview">Overview</a> •
-    <a href="#core-capabilities">Capabilities</a> •
-    <a href="#architecture-overview">Architecture</a> •
-    <a href="#quick-start">Quick Start</a> •
-    <a href="#development-guide">Development</a> •
-    <a href="#star-history">Star History</a>
-  </p>
+</p>
+
+<!-- 📸 PROJECT BANNER / SCREENSHOT PLACEHOLDER -->
+<p align="center">
+  <img src="images/image.png" alt="OpenCowork Screenshot" width="800">
+  <br>
+</p>
+
+<p align="center">
+  <a href="README.zh.md">中文文档</a> •
+  <a href="#why-opencowork">Why OpenCowork</a> •
+  <a href="#key-features">Features</a> •
+  <a href="#inspiration">Inspiration</a> •
+  <a href="#quick-start">Quick Start</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/License-Apache_2.0-green" alt="License">
   <img src="https://img.shields.io/badge/Version-0.3.6-orange" alt="Version">
-  <img src="https://img.shields.io/github/stars/AIDotNet/OpenCoWork?style=social" alt="Version">
-  <img src="https://img.shields.io/github/forks/AIDotNet/OpenCoWork?style=social" alt="Version">
-  <img src="https://gitcode.com/AIDotNet/OpenCoWork/star/badge.svg" alt="Version">
+  <img src="https://img.shields.io/github/stars/AIDotNet/OpenCoWork?style=social" alt="Stars">
+  <img src="https://img.shields.io/github/forks/AIDotNet/OpenCoWork?style=social" alt="Forks">
+  <img src="https://gitcode.com/AIDotNet/OpenCoWork/star/badge.svg" alt="GitCode Stars">
 </p>
 
 ---
 
-## WeChat
-<img width="1080" height="1518" alt="image" src="https://github.com/user-attachments/assets/c6a42f37-b1f0-4b30-8b95-2e3412861a1c" />
+## 🚀 Why OpenCowork?
 
+Traditional LLM interfaces are often "environment-isolated islands." Developers spend 50% of their time copy-pasting code, terminal logs, and file contents between the chat and their IDE. 
 
-## Project Overview
+**OpenCowork solves this by providing:**
+- **Local Agency:** Agents can directly read/write files and execute shell commands with your permission.
+- **Context Awareness:** No more manual context feeding. Agents explore your codebase and logs autonomously.
+- **Task Orchestration:** Complex tasks (like "Refactor this module and update tests") are broken down and handled by specialized sub-agents.
+- **Human-in-the-loop:** You stay in control with a transparent tool-call approval system.
 
-OpenCowork is a desktop AI agent collaboration workspace built with Electron, React, and TypeScript. It is designed for local, tool-enabled automation rather than chat-only workflows. Agents can read and write files, run shell commands, search code, schedule tasks, and coordinate with teammates.
+## 💡 Inspiration
 
-Key ideas:
+OpenCowork is deeply inspired by **Claude CoWork**. We believe the future of productivity lies in a "Co-Working" relationship where humans provide direction and AI handles the iterative execution, tool manipulation, and cross-platform communication.
 
-- Local-first execution with explicit approval for risky actions.
-- Multi-agent teamwork to split work and run tasks in parallel.
-- Plugin-based messaging integrations for workplace chat.
+## ✨ Key Features
 
-## Core Capabilities
+- **Multi-Agent Loop:** A lead agent coordinates parallel teammates to tackle multi-dimensional problems.
+- **Native Toolbox:** Built-in tools for File I/O, PowerShell/Bash, Code Search, and UI Previews.
+- **Messaging Integration:** Bridge your local agents to Feishu/Lark, DingTalk, Discord, and more.
+- **Persistence:** Cron-based scheduling for automated daily reports or monitoring tasks.
+- **Extensible Skills:** Load custom logic via simple Markdown-defined skills and agents.
 
-- Multi-agent loop with lead agent orchestration and parallel teammates.
-- Tool system for file I/O, shell, search, task tracking, and previews.
-- Subagent presets and skill modules loaded from Markdown definitions.
-- Messaging plugins for Feishu/Lark, DingTalk, Telegram, Discord, WhatsApp, and WeCom.
-- Persistent scheduling with cron or interval-based dispatch.
-- MCP integration for external tool servers and resources.
-- Local storage with SQLite and user data under `~/.open-cowork/`.
-
-## Architecture Overview
-
-OpenCowork follows a three-process Electron architecture.
-
-```mermaid
-graph TB
-  subgraph "Renderer"
-    A[React UI] --> B[Agent Loop]
-    B --> C[Tool System]
-    C --> D[State Stores]
-  end
-
-  subgraph "Preload"
-    E[contextBridge]
-  end
-
-  subgraph "Main"
-    F[SQLite]
-    G[File System]
-    H[Shell]
-    I[API Proxy]
-    J[Plugins]
-  end
-
-  A -.->|window.electron| E
-  E -.->|IPC invoke/send| F
-  E -.->|IPC invoke/send| G
-  E -.->|IPC invoke/send| H
-  E -.->|IPC invoke/send| I
-  E -.->|IPC invoke/send| J
-```
-
-## Quick Start
+## 🛠️ Quick Start
 
 Prerequisites:
-
 - Node.js >= 18
 - npm >= 9
-- Git
-
-Install and run:
 
 ```bash
 git clone https://github.com/AIDotNet/OpenCowork.git
@@ -101,71 +68,45 @@ npm install
 npm run dev
 ```
 
-Common commands:
+## 🏗️ Architecture Overview
 
-```bash
-npm run lint
-npm run typecheck
-npm run build
-npm run build:win
-npm run build:mac
-npm run build:linux
+OpenCowork follows a three-process Electron architecture to ensure security and performance.
+
+```mermaid
+graph TB
+  subgraph "Renderer (Agent Logic)"
+    A[React UI] --> B[Agent Loop]
+    B --> C[Tool System]
+  end
+
+  subgraph "Main (System Access)"
+    F[SQLite]
+    G[File System]
+    H[Shell]
+    J[Plugins]
+  end
+
+  A -.->|IPC| F
+  A -.->|IPC| G
+  A -.->|IPC| H
+  A -.->|IPC| J
 ```
 
-## Configuration
+## 🌟 Use Cases
 
-1. Open Settings and add your AI provider API key.
-2. Select a default model for the app.
-3. Enable messaging plugins and configure their tokens if needed.
+- **Autonomous Coding:** Let agents refactor code, fix bugs, and write tests directly in your workspace.
+- **Automated Ops:** Schedule agents to monitor logs or system status and report to Feishu/Slack.
+- **Data Research:** Agents can scrape web data, process local CSVs, and generate visual reports.
 
-## Project Structure
-
-```
-src/main       Electron main process, IPC, plugins, cron, updater
-src/preload    Secure bridge APIs exposed to the renderer
-src/renderer   React UI, stores, hooks, and agent logic
-resources      Built-in agents and skills packaged with the app
-docs           Documentation site (Next.js)
-```
-
-User data lives in `~/.open-cowork/` and includes `data.db`, `settings.json`, and `config.json`.
-
-## Development Guide
-
-Add a new tool:
-
-1. Create a ToolHandler in `src/renderer/src/lib/tools/`.
-2. Register it in `src/renderer/src/lib/tools/index.ts`.
-
-Add a SubAgent:
-
-1. Create a Markdown definition file with the agent prompt.
-2. Place it in `~/.open-cowork/agents/` or `resources/agents/`.
-
-Add a skill:
-
-1. Create a skill directory with `SKILL.md` and optional scripts.
-2. Place it in `~/.open-cowork/skills/` or `resources/skills/`.
-
-## Use Cases
-
-- Code review, refactors, and debugging with specialized subagents.
-- Project planning, task breakdown, and milestone tracking.
-- Data analysis and report generation on local datasets.
-- Scheduled reports and message delivery via plugins.
-
-## Star History
+## 📈 Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=AIDotNet/OpenCowork&type=Date)](https://star-history.com/#AIDotNet/OpenCowork&Date)
 
-## Contributing
+## 🤝 Contributing
 
-1. Fork the repository.
-2. Create a feature branch.
-3. Commit changes with a concise, imperative subject.
-4. Open a pull request with summary and verification steps.
+We welcome contributions! Please see our [Development Guide](docs/development.md) for more details.
 
-## License
+## 📜 License
 
 Licensed under the [Apache License 2.0](LICENSE).
 
@@ -173,8 +114,8 @@ Licensed under the [Apache License 2.0](LICENSE).
 
 <div align="center">
 
-If this project helps you, please give it a star.
+If this project helps you, please give it a star. ⭐
 
-Made by the OpenCowork Team
+Made with ❤️ by the **AIDotNet** Team
 
 </div>

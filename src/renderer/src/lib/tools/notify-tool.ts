@@ -1,4 +1,5 @@
 import { toolRegistry } from '../agent/tool-registry'
+import { encodeStructuredToolResult, encodeToolError } from './tool-result-format'
 import type { ToolHandler } from './tool-types'
 import { IPC } from '../ipc/channels'
 
@@ -50,14 +51,14 @@ const notifyHandler: ToolHandler = {
     const duration = Number(input.duration) || 5000
 
     if (!title || !body) {
-      return JSON.stringify({ error: 'title and body are required' })
+      return encodeToolError('title and body are required')
     }
 
     // ── Delivery-once guard: block duplicate delivery calls within a single cron run ──
     console.log(`[Notify] callerAgent=${ctx.callerAgent}, sharedState=`, JSON.stringify(ctx.sharedState), `pluginId=${ctx.pluginId}, pluginChatId=${ctx.pluginChatId}`)
     if (ctx.callerAgent === 'CronAgent' && ctx.sharedState?.deliveryUsed) {
       console.warn('[Notify] CronAgent already delivered results this run — BLOCKING duplicate Notify call')
-      return JSON.stringify({ success: true, skipped: true, reason: 'Already delivered results this run. Only one delivery call is allowed.' })
+      return encodeStructuredToolResult({ success: true, skipped: true, reason: 'Already delivered results this run. Only one delivery call is allowed.' })
     }
 
     // When CronAgent has plugin context, redirect Notify → plugin channel automatically.
@@ -76,7 +77,7 @@ const notifyHandler: ToolHandler = {
           params: { chatId: ctx.pluginChatId, content },
         })
         console.log('[Notify] Plugin redirect done, sharedState=', JSON.stringify(ctx.sharedState))
-        return JSON.stringify(result)
+        return encodeStructuredToolResult(result as Record<string, unknown>)
       } catch (err) {
         console.warn('[Notify] Plugin redirect failed, falling back to desktop:', err)
         // Fall through to desktop notification
@@ -92,13 +93,13 @@ const notifyHandler: ToolHandler = {
         ctx.sharedState.deliveryUsed = true
       }
 
-      return JSON.stringify({
+      return encodeStructuredToolResult({
         success: true,
         title,
         body: body.slice(0, 200),
       })
     } catch (err) {
-      return JSON.stringify({
+      return encodeStructuredToolResult({
         success: false,
         error: err instanceof Error ? err.message : String(err),
       })

@@ -14,7 +14,8 @@ interface MessageItemProps {
   messageId: string
   isStreaming?: boolean
   isLastUserMessage?: boolean
-  onEditUserMessage?: (draft: EditableUserMessageDraft) => void
+  onEditUserMessage?: (messageId: string, draft: EditableUserMessageDraft) => void
+  onDeleteMessage?: (messageId: string) => void
   toolResults?: Map<string, { content: ToolResultContent; isError?: boolean }>
 }
 
@@ -103,6 +104,7 @@ function MessageItemInner({
   isStreaming,
   isLastUserMessage,
   onEditUserMessage,
+  onDeleteMessage,
   toolResults
 }: MessageItemProps): React.JSX.Element | null {
   if (message.id !== messageId) return null
@@ -126,9 +128,11 @@ function MessageItemInner({
         // UserMessage will handle ContentBlock[] extraction and system-remind filtering
         return (
           <UserMessage
+            messageId={message.id}
             content={message.content}
             isLast={isLastUserMessage}
             onEdit={onEditUserMessage}
+            onDelete={onDeleteMessage}
           />
         )
       }
@@ -140,6 +144,7 @@ function MessageItemInner({
             usage={message.usage}
             toolResults={toolResults}
             msgId={message.id}
+            onDelete={onDeleteMessage}
           />
         )
       default:
@@ -199,6 +204,7 @@ function areEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
     prev.isStreaming === next.isStreaming &&
     prev.isLastUserMessage === next.isLastUserMessage &&
     prev.onEditUserMessage === next.onEditUserMessage &&
+    prev.onDeleteMessage === next.onDeleteMessage &&
     prev.message.role === next.message.role &&
     prev.message.createdAt === next.message.createdAt &&
     prev.message.source === next.message.source &&

@@ -45,7 +45,8 @@ const modeHints = {
 
 interface MessageListProps {
   onRetry?: () => void
-  onEditUserMessage?: (draft: EditableUserMessageDraft) => void
+  onEditUserMessage?: (messageId: string, draft: EditableUserMessageDraft) => void
+  onDeleteMessage?: (messageId: string) => void
 }
 
 interface RenderableMessage {
@@ -153,7 +154,11 @@ function buildRenderableMessageMeta(
   return { items: result, hasAssistantMessages }
 }
 
-export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): React.JSX.Element {
+export function MessageList({
+  onRetry,
+  onEditUserMessage,
+  onDeleteMessage
+}: MessageListProps): React.JSX.Element {
   const { t } = useTranslation('chat')
   const activeSessionId = useChatStore((s) => s.activeSessionId)
   const streamingMessageId = useChatStore((s) => s.streamingMessageId)
@@ -477,6 +482,7 @@ export function MessageList({ onRetry, onEditUserMessage }: MessageListProps): R
                   isStreaming={messageId === streamingMessageId}
                   isLastUserMessage={isLastUserMessage}
                   onEditUserMessage={onEditUserMessage}
+                  onDeleteMessage={onDeleteMessage}
                   toolResults={toolResults}
                 />
               )

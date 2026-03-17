@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, ImageIcon, Loader2, TriangleAlert } from 'lucide-react'
 import type { ToolCallStatus } from '@renderer/lib/agent/types'
 import type { ImageBlock, TextBlock, ToolResultContent } from '@renderer/lib/api/types'
+import { decodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
 import { ImagePreview } from './ImagePreview'
 
 interface ImagePluginToolCardProps {
@@ -25,13 +26,9 @@ const ITEM_TRANSITION = {
 
 function parseErrorMessage(output: ToolResultContent | undefined): string | null {
   if (typeof output !== 'string') return null
-  try {
-    const parsed = JSON.parse(output) as { error?: unknown }
-    if (typeof parsed.error === 'string' && parsed.error.trim()) {
-      return parsed.error
-    }
-  } catch {
-    return output.trim() || null
+  const parsed = decodeStructuredToolResult(output)
+  if (parsed && !Array.isArray(parsed) && typeof parsed.error === 'string' && parsed.error.trim()) {
+    return parsed.error
   }
   return output.trim() || null
 }

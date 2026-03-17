@@ -11,6 +11,7 @@ import { createProvider } from '../api/provider'
 import { toolRegistry } from './tool-registry'
 import type { AgentEvent, AgentLoopConfig, ToolCallState } from './types'
 import type { ToolContext } from '../tools/tool-types'
+import { encodeToolError } from '../tools/tool-result-format'
 import { shouldCompress, shouldPreCompress, preCompressMessages } from './context-compression'
 
 const MAX_PROVIDER_RETRIES = 3
@@ -413,7 +414,7 @@ export async function* runAgentLoop(
         }
         const errMsg = toolErr instanceof Error ? toolErr.message : String(toolErr)
         toolError = errMsg
-        output = JSON.stringify({ error: errMsg })
+        output = encodeToolError(errMsg)
       }
 
       if (config.signal.aborted) {

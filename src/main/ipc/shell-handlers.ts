@@ -235,7 +235,9 @@ export function registerShellHandlers(): void {
         let stderr = ''
         let killed = false
         let settled = false
+        let timeoutTimer: ReturnType<typeof setTimeout> | null = null
         let forceResolveTimer: ReturnType<typeof setTimeout> | null = null
+        let exitResolveTimer: ReturnType<typeof setTimeout> | null = null
 
         const child = spawn(cmd, {
           cwd: args.cwd || process.cwd(),
@@ -260,13 +262,22 @@ export function registerShellHandlers(): void {
           if (settled) return
           settled = true
           if (execId) runningShellProcesses.delete(execId)
+          if (timeoutTimer) {
+            clearTimeout(timeoutTimer)
+            timeoutTimer = null
+          }
           if (forceResolveTimer) {
             clearTimeout(forceResolveTimer)
             forceResolveTimer = null
           }
+          if (exitResolveTimer) {
+            clearTimeout(exitResolveTimer)
+            exitResolveTimer = null
+          }
           child.stdout?.removeAllListeners('data')
           child.stderr?.removeAllListeners('data')
           child.removeAllListeners('error')
+          child.removeAllListeners('exit')
           child.removeAllListeners('close')
           resolve(buildShellResult(payload))
         }
@@ -310,6 +321,17 @@ export function registerShellHandlers(): void {
           sendChunk(text, 'stderr')
         })
 
+        child.on('exit', (code) => {
+          if (settled || exitResolveTimer) return
+          exitResolveTimer = setTimeout(() => {
+            finalize({
+              exitCode: killed ? 1 : (code ?? 0),
+              stdout,
+              stderr
+            })
+          }, 120)
+        })
+
         child.on('close', (code) => {
           finalize({
             exitCode: killed ? 1 : (code ?? 0),
@@ -328,7 +350,7 @@ export function registerShellHandlers(): void {
         })
 
         // Safety: kill on timeout
-        setTimeout(() => {
+        timeoutTimer = setTimeout(() => {
           requestAbort()
         }, timeout)
       })

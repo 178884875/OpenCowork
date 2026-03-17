@@ -2,6 +2,10 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { ProviderType, ReasoningEffortLevel } from '../lib/api/types'
 import { ipcStorage } from '../lib/ipc/ipc-storage'
+import {
+  LEFT_SIDEBAR_DEFAULT_WIDTH,
+  clampLeftSidebarWidth
+} from '@renderer/components/layout/right-panel-defs'
 
 export interface ModelBinding {
   providerId: string
@@ -43,6 +47,7 @@ interface SettingsStore {
   contextCompressionEnabled: boolean
   editorWorkspaceEnabled: boolean
   editorRemoteLanguageServiceEnabled: boolean
+  toolResultFormat: 'toon' | 'json'
   userName: string
   userAvatar: string
 
@@ -52,6 +57,7 @@ interface SettingsStore {
   fontSize: number
   animationsEnabled: boolean
   toolbarCollapsedByDefault: boolean
+  leftSidebarWidth: number
 
   // Web Search Settings
   webSearchEnabled: boolean
@@ -104,6 +110,7 @@ export const useSettingsStore = create<SettingsStore>()(
       contextCompressionEnabled: true,
       editorWorkspaceEnabled: false,
       editorRemoteLanguageServiceEnabled: false,
+      toolResultFormat: 'toon',
       userName: '',
       userAvatar: '',
 
@@ -113,6 +120,7 @@ export const useSettingsStore = create<SettingsStore>()(
       fontSize: 16,
       animationsEnabled: true,
       toolbarCollapsedByDefault: false,
+      leftSidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
 
       // Web Search Settings
       webSearchEnabled: false,
@@ -139,7 +147,7 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: 'opencowork-settings',
-      version: 4,
+      version: 6,
       storage: createJSONStorage(() => ipcStorage),
       migrate: (persisted: unknown, version: number) => {
         const state = persisted as Record<string, unknown>
@@ -187,6 +195,11 @@ export const useSettingsStore = create<SettingsStore>()(
         if (state.toolbarCollapsedByDefault === undefined) {
           state.toolbarCollapsedByDefault = false
         }
+        if (state.leftSidebarWidth === undefined || typeof state.leftSidebarWidth !== 'number') {
+          state.leftSidebarWidth = LEFT_SIDEBAR_DEFAULT_WIDTH
+        } else {
+          state.leftSidebarWidth = clampLeftSidebarWidth(state.leftSidebarWidth)
+        }
         if (state.clarifyAutoAcceptRecommended === undefined) {
           state.clarifyAutoAcceptRecommended = false
         }
@@ -195,6 +208,9 @@ export const useSettingsStore = create<SettingsStore>()(
         }
         if (state.editorRemoteLanguageServiceEnabled === undefined) {
           state.editorRemoteLanguageServiceEnabled = false
+        }
+        if (state.toolResultFormat === undefined) {
+          state.toolResultFormat = 'toon'
         }
         return state as unknown as SettingsStore
       },
@@ -218,6 +234,7 @@ export const useSettingsStore = create<SettingsStore>()(
         contextCompressionEnabled: state.contextCompressionEnabled,
         editorWorkspaceEnabled: state.editorWorkspaceEnabled,
         editorRemoteLanguageServiceEnabled: state.editorRemoteLanguageServiceEnabled,
+        toolResultFormat: state.toolResultFormat,
         userName: state.userName,
         userAvatar: state.userAvatar,
         // Appearance Settings
@@ -226,6 +243,7 @@ export const useSettingsStore = create<SettingsStore>()(
         fontSize: state.fontSize,
         animationsEnabled: state.animationsEnabled,
         toolbarCollapsedByDefault: state.toolbarCollapsedByDefault,
+        leftSidebarWidth: clampLeftSidebarWidth(state.leftSidebarWidth),
         // Web Search Settings
         webSearchEnabled: state.webSearchEnabled,
         webSearchProvider: state.webSearchProvider,
@@ -238,7 +256,7 @@ export const useSettingsStore = create<SettingsStore>()(
         skillsMarketApiKey: state.skillsMarketApiKey,
         // Prompt Recommendation Settings
         promptRecommendationModels: state.promptRecommendationModels,
-        newSessionDefaultModel: state.newSessionDefaultModel,
+        newSessionDefaultModel: state.newSessionDefaultModel
         // NOTE: apiKey is intentionally excluded from localStorage persistence.
         // In production, it should be stored securely in the main process.
       })

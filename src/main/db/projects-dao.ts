@@ -10,6 +10,7 @@ export interface ProjectRow {
   working_folder: string | null
   ssh_connection_id: string | null
   plugin_id: string | null
+  pinned: number
   created_at: number
   updated_at: number
 }
@@ -47,9 +48,9 @@ export function listProjects(): ProjectRow[] {
   const db = getDb()
   return db
     .prepare(
-      `SELECT id, name, working_folder, ssh_connection_id, plugin_id, created_at, updated_at
+      `SELECT id, name, working_folder, ssh_connection_id, plugin_id, pinned, created_at, updated_at
          FROM projects
-        ORDER BY CASE WHEN plugin_id IS NULL THEN 0 ELSE 1 END, updated_at DESC`
+        ORDER BY pinned DESC, CASE WHEN plugin_id IS NULL THEN 0 ELSE 1 END, updated_at DESC`
     )
     .all() as ProjectRow[]
 }
@@ -58,7 +59,7 @@ export function getProject(id: string): ProjectRow | undefined {
   const db = getDb()
   return db
     .prepare(
-      `SELECT id, name, working_folder, ssh_connection_id, plugin_id, created_at, updated_at
+      `SELECT id, name, working_folder, ssh_connection_id, plugin_id, pinned, created_at, updated_at
          FROM projects
         WHERE id = ?`
     )
@@ -69,10 +70,10 @@ export function findProjectByPluginId(pluginId: string): ProjectRow | undefined 
   const db = getDb()
   return db
     .prepare(
-      `SELECT id, name, working_folder, ssh_connection_id, plugin_id, created_at, updated_at
+      `SELECT id, name, working_folder, ssh_connection_id, plugin_id, pinned, created_at, updated_at
          FROM projects
         WHERE plugin_id = ?
-        ORDER BY updated_at DESC
+        ORDER BY pinned DESC, updated_at DESC
         LIMIT 1`
     )
     .get(pluginId) as ProjectRow | undefined
@@ -84,6 +85,7 @@ export function createProject(project: {
   workingFolder?: string | null
   sshConnectionId?: string | null
   pluginId?: string | null
+  pinned?: boolean
   createdAt?: number
   updatedAt?: number
 }): ProjectRow {
@@ -107,19 +109,21 @@ export function createProject(project: {
     working_folder: workingFolder,
     ssh_connection_id: sshConnectionId,
     plugin_id: project.pluginId ?? null,
+    pinned: project.pinned ? 1 : 0,
     created_at: project.createdAt ?? now,
     updated_at: project.updatedAt ?? now
   }
 
   db.prepare(
-    `INSERT INTO projects (id, name, working_folder, ssh_connection_id, plugin_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO projects (id, name, working_folder, ssh_connection_id, plugin_id, pinned, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     row.id,
     row.name,
     row.working_folder,
     row.ssh_connection_id,
     row.plugin_id,
+    row.pinned,
     row.created_at,
     row.updated_at
   )
@@ -134,6 +138,7 @@ export function updateProject(
     workingFolder: string | null
     sshConnectionId: string | null
     pluginId: string | null
+    pinned: boolean
     updatedAt: number
   }>
 ): void {
@@ -170,6 +175,11 @@ export function updateProject(
     values.push(patch.pluginId)
   }
 
+  if (patch.pinned !== undefined) {
+    sets.push('pinned = ?')
+    values.push(patch.pinned ? 1 : 0)
+  }
+
   if (patch.updatedAt !== undefined) {
     sets.push('updated_at = ?')
     values.push(patch.updatedAt)
@@ -204,10 +214,10 @@ export function ensureDefaultProject(): ProjectRow {
   const db = getDb()
   const existing = db
     .prepare(
-      `SELECT id, name, working_folder, ssh_connection_id, plugin_id, created_at, updated_at
+      `SELECT id, name, working_folder, ssh_connection_id, plugin_id, pinned, created_at, updated_at
          FROM projects
         WHERE plugin_id IS NULL
-        ORDER BY updated_at DESC
+        ORDER BY pinned DESC, updated_at DESC
         LIMIT 1`
     )
     .get() as ProjectRow | undefined

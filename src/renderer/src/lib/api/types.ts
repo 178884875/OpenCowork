@@ -293,6 +293,8 @@ export interface AIModelConfig {
   /** Icon key for model-level icon (e.g. 'openai', 'claude', 'gemini', 'deepseek') */
   icon?: string
   contextLength?: number
+  /** Allow context compression to use the model's full configured context length when it exceeds 200K */
+  enableExtendedContextCompression?: boolean
   maxOutputTokens?: number
   /** Price per million input tokens (USD) */
   inputPrice?: number

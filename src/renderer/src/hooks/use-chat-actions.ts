@@ -384,6 +384,55 @@ function findLastEditableUserMessage(messages: UnifiedMessage[]): EditableUserMe
   return null
 }
 
+function findEditableUserMessageById(
+  messages: UnifiedMessage[],
+  messageId: string
+): EditableUserMessageTarget | null {
+  const index = messages.findIndex((message) => message.id === messageId)
+  if (index < 0) return null
+
+  const message = messages[index]
+  if (!isEditableUserMessage(message)) return null
+
+  return {
+    index,
+    draft: extractEditableUserMessageDraft(message.content)
+  }
+}
+
+function isToolResultOnlyUserMessage(message: UnifiedMessage): boolean {
+  return (
+    message.role === 'user' &&
+    Array.isArray(message.content) &&
+    message.content.every((block) => block.type === 'tool_result')
+  )
+}
+
+function buildDeletedMessages(
+  messages: UnifiedMessage[],
+  messageId: string
+): UnifiedMessage[] | null {
+  const targetIndex = messages.findIndex((message) => message.id === messageId)
+  if (targetIndex < 0) return null
+
+  const target = messages[targetIndex]
+  let deleteEnd = targetIndex + 1
+
+  if (target.role === 'assistant') {
+    while (deleteEnd < messages.length && isToolResultOnlyUserMessage(messages[deleteEnd])) {
+      deleteEnd += 1
+    }
+  } else if (isEditableUserMessage(target)) {
+    while (deleteEnd < messages.length && !isEditableUserMessage(messages[deleteEnd])) {
+      deleteEnd += 1
+    }
+  } else {
+    return null
+  }
+
+  return [...messages.slice(0, targetIndex), ...messages.slice(deleteEnd)]
+}
+
 // ── Team lead auto-trigger: teammate messages → new agent turn ──
 
 /** Module-level ref to the latest sendMessage function from the hook */
@@ -773,7 +822,8 @@ export function useChatActions(): {
   ) => Promise<void>
   stopStreaming: () => void
   retryLastMessage: () => Promise<void>
-  editAndResend: (draft: EditableUserMessageDraft) => Promise<void>
+  editAndResend: (messageId: string, draft: EditableUserMessageDraft) => Promise<void>
+  deleteMessage: (messageId: string) => Promise<void>
   manualCompressContext: (focusPrompt?: string) => Promise<void>
 } {
   const sendMessage = useCallback(
@@ -2063,15 +2113,16 @@ export function useChatActions(): {
   }, [sendMessage, stopStreaming])
 
   const editAndResend = useCallback(
-    async (draft: EditableUserMessageDraft) => {
+    async (messageId: string, draft: EditableUserMessageDraft) => {
       stopStreaming()
       const chatStore = useChatStore.getState()
       const sessionId = chatStore.activeSessionId
       if (!sessionId) return
 
+      clearPendingSessionMessages(sessionId)
       await chatStore.loadSessionMessages(sessionId)
       const messages = chatStore.getSessionMessages(sessionId)
-      const target = findLastEditableUserMessage(messages)
+      const target = findEditableUserMessageById(messages, messageId)
       if (!target) return
 
       const nextDraft: EditableUserMessageDraft = {
@@ -2081,7 +2132,6 @@ export function useChatActions(): {
       }
       if (!hasEditableDraftContent(nextDraft)) return
 
-      // Truncate from the edited message onward (removes it + all subsequent messages)
       chatStore.truncateMessagesFrom(sessionId, target.index)
       await sendMessage(
         nextDraft.text,
@@ -2092,6 +2142,29 @@ export function useChatActions(): {
       )
     },
     [sendMessage, stopStreaming]
+  )
+
+  const deleteMessage = useCallback(
+    async (messageId: string) => {
+      stopStreaming()
+      const chatStore = useChatStore.getState()
+      const sessionId = chatStore.activeSessionId
+      if (!sessionId) return
+
+      clearPendingSessionMessages(sessionId)
+      await chatStore.loadSessionMessages(sessionId)
+      const messages = chatStore.getSessionMessages(sessionId)
+      const nextMessages = buildDeletedMessages(messages, messageId)
+      if (!nextMessages || nextMessages.length === messages.length) return
+
+      if (nextMessages.length === 0) {
+        chatStore.clearSessionMessages(sessionId)
+        return
+      }
+
+      chatStore.replaceSessionMessages(sessionId, nextMessages)
+    },
+    [stopStreaming]
   )
 
   const manualCompressContext = useCallback(async (focusPrompt?: string) => {
@@ -2211,7 +2284,14 @@ export function useChatActions(): {
     }
   }, [])
 
-  return { sendMessage, stopStreaming, retryLastMessage, editAndResend, manualCompressContext }
+  return {
+    sendMessage,
+    stopStreaming,
+    retryLastMessage,
+    editAndResend,
+    deleteMessage,
+    manualCompressContext
+  }
 }
 
 /**

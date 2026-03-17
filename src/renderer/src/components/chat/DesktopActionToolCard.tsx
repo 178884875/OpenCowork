@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import type { ToolCallStatus } from '@renderer/lib/agent/types'
 import type { ImageBlock, TextBlock, ToolResultContent } from '@renderer/lib/api/types'
+import { decodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
 import { ImagePreview } from './ImagePreview'
 
 interface DesktopActionToolCardProps {
@@ -35,25 +36,17 @@ const ITEM_TRANSITION = {
 
 function parseErrorMessage(output: ToolResultContent | undefined): string | null {
   if (typeof output !== 'string') return null
-  try {
-    const parsed = JSON.parse(output) as { error?: unknown }
-    if (typeof parsed.error === 'string' && parsed.error.trim()) {
-      return parsed.error
-    }
-  } catch {
-    return output.trim() || null
+  const parsed = decodeStructuredToolResult(output)
+  if (parsed && !Array.isArray(parsed) && typeof parsed.error === 'string' && parsed.error.trim()) {
+    return parsed.error
   }
   return output.trim() || null
 }
 
-function parseJsonOutput(output: ToolResultContent | undefined): Record<string, unknown> | null {
+function parseStructuredOutput(output: ToolResultContent | undefined): Record<string, unknown> | null {
   if (typeof output !== 'string') return null
-  try {
-    const parsed = JSON.parse(output) as Record<string, unknown>
-    return parsed && typeof parsed === 'object' ? parsed : null
-  } catch {
-    return null
-  }
+  const parsed = decodeStructuredToolResult(output)
+  return parsed && !Array.isArray(parsed) ? parsed : null
 }
 
 function getToolIcon(name: string): React.JSX.Element {
@@ -76,7 +69,7 @@ export function DesktopActionToolCard({
   const parsedError = error || parseErrorMessage(output)
   const isRunning = status === 'streaming' || status === 'pending_approval' || status === 'running'
   const hasError = status === 'error' || Boolean(parsedError)
-  const jsonOutput = parseJsonOutput(output)
+  const jsonOutput = parseStructuredOutput(output)
 
   const { images, notes } = useMemo(() => {
     if (!Array.isArray(output)) {

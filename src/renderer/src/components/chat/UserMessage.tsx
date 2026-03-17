@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback } from '@renderer/components/ui/avatar'
 import { Button } from '@renderer/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@renderer/components/ui/dialog'
 import { useProviderStore, modelSupportsVision } from '@renderer/stores/provider-store'
-import { User, Pencil, Check, X, Copy, ImagePlus } from 'lucide-react'
+import { User, Pencil, Check, X, Copy, ImagePlus, Trash2 } from 'lucide-react'
 import { formatTokens } from '@renderer/lib/format-tokens'
 import { useMemoizedTokens } from '@renderer/hooks/use-estimated-tokens'
 import type { AIModelConfig, ContentBlock } from '@renderer/lib/api/types'
@@ -23,12 +23,19 @@ import { SystemCommandCard } from './SystemCommandCard'
 import { SelectFileInlineText } from './SelectFileInlineText'
 
 interface UserMessageProps {
+  messageId: string
   content: string | ContentBlock[]
   isLast?: boolean
-  onEdit?: (draft: EditableUserMessageDraft) => void
+  onEdit?: (messageId: string, draft: EditableUserMessageDraft) => void
+  onDelete?: (messageId: string) => void
 }
 
-export function UserMessage({ content, isLast, onEdit }: UserMessageProps): React.JSX.Element {
+export function UserMessage({
+  messageId,
+  content,
+  onEdit,
+  onDelete
+}: UserMessageProps): React.JSX.Element {
   const { t } = useTranslation('chat')
   const currentDraft = useMemo(() => extractEditableUserMessageDraft(content), [content])
   const plainText = currentDraft.text
@@ -98,7 +105,7 @@ export function UserMessage({ content, isLast, onEdit }: UserMessageProps): Reac
 
   const handleSave = (): void => {
     if (!canSave || !onEdit) return
-    onEdit(nextDraft)
+    onEdit(messageId, nextDraft)
     setEditing(false)
   }
 
@@ -153,13 +160,22 @@ export function UserMessage({ content, isLast, onEdit }: UserMessageProps): Reac
                 {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
                 {copied ? t('userMessage.copied') : t('action.copy', { ns: 'common' })}
               </button>
-              {isLast && onEdit && (
+              {onEdit && (
                 <button
                   onClick={handleStartEdit}
                   className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted-foreground/10"
                 >
                   <Pencil className="size-3" />
                   {t('userMessage.edit')}
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  onClick={() => onDelete(messageId)}
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted-foreground/10 hover:text-destructive"
+                >
+                  <Trash2 className="size-3" />
+                  {t('action.delete', { ns: 'common' })}
                 </button>
               )}
             </span>

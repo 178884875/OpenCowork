@@ -5,6 +5,7 @@ import { useTeamStore } from '../../stores/team-store'
 import { useUIStore } from '../../stores/ui-store'
 import { teamEvents } from '../agent/teams/events'
 import type { TeamTask } from '../agent/teams/types'
+import { encodeStructuredToolResult } from './tool-result-format'
 import type { ToolHandler } from './tool-types'
 
 // ── Helpers: dual-mode (standalone vs. team) ──
@@ -106,7 +107,7 @@ const taskCreateHandler: ToolHandler = {
       // Team mode: check for duplicate, then emit team event
       const existing = getTeamTasks().find((t) => t.subject === subject)
       if (existing) {
-        return JSON.stringify({
+        return encodeStructuredToolResult({
           success: true,
           task_id: existing.id,
           subject: existing.subject,
@@ -124,12 +125,12 @@ const taskCreateHandler: ToolHandler = {
       }
       teamEvents.emit({ type: 'team_task_add', task })
       ensureStepsPanelVisible()
-      return JSON.stringify({ success: true, task_id: id, subject })
+      return encodeStructuredToolResult({ success: true, task_id: id, subject })
     }
 
     // Standalone mode: add to task-store
     if (!ctx.sessionId) {
-      return JSON.stringify({ error: 'No active session context for TaskCreate.' })
+      return encodeStructuredToolResult({ error: 'No active session context for TaskCreate.' })
     }
 
     const task: TaskItem = {
@@ -148,7 +149,7 @@ const taskCreateHandler: ToolHandler = {
     }
     useTaskStore.getState().addTask(task)
     ensureStepsPanelVisible()
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       success: true,
       task_id: id,
       subject,
@@ -182,8 +183,8 @@ const taskGetHandler: ToolHandler = {
 
     if (hasActiveTeam()) {
       const task = getTeamTasks().find((t) => t.id === taskId)
-      if (!task) return JSON.stringify({ error: `Task "${taskId}" not found` })
-      return JSON.stringify({
+      if (!task) return encodeStructuredToolResult({ error: `Task "${taskId}" not found` })
+      return encodeStructuredToolResult({
         id: task.id,
         subject: task.subject,
         description: task.description,
@@ -195,9 +196,9 @@ const taskGetHandler: ToolHandler = {
     }
 
     const task = getStandaloneTask(taskId, ctx.sessionId)
-    if (!task) return JSON.stringify({ error: `Task "${taskId}" not found` })
+    if (!task) return encodeStructuredToolResult({ error: `Task "${taskId}" not found` })
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       id: task.id,
       subject: task.subject,
       description: task.description,
@@ -262,7 +263,7 @@ const taskUpdateHandler: ToolHandler = {
     if (hasActiveTeam()) {
       const team = useTeamStore.getState().activeTeam!
       const task = team.tasks.find((t) => t.id === taskId)
-      if (!task) return JSON.stringify({ error: `Task "${taskId}" not found` })
+      if (!task) return encodeStructuredToolResult({ error: `Task "${taskId}" not found` })
 
       if (newStatus === 'deleted') {
         // Team tasks don't support delete natively; mark completed with note
@@ -271,13 +272,13 @@ const taskUpdateHandler: ToolHandler = {
           taskId,
           patch: { status: 'completed', report: '[deleted]' }
         })
-        return JSON.stringify({ success: true, task_id: taskId, deleted: true })
+        return encodeStructuredToolResult({ success: true, task_id: taskId, deleted: true })
       }
 
       const patch: Record<string, unknown> = {}
       if (newStatus && ['pending', 'in_progress', 'completed'].includes(newStatus)) {
         if (task.status === 'completed' && newStatus !== 'completed') {
-          return JSON.stringify({
+          return encodeStructuredToolResult({
             error: `Task "${taskId}" is already completed and cannot be reverted.`
           })
         }
@@ -292,17 +293,17 @@ const taskUpdateHandler: ToolHandler = {
       }
 
       teamEvents.emit({ type: 'team_task_update', taskId, patch })
-      return JSON.stringify({ success: true, task_id: taskId, updated: patch })
+      return encodeStructuredToolResult({ success: true, task_id: taskId, updated: patch })
     }
 
     // --- Standalone mode ---
     const store = useTaskStore.getState()
     const task = getStandaloneTask(taskId, ctx.sessionId)
-    if (!task) return JSON.stringify({ error: `Task "${taskId}" not found` })
+    if (!task) return encodeStructuredToolResult({ error: `Task "${taskId}" not found` })
 
     if (newStatus === 'deleted') {
       store.deleteTask(taskId)
-      return JSON.stringify({ success: true, task_id: taskId, deleted: true })
+      return encodeStructuredToolResult({ success: true, task_id: taskId, deleted: true })
     }
 
     const patch: Partial<TaskItem> = {}
@@ -353,7 +354,7 @@ const taskUpdateHandler: ToolHandler = {
     }
 
     const updatedTask = store.updateTask(taskId, patch)
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       success: true,
       task_id: taskId,
       updated: patch,
@@ -380,7 +381,7 @@ const taskListHandler: ToolHandler = {
     if (hasActiveTeam()) {
       const team = useTeamStore.getState().activeTeam!
       const tasks = team.tasks
-      return JSON.stringify({
+      return encodeStructuredToolResult({
         mode: 'team',
         team_name: team.name,
         total: tasks.length,
@@ -396,7 +397,7 @@ const taskListHandler: ToolHandler = {
 
     const tasks = getStandaloneTasks(ctx.sessionId)
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       mode: 'standalone',
       total: tasks.length,
       tasks: tasks.map((t) => ({

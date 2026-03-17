@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid'
-import type { UnifiedMessage, ProviderConfig, ContentBlock } from '../api/types'
+import type { UnifiedMessage, ProviderConfig, ContentBlock, AIModelConfig } from '../api/types'
 import { createProvider } from '../api/provider'
 import i18n from '@renderer/locales'
 
@@ -23,6 +23,8 @@ export interface CompressionResult {
 
 // --- Constants ---
 
+export const DEFAULT_CONTEXT_COMPRESSION_LIMIT = 200_000
+
 /** Minimum recent messages to preserve verbatim */
 const MIN_PRESERVE_COUNT = 4
 /** Maximum recent messages to preserve verbatim */
@@ -36,6 +38,23 @@ const CLEARED_THINKING_PLACEHOLDER = i18n.t('contextCompression.clearedThinking'
 const COMPRESSION_SYSTEM_PROMPT = i18n.t('contextCompression.systemPrompt', { ns: 'agent' })
 
 // --- Public API ---
+
+export function resolveCompressionContextLength(
+  modelConfig?: Pick<AIModelConfig, 'contextLength' | 'enableExtendedContextCompression'> | null
+): number {
+  const configuredContextLength =
+    typeof modelConfig?.contextLength === 'number' && modelConfig.contextLength > 0
+      ? modelConfig.contextLength
+      : DEFAULT_CONTEXT_COMPRESSION_LIMIT
+
+  if (configuredContextLength <= DEFAULT_CONTEXT_COMPRESSION_LIMIT) {
+    return configuredContextLength
+  }
+
+  return modelConfig?.enableExtendedContextCompression
+    ? configuredContextLength
+    : DEFAULT_CONTEXT_COMPRESSION_LIMIT
+}
 
 /**
  * Check whether full compression should be triggered.

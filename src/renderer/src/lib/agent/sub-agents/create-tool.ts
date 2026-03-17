@@ -6,6 +6,7 @@ import { runSubAgent } from './runner'
 import { subAgentEvents } from './events'
 import { subAgentRegistry } from './registry'
 import type { ProviderConfig, TokenUsage, ToolResultContent } from '../../api/types'
+import { encodeStructuredToolResult, encodeToolError } from '../../tools/tool-result-format'
 import { useAgentStore } from '../../../stores/agent-store'
 import { useSettingsStore } from '../../../stores/settings-store'
 import { ConcurrencyLimiter } from '../concurrency-limiter'
@@ -188,17 +189,17 @@ async function executeBackgroundTeammate(
 ): Promise<ToolResultContent> {
   const team = useTeamStore.getState().activeTeam
   if (!team) {
-    return JSON.stringify({ error: 'No active team. Call TeamCreate first.' })
+    return encodeToolError('No active team. Call TeamCreate first.')
   }
 
   const memberName = String(input.name ?? '')
   if (!memberName) {
-    return JSON.stringify({ error: '"name" is required when run_in_background=true' })
+    return encodeToolError('"name" is required when run_in_background=true')
   }
 
   const existing = team.members.find((m) => m.name === memberName)
   if (existing) {
-    return JSON.stringify({ error: `Teammate "${memberName}" already exists in the team.` })
+    return encodeToolError(`Teammate "${memberName}" already exists in the team.`)
   }
 
   const teamName = team.name
@@ -213,9 +214,7 @@ async function executeBackgroundTeammate(
   if (assignedTaskId) {
     const task = team.tasks.find((t) => t.id === assignedTaskId)
     if (task?.status === 'completed') {
-      return JSON.stringify({
-        error: `Task "${assignedTaskId}" is already completed and cannot be re-assigned.`
-      })
+      return encodeToolError(`Task "${assignedTaskId}" is already completed and cannot be re-assigned.`)
     }
   }
 
@@ -268,7 +267,7 @@ async function executeBackgroundTeammate(
       // If runTeammate() failed after acquire(), .finally() already released.
     })
 
-  return JSON.stringify({
+  return encodeStructuredToolResult({
     success: true,
     member_id: member.id,
     name: memberName,
@@ -377,15 +376,11 @@ export function createTaskTool(providerGetter: () => ProviderConfig): ToolHandle
       // --- Synchronous sub-agent mode ---
       const subType = String(input.subagent_type ?? '')
       if (!subType) {
-        return JSON.stringify({
-          error: `"subagent_type" is required for synchronous Task. Available: ${subTypeEnum.join(', ')}`
-        })
+        return encodeToolError(`"subagent_type" is required for synchronous Task. Available: ${subTypeEnum.join(', ')}`)
       }
       const def = subAgentRegistry.get(subType)
       if (!def) {
-        return JSON.stringify({
-          error: `Unknown subagent_type "${subType}". Available: ${subTypeEnum.join(', ')}`
-        })
+        return encodeToolError(`Unknown subagent_type "${subType}". Available: ${subTypeEnum.join(', ')}`)
       }
 
       // Acquire concurrency slot (blocks if 2 SubAgents are already running)
@@ -470,7 +465,7 @@ export function createTaskTool(providerGetter: () => ProviderConfig): ToolHandle
         if (!result.success) {
           return (
             metaStr +
-            JSON.stringify({
+            encodeStructuredToolResult({
               error: result.error ?? 'SubAgent failed',
               toolCalls: result.toolCallCount,
               iterations: result.iterations

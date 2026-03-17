@@ -1,4 +1,5 @@
 import type { ToolHandler } from '../../../tools/tool-types'
+import { encodeStructuredToolResult, encodeToolError } from '../../../tools/tool-result-format'
 import { useTeamStore } from '../../../../stores/team-store'
 
 /**
@@ -20,13 +21,13 @@ export const teamStatusTool: ToolHandler = {
   execute: async () => {
     const team = useTeamStore.getState().activeTeam
     if (!team) {
-      return JSON.stringify({ error: 'No active team' })
+      return encodeToolError('No active team')
     }
 
     const completedTasks = team.tasks.filter((t) => t.status === 'completed').length
     const workingMembers = team.members.filter((m) => m.status === 'working').length
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       team_name: team.name,
       description: team.description,
       summary: `${team.members.length} members (${workingMembers} working), ${completedTasks}/${team.tasks.length} tasks completed`,

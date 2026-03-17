@@ -35,6 +35,7 @@ export function registerDbHandlers(): void {
         workingFolder?: string | null
         sshConnectionId?: string | null
         pluginId?: string | null
+        pinned?: boolean
         createdAt?: number
         updatedAt?: number
       }
@@ -54,6 +55,7 @@ export function registerDbHandlers(): void {
           workingFolder: string | null
           sshConnectionId: string | null
           pluginId: string | null
+          pinned: boolean
           updatedAt: number
         }>
       }

@@ -1,4 +1,5 @@
 import { toolRegistry } from '../agent/tool-registry'
+import { encodeStructuredToolResult } from './tool-result-format'
 import type { ToolHandler } from './tool-types'
 
 function resolveSshConnectionId(filePath: string, sshConnectionId?: string): string | undefined {
@@ -45,7 +46,7 @@ const openPreviewHandler: ToolHandler = {
     const { useUIStore } = await import('@renderer/stores/ui-store')
     useUIStore.getState().openFilePreview(filePath, viewMode, sshConnectionId, ctx.sessionId)
 
-    return JSON.stringify({ success: true, message: `Opened ${filePath} in preview panel` })
+    return encodeStructuredToolResult({ success: true, message: `Opened ${filePath} in preview panel` })
   },
   requiresApproval: () => false
 }

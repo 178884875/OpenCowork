@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid'
 import type { ToolHandler } from '../../../tools/tool-types'
+import { encodeStructuredToolResult, encodeToolError } from '../../../tools/tool-result-format'
 import { teamEvents } from '../events'
 import { useTeamStore } from '../../../../stores/team-store'
 import type { TeamMessage, TeamMessageType } from '../types'
@@ -49,12 +50,12 @@ export const sendMessageTool: ToolHandler = {
   execute: async (input) => {
     const team = useTeamStore.getState().activeTeam
     if (!team) {
-      return JSON.stringify({ error: 'No active team' })
+      return encodeToolError('No active team')
     }
 
     const msgType = String(input.type) as TeamMessageType
     if (!VALID_TYPES.includes(msgType)) {
-      return JSON.stringify({ error: `Invalid message type: ${input.type}` })
+      return encodeToolError(`Invalid message type: ${input.type}`)
     }
 
     const recipient = msgType === 'broadcast' ? 'all' : String(input.recipient ?? 'all')
@@ -71,7 +72,7 @@ export const sendMessageTool: ToolHandler = {
 
     teamEvents.emit({ type: 'team_message', message: msg })
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       success: true,
       message_id: msg.id,
       type: msgType,

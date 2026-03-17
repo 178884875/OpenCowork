@@ -1,4 +1,5 @@
 import type { ToolHandler } from '../../../tools/tool-types'
+import { encodeStructuredToolResult } from '../../../tools/tool-result-format'
 import { teamEvents } from '../events'
 
 export const teamCreateTool: ToolHandler = {
@@ -27,7 +28,7 @@ export const teamCreateTool: ToolHandler = {
 
     teamEvents.emit({ type: 'team_start', teamName, description })
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       success: true,
       team_name: teamName,
       message: `Team "${teamName}" created. Now create tasks with TaskCreate and spawn teammates with Task (run_in_background=true).`

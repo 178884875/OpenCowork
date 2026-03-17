@@ -1,4 +1,5 @@
 import type { ToolHandler } from '../../../tools/tool-types'
+import { encodeStructuredToolResult, encodeToolError } from '../../../tools/tool-result-format'
 import { teamEvents } from '../events'
 import { useTeamStore } from '../../../../stores/team-store'
 import { useAgentStore } from '../../../../stores/agent-store'
@@ -19,7 +20,7 @@ export const teamDeleteTool: ToolHandler = {
   execute: async () => {
     const team = useTeamStore.getState().activeTeam
     if (!team) {
-      return JSON.stringify({ error: 'No active team to delete' })
+      return encodeToolError('No active team to delete')
     }
 
     const teamName = team.name
@@ -39,7 +40,7 @@ export const teamDeleteTool: ToolHandler = {
 
     teamEvents.emit({ type: 'team_end' })
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       success: true,
       team_name: teamName,
       members_removed: memberCount,

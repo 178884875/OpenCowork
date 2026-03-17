@@ -64,7 +64,8 @@ import type {
   AIModelConfig,
   AIProvider,
   ThinkingConfig,
-  ModelCategory
+  ModelCategory,
+  ReasoningEffortLevel
 } from '@renderer/lib/api/types'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip'
 import { ipcStreamRequest } from '@renderer/lib/ipc/api-stream'
@@ -96,6 +97,15 @@ const MODEL_ICON_OPTIONS = [
   'mimo',
   'bigmodel'
 ] as const
+
+const REASONING_EFFORT_OPTIONS: ReasoningEffortLevel[] = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh'
+]
 
 // --- Fetch models from provider API ---
 
@@ -2281,7 +2291,36 @@ function ThinkingConfigDialog({
       ? JSON.stringify(model.thinkingConfig.disabledBodyParams, null, 2)
       : ''
   )
+  const [reasoningEffortLevels, setReasoningEffortLevels] = useState<ReasoningEffortLevel[]>(
+    model.thinkingConfig?.reasoningEffortLevels ?? []
+  )
+  const [defaultReasoningEffort, setDefaultReasoningEffort] = useState<ReasoningEffortLevel>(
+    model.thinkingConfig?.defaultReasoningEffort ??
+      model.thinkingConfig?.reasoningEffortLevels?.[0] ??
+      'medium'
+  )
   const [jsonError, setJsonError] = useState('')
+
+  const toggleReasoningEffortLevel = (level: ReasoningEffortLevel): void => {
+    const nextLevels = reasoningEffortLevels.includes(level)
+      ? REASONING_EFFORT_OPTIONS.filter(
+          (option) => option !== level && reasoningEffortLevels.includes(option)
+        )
+      : REASONING_EFFORT_OPTIONS.filter(
+          (option) => option === level || reasoningEffortLevels.includes(option)
+        )
+
+    setReasoningEffortLevels(nextLevels)
+
+    if (nextLevels.length === 0) {
+      setDefaultReasoningEffort('medium')
+      return
+    }
+
+    if (!nextLevels.includes(defaultReasoningEffort)) {
+      setDefaultReasoningEffort(nextLevels[0])
+    }
+  }
 
   const handleSave = (): void => {
     if (!enabled) {
@@ -2312,6 +2351,12 @@ function ThinkingConfigDialog({
           setJsonError(t('provider.thinkJsonInvalid'))
           return
         }
+      }
+      if (reasoningEffortLevels.length > 0) {
+        config.reasoningEffortLevels = reasoningEffortLevels
+        config.defaultReasoningEffort = reasoningEffortLevels.includes(defaultReasoningEffort)
+          ? defaultReasoningEffort
+          : reasoningEffortLevels[0]
       }
       if (forceTemp.trim()) {
         const temp = parseFloat(forceTemp)
@@ -2374,6 +2419,58 @@ function ThinkingConfigDialog({
                 />
                 {jsonError && <p className="text-[11px] text-destructive">{jsonError}</p>}
               </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t('provider.reasoningEffortLevels')}</label>
+                <p className="text-[11px] text-muted-foreground">
+                  {t('provider.reasoningEffortLevelsHint')}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {REASONING_EFFORT_OPTIONS.map((level) => {
+                    const selected = reasoningEffortLevels.includes(level)
+                    return (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => toggleReasoningEffortLevel(level)}
+                        className={`rounded-md border px-2 py-1 text-xs transition-colors ${
+                          selected
+                            ? 'border-violet-500 bg-violet-500/10 text-violet-600 dark:text-violet-400'
+                            : 'border-border bg-background hover:bg-muted/50'
+                        }`}
+                      >
+                        {level}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              {reasoningEffortLevels.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    {t('provider.defaultReasoningEffort')}
+                  </label>
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('provider.defaultReasoningEffortHint')}
+                  </p>
+                  <Select
+                    value={defaultReasoningEffort}
+                    onValueChange={(value) =>
+                      setDefaultReasoningEffort(value as ReasoningEffortLevel)
+                    }
+                  >
+                    <SelectTrigger className="w-40 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {reasoningEffortLevels.map((level) => (
+                        <SelectItem key={level} value={level} className="text-xs">
+                          {level}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="space-y-2">
                 <label className="text-sm font-medium">{t('provider.forceTemperature')}</label>
                 <p className="text-[11px] text-muted-foreground">

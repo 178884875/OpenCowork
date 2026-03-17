@@ -31,6 +31,9 @@
     "switchMode": "Switch Mode",
     "deleteAllSessions": "Delete All Sessions",
     "deleteAllConfirm": "Delete all {{count}} sessions? This cannot be undone.",
+    "unknownProject": "Unknown Project",
+    "pinnedProjects": "Pinned Projects",
+    "projects": "Projects",
     "sessions": "sessions",
     "msgs": "msgs"
   },
@@ -43,6 +46,8 @@
     "messagesCleared": "Messages cleared",
     "unpinned": "Unpinned",
     "pinnedMsg": "Pinned",
+    "projectPinned": "Project pinned",
+    "projectUnpinned": "Project unpinned",
     "switchedMode": "Switched to {{mode}} mode",
     "invalidFile": "Invalid session file",
     "failedParse": "Failed to parse JSON",

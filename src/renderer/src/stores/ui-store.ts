@@ -1,4 +1,8 @@
 import { create } from 'zustand'
+import {
+  LEFT_SIDEBAR_DEFAULT_WIDTH,
+  clampLeftSidebarWidth
+} from '@renderer/components/layout/right-panel-defs'
 
 export type AppMode = 'chat' | 'clarify' | 'cowork' | 'code'
 
@@ -6,14 +10,7 @@ export type NavItem = 'chat' | 'channels' | 'skills' | 'draw' | 'translate' | 's
 
 export type ChatView = 'home' | 'session'
 
-export type RightPanelTab =
-  | 'steps'
-  | 'team'
-  | 'artifacts'
-  | 'context'
-  | 'skills'
-  | 'files'
-  | 'plan'
+export type RightPanelTab = 'steps' | 'team' | 'artifacts' | 'context' | 'skills' | 'files' | 'plan'
 export type RightPanelSection = 'execution' | 'resources' | 'collaboration' | 'monitoring'
 
 export type PreviewSource = 'file' | 'dev-server' | 'markdown'
@@ -99,10 +96,12 @@ interface UIStore {
   setActiveNavItem: (item: NavItem) => void
 
   leftSidebarOpen: boolean
+  leftSidebarWidth: number
 
   toggleLeftSidebar: () => void
 
   setLeftSidebarOpen: (open: boolean) => void
+  setLeftSidebarWidth: (width: number) => void
 
   rightPanelOpen: boolean
 
@@ -219,10 +218,12 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setActiveNavItem: (item) => set({ activeNavItem: item, leftSidebarOpen: true }),
 
   leftSidebarOpen: true,
+  leftSidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
 
   toggleLeftSidebar: () => set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
 
   setLeftSidebarOpen: (open) => set({ leftSidebarOpen: open }),
+  setLeftSidebarWidth: (width) => set({ leftSidebarWidth: clampLeftSidebarWidth(width) }),
 
   rightPanelOpen: false,
 

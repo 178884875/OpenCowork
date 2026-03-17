@@ -6,6 +6,7 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { cn } from '@renderer/lib/utils'
 import type { ToolCallStatus } from '@renderer/lib/agent/types'
 import type { ToolResultContent } from '@renderer/lib/api/types'
+import { decodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
 import type { AgentRunFileChange } from '@renderer/stores/agent-store'
 import { useAgentStore } from '@renderer/stores/agent-store'
 import { MONO_FONT } from '@renderer/lib/constants'
@@ -599,10 +600,19 @@ export function FileChangeCard({
   const outputStr = typeof output === 'string' ? output : undefined
   const isFileActionable =
     trackedChange?.status === 'open' || trackedChange?.status === 'conflicted'
-  const isSuccess = outputStr
-    ? outputStr.includes('"success"') || outputStr.includes('success')
+  const parsedOutput = outputStr ? decodeStructuredToolResult(outputStr) : null
+  const isSuccess = !!(
+    parsedOutput &&
+    !Array.isArray(parsedOutput) &&
+    parsedOutput.success === true
+  )
+  const isOutputError = outputStr
+    ? !!(
+        parsedOutput &&
+        !Array.isArray(parsedOutput) &&
+        typeof parsedOutput.error === 'string'
+      ) || (!parsedOutput && outputStr.length > 0)
     : false
-  const isOutputError = outputStr ? !isSuccess && outputStr.length > 0 : false
 
   // Determine border color based on status
   const borderColor =

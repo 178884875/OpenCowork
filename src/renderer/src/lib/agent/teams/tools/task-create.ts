@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid'
 import type { ToolHandler } from '../../../tools/tool-types'
+import { encodeStructuredToolResult } from '../../../tools/tool-result-format'
 import { teamEvents } from '../events'
 import { useTeamStore } from '../../../../stores/team-store'
 import type { TeamTask } from '../types'
@@ -37,7 +38,7 @@ export const taskCreateTool: ToolHandler = {
     if (team) {
       const existing = team.tasks.find((t) => t.subject === subject)
       if (existing) {
-        return JSON.stringify({
+        return encodeStructuredToolResult({
           success: true,
           task_id: existing.id,
           subject: existing.subject,
@@ -57,7 +58,7 @@ export const taskCreateTool: ToolHandler = {
 
     teamEvents.emit({ type: 'team_task_add', task })
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       success: true,
       task_id: task.id,
       subject: task.subject

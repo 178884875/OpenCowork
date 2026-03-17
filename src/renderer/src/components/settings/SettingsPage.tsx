@@ -785,6 +785,32 @@ function GeneralPanel(): React.JSX.Element {
 
       <Separator />
 
+      {/* Tool Result Format */}
+      <section className="space-y-3">
+        <div>
+          <label className="text-sm font-medium">{t('general.toolResultFormat')}</label>
+          <p className="text-xs text-muted-foreground">{t('general.toolResultFormatDesc')}</p>
+        </div>
+        <Select
+          value={settings.toolResultFormat}
+          onValueChange={(v: 'toon' | 'json') => settings.updateSettings({ toolResultFormat: v })}
+        >
+          <SelectTrigger className="w-60 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="toon" className="text-xs">
+              {t('general.toolResultFormatToon')}
+            </SelectItem>
+            <SelectItem value="json" className="text-xs">
+              {t('general.toolResultFormatJson')}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </section>
+
+      <Separator />
+
       {/* Team Tools */}
       <section className="space-y-3">
         <div className="flex items-center justify-between max-w-lg">

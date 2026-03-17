@@ -23,6 +23,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import type { ToolCallStatus } from '@renderer/lib/agent/types'
 import type { ToolResultContent } from '@renderer/lib/api/types'
+import { decodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
 import { MONO_FONT } from '@renderer/lib/constants'
 import { estimateTokens, formatTokens } from '@renderer/lib/format-tokens'
 import { useAgentStore } from '@renderer/stores/agent-store'
@@ -281,8 +282,13 @@ function BashOutputBlock({
 
   // Try to parse JSON output from shell tool (may contain stdout, stderr, exitCode, processId)
   const parsed = React.useMemo(() => {
-    try {
-      const obj = JSON.parse(output) as {
+    const obj = decodeStructuredToolResult(output)
+    if (
+      obj &&
+      !Array.isArray(obj) &&
+      ('stdout' in obj || 'output' in obj || 'exitCode' in obj || 'processId' in obj)
+    ) {
+      return obj as {
         stdout?: string
         stderr?: string
         exitCode?: number
@@ -290,15 +296,6 @@ function BashOutputBlock({
         processId?: string
         summary?: ShellOutputSummary
       }
-      if (
-        typeof obj === 'object' &&
-        obj !== null &&
-        ('stdout' in obj || 'output' in obj || 'exitCode' in obj || 'processId' in obj)
-      ) {
-        return obj
-      }
-    } catch {
-      /* not JSON */
     }
     return null
   }, [output])
@@ -543,11 +540,8 @@ function GrepOutputBlock({
 }): React.JSX.Element {
   const { t } = useTranslation('chat')
   const parsed = React.useMemo(() => {
-    try {
-      return JSON.parse(output) as Array<{ file: string; line: number; text: string }>
-    } catch {
-      return null
-    }
+    const decoded = decodeStructuredToolResult(output)
+    return Array.isArray(decoded) ? (decoded as Array<{ file: string; line: number; text: string }>) : null
   }, [output])
 
   // Group by file - must be called before early return to maintain hook order
@@ -612,11 +606,8 @@ function GlobOutputBlock({ output }: { output: string }): React.JSX.Element {
   const { t } = useTranslation('chat')
   const maxVisibleItems = 200
   const parsed = React.useMemo(() => {
-    try {
-      return JSON.parse(output) as string[]
-    } catch {
-      return null
-    }
+    const decoded = decodeStructuredToolResult(output)
+    return Array.isArray(decoded) ? (decoded as string[]) : null
   }, [output])
   if (!parsed || !Array.isArray(parsed)) return <OutputBlock output={output} />
   const visibleItems = parsed.slice(0, maxVisibleItems)
@@ -662,11 +653,10 @@ function GlobOutputBlock({ output }: { output: string }): React.JSX.Element {
 function LSOutputBlock({ output }: { output: string }): React.JSX.Element {
   const { t } = useTranslation('chat')
   const parsed = React.useMemo(() => {
-    try {
-      return JSON.parse(output) as Array<{ name: string; type: string; path: string }>
-    } catch {
-      return null
-    }
+    const decoded = decodeStructuredToolResult(output)
+    return Array.isArray(decoded)
+      ? (decoded as Array<{ name: string; type: string; path: string }>)
+      : null
   }, [output])
   if (!parsed || !Array.isArray(parsed)) return <OutputBlock output={output} />
 
@@ -748,17 +738,14 @@ function TaskCreateInputBlock({
 function TaskListOutputBlock({ output }: { output: string }): React.JSX.Element {
   const { t } = useTranslation('chat')
   const parsed = React.useMemo(() => {
-    try {
-      const data = JSON.parse(output)
-      if (data.tasks && Array.isArray(data.tasks))
-        return data.tasks as Array<{
-          id: string
-          subject: string
-          status: string
-          owner?: string | null
-        }>
-    } catch {
-      /* not JSON */
+    const data = decodeStructuredToolResult(output)
+    if (data && !Array.isArray(data) && Array.isArray(data.tasks)) {
+      return data.tasks as Array<{
+        id: string
+        subject: string
+        status: string
+        owner?: string | null
+      }>
     }
     return null
   }, [output])
@@ -1653,7 +1640,10 @@ export function ToolCallCard({
               const s = outputAsString(output) ?? ''
               return (
                 <div className="flex items-center gap-1.5 text-xs">
-                  {s.includes('"success"') || s.includes('success') ? (
+                  {(() => {
+                    const parsed = decodeStructuredToolResult(s)
+                    return !!(parsed && !Array.isArray(parsed) && parsed.success === true)
+                  })() ? (
                     <>
                       <CheckCircle2 className="size-3 text-green-500" />
                       <span className="text-green-500/70">{t('toolCall.appliedSuccessfully')}</span>

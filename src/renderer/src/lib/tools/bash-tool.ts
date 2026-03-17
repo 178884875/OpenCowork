@@ -1,5 +1,6 @@
 import { toolRegistry } from '../agent/tool-registry'
 import { IPC } from '../ipc/channels'
+import { encodeStructuredToolResult } from './tool-result-format'
 import type { ToolHandler } from './tool-types'
 import { useAgentStore } from '@renderer/stores/agent-store'
 
@@ -118,7 +119,7 @@ function buildLivePreviewPayload(preview: LiveShellPreview): string {
     preview.errorLines.length > 0
       ? `${preview.errorLines.join('\n')}${preview.stderr ? `\n\n[last stderr lines]\n${preview.stderr}` : ''}`
       : preview.stderr
-  return JSON.stringify({
+  return encodeStructuredToolResult({
     stdout: preview.stdout,
     stderr,
     summary: {
@@ -161,7 +162,7 @@ const bashHandler: ToolHandler = {
   execute: async (input, ctx) => {
     const command = String(input.command ?? '')
     if (!command.trim()) {
-      return JSON.stringify({ exitCode: 1, stderr: 'Missing command' })
+      return encodeStructuredToolResult({ exitCode: 1, stderr: 'Missing command' })
     }
 
     // SSH routing: execute command on remote server via ssh:exec
@@ -173,9 +174,9 @@ const bashHandler: ToolHandler = {
       })) as { exitCode?: number; stdout?: string; stderr?: string; error?: string }
 
       if (result.error) {
-        return JSON.stringify({ exitCode: 1, stderr: result.error })
+        return encodeStructuredToolResult({ exitCode: 1, stderr: result.error })
       }
-      return JSON.stringify(result)
+      return encodeStructuredToolResult(result as Record<string, unknown>)
     }
 
     const explicitBackground =
@@ -209,7 +210,7 @@ const bashHandler: ToolHandler = {
       })) as { id?: string; error?: string }
 
       if (!result?.id) {
-        return JSON.stringify({
+        return encodeStructuredToolResult({
           exitCode: 1,
           stderr: result?.error ?? 'Failed to start background process'
         })
@@ -230,7 +231,7 @@ const bashHandler: ToolHandler = {
               : undefined
       })
 
-      return JSON.stringify({
+      return encodeStructuredToolResult({
         exitCode: 0,
         background: true,
         autoBackground,
@@ -300,7 +301,7 @@ const bashHandler: ToolHandler = {
         cwd: ctx.workingFolder,
         execId
       })
-      return JSON.stringify(result)
+      return encodeStructuredToolResult(result as Record<string, unknown>)
     } finally {
       ctx.signal.removeEventListener('abort', abortHandler)
       if (toolUseId) {

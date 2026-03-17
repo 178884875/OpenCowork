@@ -2,6 +2,7 @@ import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@renderer/lib/utils'
 import type { ToolResultContent } from '@renderer/lib/api/types'
+import { decodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
 import { useTaskStore, type TaskItem } from '@renderer/stores/task-store'
 
 function StatusDot({ status }: { status: TaskItem['status'] }): React.JSX.Element {
@@ -51,14 +52,15 @@ function parseTaskSnapshot(output: ToolResultContent | undefined): {
   const text = outputAsString(output)
   if (!text) return null
 
-  try {
-    const parsed = JSON.parse(text) as {
-      task_id?: unknown
-      tasks?: Array<Partial<TaskItem>>
-    }
-    if (!Array.isArray(parsed.tasks)) return null
+  const parsed = decodeStructuredToolResult(text) as
+    | {
+        task_id?: unknown
+        tasks?: Array<Partial<TaskItem>>
+      }
+    | null
+  if (!parsed || Array.isArray(parsed) || !Array.isArray(parsed.tasks)) return null
 
-    const tasks = parsed.tasks
+  const tasks = parsed.tasks
       .filter(
         (task): task is Partial<TaskItem> & Pick<TaskItem, 'id' | 'subject' | 'status'> =>
           typeof task?.id === 'string' &&
@@ -79,12 +81,9 @@ function parseTaskSnapshot(output: ToolResultContent | undefined): {
         updatedAt: typeof task.updatedAt === 'number' ? task.updatedAt : 0
       }))
 
-    return {
-      taskId: typeof parsed.task_id === 'string' ? parsed.task_id : undefined,
-      tasks
-    }
-  } catch {
-    return null
+  return {
+    taskId: typeof parsed.task_id === 'string' ? parsed.task_id : undefined,
+    tasks
   }
 }
 

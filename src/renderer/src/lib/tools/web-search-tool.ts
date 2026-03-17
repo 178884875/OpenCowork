@@ -1,5 +1,6 @@
 import { toolRegistry } from '../agent/tool-registry'
 import { IPC } from '../ipc/channels'
+import { encodeStructuredToolResult, encodeToolError } from './tool-result-format'
 import type { ToolHandler } from './tool-types'
 import { useSettingsStore } from '../../stores/settings-store'
 
@@ -101,10 +102,10 @@ const webSearchHandler: ToolHandler = {
         apiKey,
         timeout
       })
-      return JSON.stringify(result)
+      return encodeStructuredToolResult(result as unknown as Record<string, unknown>)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      return JSON.stringify({ error: `Web search failed: ${message}` })
+      return encodeToolError(`Web search failed: ${message}`)
     }
   },
   requiresApproval: () => false
@@ -164,7 +165,7 @@ const webFetchHandler: ToolHandler = {
     const timeout = useSettingsStore.getState().webSearchTimeout
 
     if (urls.length === 0) {
-      return JSON.stringify({ error: 'Web fetch requires a url or urls input' })
+      return encodeToolError('Web fetch requires a url or urls input')
     }
 
     try {
@@ -173,10 +174,10 @@ const webFetchHandler: ToolHandler = {
         format,
         timeout
       })
-      return JSON.stringify(result)
+      return encodeStructuredToolResult(result as unknown as Record<string, unknown>)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      return JSON.stringify({ error: `Web fetch failed: ${message}` })
+      return encodeToolError(`Web fetch failed: ${message}`)
     }
   },
   requiresApproval: () => false

@@ -115,13 +115,14 @@ export const imageGenerateTool: ToolHandler = {
   definition: {
     name: IMAGE_GENERATE_TOOL_NAME,
     description:
-      'Generate images with the configured image plugin. Only use this when the user explicitly asks for an image, illustration, poster, render, icon, or artwork. Write prompt as a complete visual description. count defaults to 1 and is capped at 4.',
+      'Generate images when the user needs visual content. Use proactively whenever an image would help—whether they explicitly ask for one or imply a need (e.g. "show me", "what does X look like", creating illustrations/icons/diagrams, visualizing concepts). When writing the prompt: align with user intent, include subject/style/composition/mood, be specific and concrete, infer style from user wording. count defaults to 1, max 4.',
     inputSchema: {
       type: 'object',
       properties: {
         prompt: {
           type: 'string',
-          description: 'A complete image-generation prompt describing the desired visual result'
+          description:
+            'Complete visual prompt aligned with user intent. Include: subject, style (e.g. realistic, cartoon, minimalist), composition, lighting/mood. Be specific and concrete; infer style from user wording (e.g. "cute" → cute/kawaii style). Prefer concise, descriptive English; avoid vague or abstract phrasing.'
         },
         count: {
           type: 'number',

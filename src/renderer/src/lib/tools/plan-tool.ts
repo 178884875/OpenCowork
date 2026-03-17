@@ -2,6 +2,7 @@ import { toolRegistry } from '../agent/tool-registry'
 import { usePlanStore } from '../../stores/plan-store'
 import { useUIStore } from '../../stores/ui-store'
 import { useChatStore } from '../../stores/chat-store'
+import { encodeStructuredToolResult, encodeToolError } from './tool-result-format'
 import type { ToolHandler, ToolContext } from './tool-types'
 
 // ── Helpers ──
@@ -50,7 +51,7 @@ const enterPlanModeHandler: ToolHandler = {
     const session = sessionId
       ? useChatStore.getState().sessions.find((item) => item.id === sessionId)
       : undefined
-    if (!session) return JSON.stringify({ error: 'No active session.' })
+    if (!session) return encodeToolError('No active session.')
 
     // Check if session already has a plan
     const existingPlan = usePlanStore.getState().getPlanBySession(session.id)
@@ -62,7 +63,7 @@ const enterPlanModeHandler: ToolHandler = {
       if (useChatStore.getState().activeSessionId === session.id) {
         usePlanStore.getState().setActivePlan(existingPlan.id)
       }
-      return JSON.stringify({
+      return encodeStructuredToolResult({
         status: 'resumed',
         plan_id: existingPlan.id,
         message: 'Resumed existing plan draft. Draft the plan in chat, then call SavePlan.'
@@ -79,7 +80,7 @@ const enterPlanModeHandler: ToolHandler = {
       uiStore.setRightPanelOpen(true)
     }
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       status: 'entered',
       plan_id: plan.id,
       message:
@@ -109,7 +110,7 @@ const exitPlanModeHandler: ToolHandler = {
     const sessionId = getSessionId(ctx)
 
     if (!uiStore.isPlanModeEnabled(sessionId)) {
-      return JSON.stringify({
+      return encodeStructuredToolResult({
         status: 'not_in_plan_mode',
         message: 'You are not currently in plan mode.'
       })
@@ -118,7 +119,7 @@ const exitPlanModeHandler: ToolHandler = {
     // Exit plan mode UI
     uiStore.exitPlanMode(sessionId)
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       status: 'exited',
       message:
         'Plan mode exited. STOP HERE — wait for the user to review and approve the plan in the panel.'
@@ -155,12 +156,12 @@ const savePlanHandler: ToolHandler = {
   execute: async (input, ctx) => {
     const sessionId = getSessionId(ctx)
     if (!sessionId) {
-      return JSON.stringify({ error: 'No active session.' })
+      return encodeToolError('No active session.')
     }
 
     const content = input.content ? String(input.content) : ''
     if (!content.trim()) {
-      return JSON.stringify({ error: 'Plan content is empty.' })
+      return encodeToolError('Plan content is empty.')
     }
 
     const title = input.title ? String(input.title) : inferTitleFromContent(content)
@@ -176,7 +177,7 @@ const savePlanHandler: ToolHandler = {
       planStore.setActivePlan(plan.id)
     }
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       status: 'saved',
       plan_id: plan.id,
       title

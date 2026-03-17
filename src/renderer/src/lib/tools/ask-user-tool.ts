@@ -1,5 +1,6 @@
 import { toolRegistry } from '../agent/tool-registry'
 import type { ToolDefinition } from '../api/types'
+import { encodeToolError } from './tool-result-format'
 import type { ToolHandler } from './tool-types'
 
 // --- Types ---
@@ -108,15 +109,15 @@ const askUserToolDefinition: Omit<ToolDefinition, 'name'> = {
 const askUserToolExecute: ToolHandler['execute'] = async (input, ctx) => {
   const toolUseId = ctx.currentToolUseId
   if (!toolUseId) {
-    return JSON.stringify({ error: 'Missing tool use ID' })
+    return encodeToolError('Missing tool use ID')
   }
 
   const questions = input.questions as AskUserQuestionItem[] | undefined
   if (!questions || !Array.isArray(questions) || questions.length === 0) {
-    return JSON.stringify({ error: 'At least one question is required' })
+    return encodeToolError('At least one question is required')
   }
   if (questions.length > 4) {
-    return JSON.stringify({ error: 'Maximum 4 questions allowed' })
+    return encodeToolError('Maximum 4 questions allowed')
   }
 
   if (ctx.pluginId) {
@@ -147,7 +148,7 @@ const askUserToolExecute: ToolHandler['execute'] = async (input, ctx) => {
   })
 
   if (ctx.signal.aborted) {
-    return JSON.stringify({ error: 'Aborted by user' })
+    return encodeToolError('Aborted by user')
   }
 
   const parts: string[] = []
@@ -162,7 +163,7 @@ const askUserToolExecute: ToolHandler['execute'] = async (input, ctx) => {
 
   return parts.length > 0
     ? `User answered:\n\n${parts.join('\n\n')}`
-    : JSON.stringify({ error: 'No answers provided' })
+    : encodeToolError('No answers provided')
 }
 
 const askUserQuestionHandler: ToolHandler = {

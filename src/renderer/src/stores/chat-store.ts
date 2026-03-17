@@ -18,6 +18,7 @@ import { usePlanStore } from './plan-store'
 import { useUIStore } from './ui-store'
 import { useProviderStore } from './provider-store'
 import { useSettingsStore } from './settings-store'
+import { isStructuredToolErrorText } from '@renderer/lib/tools/tool-result-format'
 
 export type SessionMode = 'chat' | 'clarify' | 'cowork' | 'code'
 
@@ -36,6 +37,7 @@ export interface Project {
   workingFolder?: string
   sshConnectionId?: string
   pluginId?: string
+  pinned?: boolean
   providerId?: string
   modelId?: string
 }
@@ -112,6 +114,7 @@ function dbCreateProject(project: Project): void {
       workingFolder: project.workingFolder,
       sshConnectionId: project.sshConnectionId,
       pluginId: project.pluginId,
+      pinned: project.pinned,
       createdAt: project.createdAt,
       updatedAt: project.updatedAt
     })
@@ -207,6 +210,7 @@ interface ChatStore {
   ) => Promise<string>
   renameProject: (projectId: string, name: string) => void
   deleteProject: (projectId: string) => Promise<void>
+  togglePinProject: (projectId: string) => void
   updateProjectDirectory: (
     projectId: string,
     patch: Partial<{
@@ -282,6 +286,7 @@ interface ProjectRow {
   working_folder: string | null
   ssh_connection_id: string | null
   plugin_id?: string | null
+  pinned: number
 }
 
 interface SessionRow {
@@ -322,7 +327,8 @@ function rowToProject(row: ProjectRow): Project {
     updatedAt: row.updated_at,
     workingFolder: row.working_folder ?? undefined,
     sshConnectionId: row.ssh_connection_id ?? undefined,
-    pluginId: row.plugin_id ?? undefined
+    pluginId: row.plugin_id ?? undefined,
+    pinned: row.pinned === 1
   }
 }
 
@@ -374,14 +380,7 @@ function rowToMessage(row: MessageRow): UnifiedMessage {
 
 function isLikelyToolErrorContent(content: ToolResultContent): boolean {
   if (typeof content !== 'string') return false
-  try {
-    const parsed = JSON.parse(content) as { error?: unknown } | null
-    if (!parsed || typeof parsed !== 'object') return false
-    const keys = Object.keys(parsed)
-    return keys.length === 1 && keys[0] === 'error' && typeof parsed.error === 'string'
-  } catch {
-    return false
-  }
+  return isStructuredToolErrorText(content)
 }
 
 function sanitizeToolBlocksForResend(messages: UnifiedMessage[]): {
@@ -506,6 +505,7 @@ export const useChatStore = create<ChatStore>()(
         workingFolder: input?.workingFolder ?? null,
         sshConnectionId: input?.sshConnectionId ?? null,
         pluginId: input?.pluginId ?? null,
+        pinned: false,
         createdAt: now,
         updatedAt: now
       }
@@ -527,7 +527,8 @@ export const useChatStore = create<ChatStore>()(
           updatedAt: now,
           workingFolder: payload.workingFolder ?? undefined,
           sshConnectionId: payload.sshConnectionId ?? undefined,
-          pluginId: payload.pluginId ?? undefined
+          pluginId: payload.pluginId ?? undefined,
+          pinned: false
         }
         set((state) => {
           state.projects.unshift(fallbackProject)
@@ -647,6 +648,24 @@ export const useChatStore = create<ChatStore>()(
       if (shouldEnsureDefaultProject) {
         await get().ensureDefaultProject()
       }
+    },
+
+    togglePinProject: (projectId) => {
+      const now = Date.now()
+      let pinned = false
+
+      set((state) => {
+        const project = state.projects.find((item) => item.id === projectId)
+        if (!project) return
+        project.pinned = !project.pinned
+        project.updatedAt = now
+        pinned = !!project.pinned
+      })
+
+      dbUpdateProject(projectId, {
+        pinned,
+        updatedAt: now
+      })
     },
 
     updateProjectDirectory: (projectId, patch) => {

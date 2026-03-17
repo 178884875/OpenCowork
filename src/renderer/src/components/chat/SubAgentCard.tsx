@@ -20,6 +20,7 @@ import {
   CollapsibleTrigger
 } from '@renderer/components/ui/collapsible'
 import { useAgentStore } from '@renderer/stores/agent-store'
+import { decodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { formatTokens, getBillableTotalTokens } from '@renderer/lib/format-tokens'
 import { cn } from '@renderer/lib/utils'
@@ -113,7 +114,18 @@ function SubAgentCardInner({
   const isRunning = live?.isRunning ?? false
   const isCompleted = !isRunning && (!!output || (live && !live.isRunning))
   const isError = outputStr
-    ? histText.startsWith('{"error"') || outputStr.startsWith('{"error"')
+    ? (() => {
+        const parsedOutput = decodeStructuredToolResult(outputStr)
+        if (parsedOutput && !Array.isArray(parsedOutput) && typeof parsedOutput.error === 'string') {
+          return true
+        }
+        const parsedHistText = decodeStructuredToolResult(histText)
+        return !!(
+          parsedHistText &&
+          !Array.isArray(parsedHistText) &&
+          typeof parsedHistText.error === 'string'
+        )
+      })()
     : false
 
   // Live elapsed time counter (auto-updates every second while running)

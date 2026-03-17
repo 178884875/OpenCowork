@@ -1,6 +1,7 @@
 import type { ToolHandler } from './tool-types'
 import { toolRegistry } from '../agent/tool-registry'
 import { ipcClient } from '../ipc/ipc-client'
+import { encodeToolError } from './tool-result-format'
 
 type SkillMeta = { name: string; description: string }
 
@@ -44,18 +45,18 @@ function createSkillHandler(): ToolHandler {
     execute: async (input, ctx) => {
       const skillName = input.SkillName as string
       if (!skillName) {
-        return JSON.stringify({ error: 'SkillName is required' })
+        return encodeToolError('SkillName is required')
       }
       try {
         const result = await ctx.ipc.invoke('skills:load', { name: skillName }) as
           | { content: string; workingDirectory: string }
           | { error: string }
         if ('error' in result) {
-          return JSON.stringify({ error: result.error })
+          return encodeToolError(result.error)
         }
         return `<skill_context>\n<working_directory>${result.workingDirectory}</working_directory>\n<instruction>CRITICAL: When executing any script mentioned in this skill, you MUST prepend the working_directory to form an absolute path. For example, if the skill says "python scripts/foo.py", you must run "python ${result.workingDirectory}/scripts/foo.py". NEVER run scripts using bare relative paths like "python scripts/foo.py" — they will fail because your cwd is not the skill directory.</instruction>\n</skill_context>\n\n${result.content}`
       } catch (err) {
-        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
+        return encodeToolError(err instanceof Error ? err.message : String(err))
       }
     },
     requiresApproval: () => false,

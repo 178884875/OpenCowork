@@ -167,7 +167,8 @@ export function Layout(): React.JSX.Element {
   const initBackgroundProcessTracking = useAgentStore((s) => s.initBackgroundProcessTracking)
 
   const { resolvedTheme, setTheme: ntSetTheme } = useTheme()
-  const { sendMessage, stopStreaming, retryLastMessage, editAndResend } = useChatActions()
+  const { sendMessage, stopStreaming, retryLastMessage, editAndResend, deleteMessage } =
+    useChatActions()
 
   const [copiedAll, setCopiedAll] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -1029,6 +1030,7 @@ export function Layout(): React.JSX.Element {
                           <MessageList
                             onRetry={retryLastMessage}
                             onEditUserMessage={editAndResend}
+                            onDeleteMessage={deleteMessage}
                           />
                           <InputArea
                             onSend={sendMessage}

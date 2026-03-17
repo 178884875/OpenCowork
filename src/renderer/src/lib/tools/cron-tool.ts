@@ -2,6 +2,7 @@ import { toolRegistry } from '../agent/tool-registry'
 import { IPC } from '../ipc/channels'
 import { useCronStore } from '../../stores/cron-store'
 import { useUIStore } from '../../stores/ui-store'
+import { encodeStructuredToolResult } from './tool-result-format'
 import type { ToolHandler } from './tool-types'
 
 // ── CronAdd ──────────────────────────────────────────────────────
@@ -103,11 +104,11 @@ const cronAddHandler: ToolHandler = {
   execute: async (input, ctx) => {
     const name = String(input.name ?? '')
     const prompt = String(input.prompt ?? '')
-    if (!name) return JSON.stringify({ error: 'name is required' })
-    if (!prompt) return JSON.stringify({ error: 'prompt is required' })
+    if (!name) return encodeStructuredToolResult({ error: 'name is required' })
+    if (!prompt) return encodeStructuredToolResult({ error: 'prompt is required' })
 
     const schedule = { ...(input.schedule as { kind: string; at?: string | number; every?: number; expr?: string; tz?: string }) }
-    if (!schedule?.kind) return JSON.stringify({ error: 'schedule.kind is required' })
+    if (!schedule?.kind) return encodeStructuredToolResult({ error: 'schedule.kind is required' })
 
     // Resolve relative time offsets for "at" kind (e.g. "+10m", "+1h", "+30s")
     if (schedule.kind === 'at' && typeof schedule.at === 'string') {
@@ -123,13 +124,13 @@ const cronAddHandler: ToolHandler = {
         if (!isNaN(parsed)) {
           // If the parsed time is in the past, reject with a helpful error
           if (parsed < Date.now() - 30_000) {
-            return JSON.stringify({
+            return encodeStructuredToolResult({
               error: `The timestamp "${schedule.at}" is in the past. You do not know the current time, so do NOT use ISO timestamps. Use relative offset format instead: "+1m" for 1 minute, "+10m" for 10 minutes, "+1h" for 1 hour, "+1d" for 1 day.`,
             })
           }
           schedule.at = parsed
         } else {
-          return JSON.stringify({
+          return encodeStructuredToolResult({
             error: `Invalid schedule.at value: "${schedule.at}". Use relative offset format: "+1m", "+10m", "+2h", "+1d".`,
           })
         }
@@ -156,14 +157,14 @@ const cronAddHandler: ToolHandler = {
       pluginChatId: pluginChatId ?? undefined,
     }) as { error?: string; jobId?: string; success?: boolean }
 
-    if (result.error) return JSON.stringify({ error: result.error })
+    if (result.error) return encodeStructuredToolResult({ error: result.error })
 
     useCronStore.getState().loadJobs().catch(() => {})
 
     // Auto-open the Tasks page so user can see the new job
     useUIStore.getState().openTasksPage()
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       success: true,
       jobId: result.jobId,
       name,
@@ -216,17 +217,17 @@ const cronUpdateHandler: ToolHandler = {
   },
   execute: async (input, ctx) => {
     const jobId = String(input.jobId ?? '')
-    if (!jobId) return JSON.stringify({ error: 'jobId is required' })
+    if (!jobId) return encodeStructuredToolResult({ error: 'jobId is required' })
 
     const result = await ctx.ipc.invoke(IPC.CRON_UPDATE, {
       jobId,
       patch: input.patch,
     }) as { error?: string; success?: boolean }
 
-    if (result.error) return JSON.stringify({ error: result.error })
+    if (result.error) return encodeStructuredToolResult({ error: result.error })
 
     useCronStore.getState().loadJobs().catch(() => {})
-    return JSON.stringify({ success: true, jobId, message: `Job ${jobId} updated.` })
+    return encodeStructuredToolResult({ success: true, jobId, message: `Job ${jobId} updated.` })
   },
   requiresApproval: () => true,
 }
@@ -250,13 +251,13 @@ const cronRemoveHandler: ToolHandler = {
   },
   execute: async (input, ctx) => {
     const jobId = String(input.jobId ?? '')
-    if (!jobId) return JSON.stringify({ error: 'jobId is required' })
+    if (!jobId) return encodeStructuredToolResult({ error: 'jobId is required' })
 
     const result = await ctx.ipc.invoke(IPC.CRON_REMOVE, { jobId }) as { error?: string; success?: boolean }
-    if (result.error) return JSON.stringify({ error: result.error })
+    if (result.error) return encodeStructuredToolResult({ error: result.error })
 
     useCronStore.getState().removeJob(jobId)
-    return JSON.stringify({ success: true, jobId, message: `Job ${jobId} removed.` })
+    return encodeStructuredToolResult({ success: true, jobId, message: `Job ${jobId} removed.` })
   },
   requiresApproval: () => false,
 }
@@ -276,14 +277,14 @@ const cronListHandler: ToolHandler = {
     const result = await ctx.ipc.invoke(IPC.CRON_LIST, {}) as unknown[] | { error?: string }
 
     if (!Array.isArray(result)) {
-      return JSON.stringify({ error: (result as { error?: string }).error ?? 'Failed to list cron jobs' })
+      return encodeStructuredToolResult({ error: (result as { error?: string }).error ?? 'Failed to list cron jobs' })
     }
 
     if (result.length === 0) {
-      return JSON.stringify({ total: 0, jobs: [], message: 'No cron jobs scheduled.' })
+      return encodeStructuredToolResult({ total: 0, jobs: [], message: 'No cron jobs scheduled.' })
     }
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       total: result.length,
       jobs: result.map((j: unknown) => {
         const job = j as {

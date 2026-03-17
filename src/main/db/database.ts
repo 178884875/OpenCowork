@@ -317,6 +317,15 @@ export function getDb(): Database.Database {
     /* exists */
   }
 
+  // Migration: add pinned column to sessions if missing
+  if (!hasColumn(db, 'sessions', 'pinned')) {
+    try {
+      db.exec(`ALTER TABLE sessions ADD COLUMN pinned INTEGER DEFAULT 0`)
+    } catch {
+      /* exists */
+    }
+  }
+
   // --- Plans table ---
   db.exec(`
     CREATE TABLE IF NOT EXISTS plans (
@@ -530,6 +539,7 @@ export function getDb(): Database.Database {
       working_folder TEXT,
       ssh_connection_id TEXT,
       plugin_id TEXT,
+      pinned INTEGER DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -537,6 +547,20 @@ export function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
     CREATE INDEX IF NOT EXISTS idx_projects_plugin_id ON projects(plugin_id);
   `)
+
+  // Migration: add pinned column to projects if missing (before creating index on it)
+  if (!hasColumn(db, 'projects', 'pinned')) {
+    try {
+      db.exec(`ALTER TABLE projects ADD COLUMN pinned INTEGER DEFAULT 0`)
+    } catch {
+      /* exists */
+    }
+  }
+  if (hasColumn(db, 'projects', 'pinned')) {
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_projects_pinned_updated_at ON projects(pinned, updated_at DESC)`
+    )
+  }
 
   // Migration: add ssh_connection_id to sessions for remote working directory
   if (!hasColumn(db, 'sessions', 'ssh_connection_id')) {

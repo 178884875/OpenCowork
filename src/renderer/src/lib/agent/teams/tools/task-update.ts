@@ -1,4 +1,5 @@
 import type { ToolHandler } from '../../../tools/tool-types'
+import { encodeStructuredToolResult, encodeToolError } from '../../../tools/tool-result-format'
 import { teamEvents } from '../events'
 import { useTeamStore } from '../../../../stores/team-store'
 import type { TeamTaskStatus } from '../types'
@@ -39,19 +40,19 @@ export const taskUpdateTool: ToolHandler = {
     const taskId = String(input.task_id)
     const team = useTeamStore.getState().activeTeam
     if (!team) {
-      return JSON.stringify({ error: 'No active team' })
+      return encodeToolError('No active team')
     }
 
     const task = team.tasks.find((t) => t.id === taskId)
     if (!task) {
-      return JSON.stringify({ error: `Task "${taskId}" not found` })
+      return encodeToolError(`Task "${taskId}" not found`)
     }
 
     const patch: Record<string, unknown> = {}
     if (input.status && VALID_STATUSES.includes(input.status as TeamTaskStatus)) {
       // Guard: never roll back a completed task
       if (task.status === 'completed' && input.status !== 'completed') {
-        return JSON.stringify({
+        return encodeStructuredToolResult({
           error: `Task "${taskId}" is already completed and cannot be reverted to "${input.status}".`
         })
       }
@@ -66,7 +67,7 @@ export const taskUpdateTool: ToolHandler = {
 
     teamEvents.emit({ type: 'team_task_update', taskId, patch })
 
-    return JSON.stringify({
+    return encodeStructuredToolResult({
       success: true,
       task_id: taskId,
       updated: patch

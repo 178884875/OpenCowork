@@ -1,6 +1,7 @@
 import { toolRegistry } from '../agent/tool-registry'
 import { joinFsPath } from '../agent/memory-files'
 import { IPC } from '../ipc/channels'
+import { encodeStructuredToolResult } from './tool-result-format'
 import type { ToolHandler } from './tool-types'
 
 function isAbsolutePath(p: string): boolean {
@@ -41,13 +42,13 @@ const globHandler: ToolHandler = {
         pattern: input.pattern,
         path: resolvedPath,
       })
-      return JSON.stringify(result)
+      return encodeStructuredToolResult(result as string[])
     }
     const result = await ctx.ipc.invoke(IPC.FS_GLOB, {
       pattern: input.pattern,
       path: resolvedPath,
     })
-    return JSON.stringify(result)
+    return encodeStructuredToolResult(result as string[])
   },
   requiresApproval: () => false,
 }
@@ -75,14 +76,14 @@ const grepHandler: ToolHandler = {
         path: resolvedPath,
         include: input.include,
       })
-      return JSON.stringify(result)
+      return encodeStructuredToolResult(result as string[])
     }
     const result = await ctx.ipc.invoke(IPC.FS_GREP, {
       pattern: input.pattern,
       path: resolvedPath,
       include: input.include,
     })
-    return JSON.stringify(result)
+    return encodeStructuredToolResult(result as string[])
   },
   requiresApproval: () => false,
 }

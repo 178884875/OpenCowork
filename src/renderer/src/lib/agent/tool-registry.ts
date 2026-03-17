@@ -1,5 +1,6 @@
 import type { ToolDefinition, ToolResultContent } from '../api/types'
 import type { ToolHandler, ToolContext } from '../tools/tool-types'
+import { encodeToolError } from '../tools/tool-result-format'
 
 /**
  * Tool Registry - manages tool handlers with a pluggable registration pattern.
@@ -72,13 +73,13 @@ class ToolRegistry {
   ): Promise<ToolResultContent> {
     const handler = this.tools.get(name)
     if (!handler) {
-      return JSON.stringify({ error: `Unknown tool: ${name}` })
+      return encodeToolError(`Unknown tool: ${name}`)
     }
     try {
       return await handler.execute(input, ctx)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      return JSON.stringify({ error: message })
+      return encodeToolError(message)
     }
   }
 

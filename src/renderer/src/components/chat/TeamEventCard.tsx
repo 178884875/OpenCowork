@@ -9,6 +9,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { cn } from '@renderer/lib/utils'
 import type { ToolResultContent } from '@renderer/lib/api/types'
+import { decodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
 
 interface TeamEventCardProps {
   name: string
@@ -51,11 +52,8 @@ const toolConfig: Record<string, { icon: React.ReactNode; color: string; labelKe
 
 function parseOutput(output?: ToolResultContent): Record<string, unknown> | null {
   if (!output || typeof output !== 'string') return null
-  try {
-    return JSON.parse(output)
-  } catch {
-    return null
-  }
+  const parsed = decodeStructuredToolResult(output)
+  return parsed && !Array.isArray(parsed) ? parsed : null
 }
 
 export function TeamEventCard({ name, input, output }: TeamEventCardProps): React.JSX.Element {

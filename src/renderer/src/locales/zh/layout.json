@@ -31,6 +31,9 @@
     "switchMode": "切换模式",
     "deleteAllSessions": "删除所有会话",
     "deleteAllConfirm": "删除全部 {{count}} 个会话？此操作不可撤销。",
+    "unknownProject": "未知项目",
+    "pinnedProjects": "置顶项目",
+    "projects": "项目",
     "sessions": "会话",
     "msgs": "消息"
   },
@@ -43,6 +46,8 @@
     "messagesCleared": "消息已清空",
     "unpinned": "已取消置顶",
     "pinnedMsg": "已置顶",
+    "projectPinned": "项目已置顶",
+    "projectUnpinned": "项目已取消置顶",
     "switchedMode": "已切换到{{mode}}模式",
     "invalidFile": "无效的会话文件",
     "failedParse": "JSON 解析失败",

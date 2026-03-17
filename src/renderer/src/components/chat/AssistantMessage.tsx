@@ -9,7 +9,16 @@ import {
   useMermaidThemeVersion
 } from '@renderer/lib/utils/mermaid-theme'
 import { Avatar, AvatarFallback } from '@renderer/components/ui/avatar'
-import { Copy, Check, ChevronsDownUp, ChevronsUpDown, Bug, ImageDown, ZoomIn } from 'lucide-react'
+import {
+  Copy,
+  Check,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Bug,
+  ImageDown,
+  ZoomIn,
+  Trash2
+} from 'lucide-react'
 import { FadeIn, ScaleIn } from '@renderer/components/animate-ui'
 import { ImageGeneratingLoader } from './ImageGeneratingLoader'
 import { ImageGenerationErrorCard } from './ImageGenerationErrorCard'
@@ -68,6 +77,7 @@ interface AssistantMessageProps {
   usage?: TokenUsage
   toolResults?: Map<string, { content: ToolResultContent; isError?: boolean }>
   msgId?: string
+  onDelete?: (messageId: string) => void
 }
 
 const MARKDOWN_WRAPPER_CLASS = 'text-sm leading-relaxed text-foreground break-words'
@@ -601,7 +611,8 @@ export function AssistantMessage({
   isStreaming,
   usage,
   toolResults,
-  msgId
+  msgId,
+  onDelete
 }: AssistantMessageProps): React.JSX.Element {
   const { t } = useTranslation('chat')
   const devMode = useSettingsStore((s) => s.devMode)
@@ -1213,6 +1224,15 @@ export function AssistantMessage({
           {!isStreaming && (
             <span className="opacity-0 group-hover/msg:opacity-100 transition-opacity flex items-center gap-0.5">
               {plainText && <CopyButton text={plainText} />}
+              {msgId && onDelete && (
+                <button
+                  onClick={() => onDelete(msgId)}
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted-foreground/10 hover:text-destructive transition-colors"
+                >
+                  <Trash2 className="size-3" />
+                  {t('action.delete', { ns: 'common' })}
+                </button>
+              )}
               {devMode && debugInfo && <DebugToggleButton debugInfo={debugInfo} />}
             </span>
           )}

@@ -8,9 +8,13 @@ import {
   Sparkles,
   Users,
   Workflow,
-  type LucideIcon,
+  type LucideIcon
 } from 'lucide-react'
 import type { RightPanelSection, RightPanelTab } from '@renderer/stores/ui-store'
+
+export const LEFT_SIDEBAR_DEFAULT_WIDTH = 320
+export const LEFT_SIDEBAR_MIN_WIDTH = 240
+export const LEFT_SIDEBAR_MAX_WIDTH = 520
 
 export const RIGHT_PANEL_DEFAULT_WIDTH = 384
 export const RIGHT_PANEL_MIN_WIDTH = 320
@@ -36,7 +40,7 @@ export const RIGHT_PANEL_TAB_DEFS: RightPanelTabDef[] = [
   { value: 'artifacts', labelKey: 'artifacts', section: 'resources', icon: FileOutput },
   { value: 'team', labelKey: 'team', section: 'collaboration', icon: Users },
   { value: 'skills', labelKey: 'skills', section: 'collaboration', icon: Sparkles },
-  { value: 'context', labelKey: 'context', section: 'monitoring', icon: Database },
+  { value: 'context', labelKey: 'context', section: 'monitoring', icon: Database }
 ]
 
 export const RIGHT_PANEL_TAB_ORDER: RightPanelTab[] = RIGHT_PANEL_TAB_DEFS.map((tab) => tab.value)
@@ -45,30 +49,30 @@ export const RIGHT_PANEL_SECTION_DEFS: RightPanelSectionDef[] = [
   {
     value: 'execution',
     labelKey: 'sectionExecution',
-    icon: Workflow,
+    icon: Workflow
   },
   {
     value: 'resources',
     labelKey: 'sectionResources',
-    icon: FolderTree,
+    icon: FolderTree
   },
   {
     value: 'collaboration',
     labelKey: 'sectionCollaboration',
-    icon: Users,
+    icon: Users
   },
   {
     value: 'monitoring',
     labelKey: 'sectionMonitoring',
-    icon: Activity,
-  },
+    icon: Activity
+  }
 ]
 
 export const RIGHT_PANEL_DEFAULT_TAB_BY_SECTION: Record<RightPanelSection, RightPanelTab> = {
   execution: 'steps',
   resources: 'files',
   collaboration: 'team',
-  monitoring: 'context',
+  monitoring: 'context'
 }
 
 export const RIGHT_PANEL_TAB_TO_SECTION: Record<RightPanelTab, RightPanelSection> =
@@ -79,6 +83,10 @@ export const RIGHT_PANEL_TAB_TO_SECTION: Record<RightPanelTab, RightPanelSection
     },
     {} as Record<RightPanelTab, RightPanelSection>
   )
+
+export function clampLeftSidebarWidth(width: number): number {
+  return Math.min(LEFT_SIDEBAR_MAX_WIDTH, Math.max(LEFT_SIDEBAR_MIN_WIDTH, width))
+}
 
 export function clampRightPanelWidth(width: number): number {
   return Math.min(RIGHT_PANEL_MAX_WIDTH, Math.max(RIGHT_PANEL_MIN_WIDTH, width))

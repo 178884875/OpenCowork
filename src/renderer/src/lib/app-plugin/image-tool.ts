@@ -9,7 +9,13 @@ import type {
 } from '@renderer/lib/api/types'
 import { IPC } from '@renderer/lib/ipc/channels'
 import type { ToolContext, ToolHandler } from '@renderer/lib/tools/tool-types'
+import { useAgentStore } from '@renderer/stores/agent-store'
 import { useAppPluginStore } from '@renderer/stores/app-plugin-store'
+import {
+  isRetryableImageError,
+  waitForImageGenerateRetry,
+  type ImageGenerateRetryState
+} from './image-tool-retry'
 import { IMAGE_GENERATE_TOOL_NAME } from './types'
 
 function normalizeCount(input: unknown): number {
@@ -111,6 +117,53 @@ async function persistGeneratedImage(
   return filePath
 }
 
+function buildImageToolOutput(
+  savedPaths: string[],
+  images: ImageBlock[],
+  notes: string[] = []
+): ToolResultContent {
+  const content: Array<TextBlock | ImageBlock> = []
+
+  if (savedPaths.length > 0) {
+    content.push({
+      type: 'text',
+      text: `Saved image absolute paths:\n${savedPaths.join('\n')}`
+    })
+  }
+
+  content.push(...images)
+
+  for (const note of notes) {
+    content.push({
+      type: 'text',
+      text: note
+    })
+  }
+
+  return content
+}
+
+function updateLiveImageToolState(
+  ctx: ToolContext,
+  baseInput: Record<string, unknown>,
+  savedPaths: string[],
+  images: ImageBlock[],
+  notes: string[] = [],
+  retryState?: ImageGenerateRetryState
+): void {
+  if (!ctx.currentToolUseId) return
+
+  useAgentStore.getState().updateToolCall(ctx.currentToolUseId, {
+    input: retryState
+      ? {
+          ...baseInput,
+          _retryState: retryState
+        }
+      : baseInput,
+    output: buildImageToolOutput(savedPaths, images, notes)
+  })
+}
+
 export const imageGenerateTool: ToolHandler = {
   definition: {
     name: IMAGE_GENERATE_TOOL_NAME,
@@ -150,74 +203,115 @@ export const imageGenerateTool: ToolHandler = {
     const provider = createProvider(providerConfig)
     const outputDir = await resolveImageOutputDir(ctx)
     const images: ImageBlock[] = []
-    const notes: TextBlock[] = []
+    const notes: string[] = []
     const savedPaths: string[] = []
+    const baseInput = { prompt, count }
+
+    updateLiveImageToolState(ctx, baseInput, savedPaths, images)
 
     for (let index = 0; index < count; index += 1) {
-      const userMessage: UnifiedMessage = {
-        id: nanoid(),
-        role: 'user',
-        content: prompt,
-        createdAt: Date.now()
-      }
+      let retryAttempt = 0
 
-      let iterationFailed = false
-      let iterationError = 'Unknown image generation error.'
-      const iterationImages: ImageBlock[] = []
-
-      for await (const event of provider.sendMessage(
-        [userMessage],
-        [],
-        providerConfig,
-        ctx.signal
-      )) {
-        if (event.type === 'image_generated' && event.imageBlock) {
-          iterationImages.push(event.imageBlock)
+      while (true) {
+        const userMessage: UnifiedMessage = {
+          id: nanoid(),
+          role: 'user',
+          content: prompt,
+          createdAt: Date.now()
         }
 
-        if (event.type === 'image_error' && event.imageError) {
-          iterationFailed = true
-          iterationError = event.imageError.message
+        let iterationFailed = false
+        let iterationError = 'Unknown image generation error.'
+        let iterationErrorCode:
+          | 'timeout'
+          | 'network'
+          | 'request_aborted'
+          | 'api_error'
+          | 'unknown'
+          | undefined
+        const iterationImages: ImageBlock[] = []
+
+        for await (const event of provider.sendMessage(
+          [userMessage],
+          [],
+          providerConfig,
+          ctx.signal
+        )) {
+          if (event.type === 'image_generated' && event.imageBlock) {
+            iterationImages.push(event.imageBlock)
+          }
+
+          if (event.type === 'image_error' && event.imageError) {
+            iterationFailed = true
+            iterationError = event.imageError.message
+            iterationErrorCode = event.imageError.code
+          }
         }
-      }
 
-      if (iterationFailed) {
-        if (images.length === 0) {
-          return JSON.stringify({ error: iterationError })
-        }
+        if (iterationFailed) {
+          if (ctx.currentToolUseId && isRetryableImageError(iterationError, iterationErrorCode)) {
+            const retryState: ImageGenerateRetryState = {
+              status: 'awaiting_retry',
+              attempt: retryAttempt + 1,
+              completedCount: images.length,
+              totalCount: count,
+              errorMessage: iterationError
+            }
+            const retryNotes = [
+              ...notes,
+              `Image ${index + 1}/${count} hit rate limit. Generated ${images.length}/${count} image(s). Click retry to continue.`
+            ]
+            updateLiveImageToolState(ctx, baseInput, savedPaths, images, retryNotes, retryState)
 
-        notes.push({
-          type: 'text',
-          text: `Stopped after ${images.length} image(s). Request ${index + 1} failed: ${iterationError}`
-        })
-        break
-      }
+            const shouldRetry = await waitForImageGenerateRetry(ctx.currentToolUseId, ctx.signal)
+            if (!shouldRetry) {
+              return JSON.stringify({
+                error: 'Image generation was cancelled while waiting for retry.'
+              })
+            }
 
-      try {
-        const iterationSavedPaths: string[] = []
-        for (const [imageIndex, image] of iterationImages.entries()) {
-          const savedPath = await persistGeneratedImage(
-            image,
-            ctx,
-            outputDir,
-            savedPaths.length + imageIndex
+            retryAttempt += 1
+            updateLiveImageToolState(ctx, baseInput, savedPaths, images, notes)
+            continue
+          }
+
+          if (images.length === 0) {
+            return JSON.stringify({ error: iterationError })
+          }
+
+          notes.push(
+            `Stopped after ${images.length} image(s). Request ${index + 1} failed: ${iterationError}`
           )
-          iterationSavedPaths.push(savedPath)
+          updateLiveImageToolState(ctx, baseInput, savedPaths, images, notes)
+          break
         }
 
-        images.push(...iterationImages)
-        savedPaths.push(...iterationSavedPaths)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (images.length === 0) {
-          return JSON.stringify({ error: message })
-        }
+        try {
+          const iterationSavedPaths: string[] = []
+          for (const [imageIndex, image] of iterationImages.entries()) {
+            const savedPath = await persistGeneratedImage(
+              image,
+              ctx,
+              outputDir,
+              savedPaths.length + imageIndex
+            )
+            iterationSavedPaths.push(savedPath)
+          }
 
-        notes.push({
-          type: 'text',
-          text: `Stopped after ${images.length} image(s). Failed to persist image: ${message}`
-        })
-        break
+          images.push(...iterationImages)
+          savedPaths.push(...iterationSavedPaths)
+          updateLiveImageToolState(ctx, baseInput, savedPaths, images, notes)
+          break
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          if (images.length === 0) {
+            return JSON.stringify({ error: message })
+          }
+
+          notes.push(`Stopped after ${images.length} image(s). Failed to persist image: ${message}`)
+          updateLiveImageToolState(ctx, baseInput, savedPaths, images, notes)
+          break
+        }
       }
     }
 
@@ -225,14 +319,8 @@ export const imageGenerateTool: ToolHandler = {
       return JSON.stringify({ error: 'Image generation returned no images.' })
     }
 
-    return [
-      {
-        type: 'text',
-        text: `Saved image absolute paths:\n${savedPaths.join('\n')}`
-      },
-      ...images,
-      ...notes
-    ]
+    updateLiveImageToolState(ctx, baseInput, savedPaths, images, notes)
+    return buildImageToolOutput(savedPaths, images, notes)
   },
   requiresApproval: () => false
 }

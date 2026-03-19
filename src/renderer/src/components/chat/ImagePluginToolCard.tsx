@@ -4,10 +4,17 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, ImageIcon, Loader2, TriangleAlert } from 'lucide-react'
 import type { ToolCallStatus } from '@renderer/lib/agent/types'
 import type { ImageBlock, TextBlock, ToolResultContent } from '@renderer/lib/api/types'
+import {
+  resolveImageGenerateRetry,
+  type ImageGenerateRetryState
+} from '@renderer/lib/app-plugin/image-tool-retry'
 import { decodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
+import { Button } from '@renderer/components/ui/button'
+import { confirm } from '@renderer/components/ui/confirm-dialog'
 import { ImagePreview } from './ImagePreview'
 
 interface ImagePluginToolCardProps {
+  toolUseId?: string
   input: Record<string, unknown>
   output?: ToolResultContent
   status: ToolCallStatus | 'completed'
@@ -33,7 +40,37 @@ function parseErrorMessage(output: ToolResultContent | undefined): string | null
   return output.trim() || null
 }
 
+function parseRetryState(input: Record<string, unknown>): ImageGenerateRetryState | null {
+  const value = input._retryState
+  if (!value || typeof value !== 'object') return null
+
+  const status = (value as { status?: unknown }).status
+  const errorMessage = (value as { errorMessage?: unknown }).errorMessage
+  const attempt = (value as { attempt?: unknown }).attempt
+  const completedCount = (value as { completedCount?: unknown }).completedCount
+  const totalCount = (value as { totalCount?: unknown }).totalCount
+
+  if (
+    status !== 'awaiting_retry' ||
+    typeof errorMessage !== 'string' ||
+    typeof attempt !== 'number' ||
+    typeof completedCount !== 'number' ||
+    typeof totalCount !== 'number'
+  ) {
+    return null
+  }
+
+  return {
+    status,
+    errorMessage,
+    attempt,
+    completedCount,
+    totalCount
+  }
+}
+
 export function ImagePluginToolCard({
+  toolUseId,
   input,
   output,
   status,
@@ -44,6 +81,7 @@ export function ImagePluginToolCard({
   const prompt = typeof input.prompt === 'string' ? input.prompt : ''
   const requestedCount =
     typeof input.count === 'number' ? input.count : Number(input.count ?? 1) || 1
+  const retryState = parseRetryState(input)
 
   const { images, notes } = useMemo(() => {
     if (!Array.isArray(output)) {
@@ -56,9 +94,32 @@ export function ImagePluginToolCard({
     }
   }, [output])
 
-  const parsedError = error || parseErrorMessage(output)
-  const isRunning = status === 'streaming' || status === 'pending_approval' || status === 'running'
-  const hasError = status === 'error' || (!!parsedError && images.length === 0)
+  const parsedError = error || retryState?.errorMessage || parseErrorMessage(output)
+  const isAwaitingRetry = retryState?.status === 'awaiting_retry'
+  const isRunning =
+    status === 'streaming' ||
+    status === 'pending_approval' ||
+    status === 'running' ||
+    isAwaitingRetry
+  const hasError =
+    !isAwaitingRetry && (status === 'error' || (!!parsedError && images.length === 0))
+
+  const handleRetry = async (): Promise<void> => {
+    if (!toolUseId || !retryState) return
+
+    const confirmed = await confirm({
+      title: t('toolCall.imagePlugin.retryConfirmTitle'),
+      description: t('toolCall.imagePlugin.retryConfirmDesc', {
+        completed: retryState.completedCount,
+        total: retryState.totalCount
+      }),
+      confirmLabel: t('toolCall.imagePlugin.retryConfirmAction'),
+      cancelLabel: t('action.cancel', { ns: 'common' })
+    })
+
+    if (!confirmed) return
+    resolveImageGenerateRetry(toolUseId)
+  }
 
   return (
     <motion.div
@@ -102,11 +163,13 @@ export function ImagePluginToolCard({
               transition={ITEM_TRANSITION}
               className="text-[11px] text-muted-foreground"
             >
-              {isRunning
-                ? t('toolCall.imagePlugin.running')
-                : hasError
-                  ? t('toolCall.imagePlugin.failed')
-                  : t('toolCall.imagePlugin.completed')}
+              {isAwaitingRetry
+                ? t('toolCall.imagePlugin.waitingRetry')
+                : isRunning
+                  ? t('toolCall.imagePlugin.running')
+                  : hasError
+                    ? t('toolCall.imagePlugin.failed')
+                    : t('toolCall.imagePlugin.completed')}
             </motion.p>
           </div>
         </div>
@@ -154,7 +217,40 @@ export function ImagePluginToolCard({
                 </p>
               </div>
 
-              {isRunning ? (
+              {isAwaitingRetry ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={ITEM_TRANSITION}
+                  className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-3 text-sm"
+                >
+                  <div className="flex items-start gap-2 text-amber-600 dark:text-amber-300">
+                    <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                    <div className="space-y-1">
+                      <p className="font-medium">{t('toolCall.imagePlugin.retryRequired')}</p>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {t('toolCall.imagePlugin.retryHint', {
+                          completed: retryState?.completedCount ?? images.length,
+                          total: retryState?.totalCount ?? requestedCount
+                        })}
+                      </p>
+                      <p className="text-xs leading-relaxed text-amber-700/90 dark:text-amber-200/90">
+                        {t('toolCall.imagePlugin.retryCaveat')}
+                      </p>
+                      {parsedError ? (
+                        <p className="break-all rounded-md bg-background/70 px-2 py-1.5 text-[11px] text-muted-foreground">
+                          {parsedError}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button size="sm" onClick={() => void handleRetry()} disabled={!toolUseId}>
+                      {t('action.retry', { ns: 'common' })}
+                    </Button>
+                  </div>
+                </motion.div>
+              ) : isRunning ? (
                 <motion.div
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}

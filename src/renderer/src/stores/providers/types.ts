@@ -14,6 +14,7 @@ export interface BuiltinProviderPreset {
   type: ProviderType
   defaultBaseUrl: string
   defaultModels: AIModelConfig[]
+  deprecatedModelIds?: string[]
   defaultEnabled?: boolean
   requiresApiKey?: boolean
   homepage: string

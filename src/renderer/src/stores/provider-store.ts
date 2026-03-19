@@ -173,10 +173,12 @@ function resolveServiceTier(
 
 function mergeBuiltinModels(
   existingModels: AIModelConfig[],
-  presetModels: AIModelConfig[]
+  presetModels: AIModelConfig[],
+  deprecatedModelIds: string[] = []
 ): AIModelConfig[] {
   const existingById = new Map(existingModels.map((model) => [model.id, model]))
   const presetIds = new Set(presetModels.map((model) => model.id))
+  const deprecatedIds = new Set(deprecatedModelIds)
 
   // Keep preset order for builtin models; preserve user's enabled state.
   const merged = presetModels.map((presetModel) => {
@@ -191,7 +193,7 @@ function mergeBuiltinModels(
 
   // Keep user-added custom models that are not part of builtin preset.
   for (const existingModel of existingModels) {
-    if (!presetIds.has(existingModel.id)) {
+    if (!presetIds.has(existingModel.id) && !deprecatedIds.has(existingModel.id)) {
       merged.push(existingModel)
     }
   }
@@ -963,7 +965,11 @@ function ensureBuiltinPresets(): void {
         useProviderStore.getState().updateProvider(existing.id, patch)
       }
 
-      const updatedModels = mergeBuiltinModels(existing.models, preset.defaultModels)
+      const updatedModels = mergeBuiltinModels(
+        existing.models,
+        preset.defaultModels,
+        preset.deprecatedModelIds
+      )
       if (JSON.stringify(updatedModels) !== JSON.stringify(existing.models)) {
         useProviderStore.getState().setProviderModels(existing.id, updatedModels)
       }

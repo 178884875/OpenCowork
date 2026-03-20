@@ -18,7 +18,7 @@ export type NavItem =
 
 export type ChatView = 'home' | 'session'
 
-export type RightPanelTab = 'steps' | 'team' | 'artifacts' | 'context' | 'skills' | 'files' | 'plan'
+export type RightPanelTab = 'steps' | 'team' | 'artifacts' | 'context' | 'files' | 'plan'
 export type RightPanelSection = 'execution' | 'resources' | 'collaboration' | 'monitoring'
 
 export type PreviewSource = 'file' | 'dev-server' | 'markdown'

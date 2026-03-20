@@ -5,7 +5,6 @@ import {
   FileOutput,
   FolderTree,
   ListChecks,
-  Sparkles,
   Users,
   Workflow,
   type LucideIcon
@@ -39,7 +38,6 @@ export const RIGHT_PANEL_TAB_DEFS: RightPanelTabDef[] = [
   { value: 'files', labelKey: 'files', section: 'resources', icon: FolderTree },
   { value: 'artifacts', labelKey: 'artifacts', section: 'resources', icon: FileOutput },
   { value: 'team', labelKey: 'team', section: 'collaboration', icon: Users },
-  { value: 'skills', labelKey: 'skills', section: 'collaboration', icon: Sparkles },
   { value: 'context', labelKey: 'context', section: 'monitoring', icon: Database }
 ]
 

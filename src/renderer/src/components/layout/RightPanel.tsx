@@ -5,7 +5,6 @@ import { useUIStore, type RightPanelTab } from '@renderer/stores/ui-store'
 import { StepsPanel } from '@renderer/components/cowork/StepsPanel'
 import { ArtifactsPanel } from '@renderer/components/cowork/ArtifactsPanel'
 import { ContextPanel } from '@renderer/components/cowork/ContextPanel'
-import { SkillsPanel } from '@renderer/components/cowork/SkillsPanel'
 import { FileTreePanel } from '@renderer/components/cowork/FileTreePanel'
 import { SshFileExplorer } from '@renderer/components/ssh/SshFileExplorer'
 import { TeamPanel } from '@renderer/components/cowork/TeamPanel'
@@ -255,7 +254,7 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
   const [isHoveringButton, setIsHoveringButton] = useState(false)
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  const handleButtonMouseEnter = () => {
+  const handleButtonMouseEnter = (): void => {
     if (rightPanelOpen) return
     if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
     hoverTimeoutRef.current = setTimeout(() => {
@@ -263,7 +262,7 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
     }, 150)
   }
 
-  const handleButtonMouseLeave = () => {
+  const handleButtonMouseLeave = (): void => {
     if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
     hoverTimeoutRef.current = setTimeout(() => {
       setIsHoveringButton(false)
@@ -398,12 +397,6 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
                   {tab === 'context' && (
                     <FadeIn key="context" className="h-full">
                       <ContextPanel />
-                    </FadeIn>
-                  )}
-
-                  {tab === 'skills' && (
-                    <FadeIn key="skills" className="h-full">
-                      <SkillsPanel />
                     </FadeIn>
                   )}
 

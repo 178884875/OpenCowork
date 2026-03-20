@@ -511,9 +511,14 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
           ui.setRightPanelOpen(true)
           return
         }
-        const tabs: Array<
-          'steps' | 'plan' | 'team' | 'files' | 'artifacts' | 'context' | 'skills'
-        > = ['steps', 'plan', 'team', 'files', 'artifacts', 'context', 'skills']
+        const tabs: Array<'steps' | 'plan' | 'team' | 'files' | 'artifacts' | 'context'> = [
+          'steps',
+          'plan',
+          'team',
+          'files',
+          'artifacts',
+          'context'
+        ]
         const idx = tabs.indexOf(ui.rightPanelTab)
         ui.setRightPanelTab(tabs[(idx + 1) % tabs.length])
         return

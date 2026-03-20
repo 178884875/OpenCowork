@@ -290,7 +290,7 @@ function ServerConfigPanel({ server }: { server: McpServerConfig }): React.JSX.E
   const isHttp = server.transport === 'sse' || server.transport === 'streamable-http'
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto px-4 py-3">
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto px-4 py-3">
       {/* Header with name + enabled toggle */}
       <div className="flex items-start justify-between mb-4 gap-3">
         <div className="min-w-0">
@@ -923,7 +923,7 @@ export function McpPanel(): React.JSX.Element {
         </div>
 
         {/* Right: Config panel */}
-        <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="flex-1 min-w-0 min-h-0">
           {selectedServer ? (
             <ServerConfigPanel server={selectedServer} />
           ) : (

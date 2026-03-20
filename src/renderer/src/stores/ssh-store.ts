@@ -601,7 +601,7 @@ export const useSshStore = create<SshStore>()((set, get) => ({
     const session: SshSession = {
       id: result.sessionId,
       connectionId,
-      status: 'connecting'
+      status: 'connected'
     }
     set((s) => ({
       sessions: { ...s.sessions, [result.sessionId!]: session },

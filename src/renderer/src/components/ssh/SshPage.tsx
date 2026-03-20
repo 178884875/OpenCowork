@@ -16,6 +16,7 @@ import {
   Loader2
 } from 'lucide-react'
 import { useSshStore, type SshTab } from '@renderer/stores/ssh-store'
+import { IPC } from '@renderer/lib/ipc/channels'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { Button } from '@renderer/components/ui/button'
 import {
@@ -57,21 +58,20 @@ export function SshPage(): React.JSX.Element {
   // Listen for SSH status events
   useEffect(() => {
     const cleanup = window.electron.ipcRenderer.on(
-      'ssh:status',
+      IPC.SSH_STATUS,
       (
         _event: unknown,
         data: { sessionId: string; connectionId: string; status: string; error?: string }
       ) => {
         const store = useSshStore.getState()
-        if (data.status === 'disconnected') {
+        const status = data.status as 'connecting' | 'connected' | 'disconnected' | 'error'
+
+        if (status === 'disconnected') {
           store.removeSession(data.sessionId)
-        } else {
-          store.updateSessionStatus(
-            data.sessionId,
-            data.status as 'connecting' | 'connected' | 'disconnected' | 'error',
-            data.error
-          )
+          return
         }
+
+        store.updateSessionStatus(data.sessionId, status, data.error)
       }
     )
     return () => {

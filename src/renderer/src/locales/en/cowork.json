@@ -90,6 +90,7 @@
     "insertPath": "Insert path into chat",
     "closePreview": "Close preview",
     "unableToRead": "(Unable to read file)",
+    "empty": "Empty folder",
     "stats": "{{folders}} folders · {{files}} files"
   },
   "teammateCard": {

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { confirm } from '@renderer/components/ui/confirm-dialog'
 import {
@@ -105,6 +105,49 @@ function sortEntries(entries: FileEntry[]): FileEntry[] {
   })
 }
 
+function countTreeStats(nodes: TreeNode[]): { folders: number; files: number } {
+  return nodes.reduce(
+    (acc, node) => {
+      if (node.type === 'directory') {
+        acc.folders += 1
+        if (node.children?.length) {
+          const childStats = countTreeStats(node.children)
+          acc.folders += childStats.folders
+          acc.files += childStats.files
+        }
+      } else {
+        acc.files += 1
+      }
+      return acc
+    },
+    { folders: 0, files: 0 }
+  )
+}
+
+function collapseTree(nodes: TreeNode[]): TreeNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    expanded: false,
+    children: node.children ? collapseTree(node.children) : node.children
+  }))
+}
+
+function DepthGuides({ depth }: { depth: number }): React.JSX.Element | null {
+  if (depth <= 0) return null
+
+  return (
+    <div className="absolute inset-y-0 left-0 pointer-events-none">
+      {Array.from({ length: depth }).map((_, index) => (
+        <span
+          key={index}
+          className="absolute inset-y-0 w-px bg-border/50"
+          style={{ left: `${index * 14 + 9}px` }}
+        />
+      ))}
+    </div>
+  )
+}
+
 // --- Tree Node Component ---
 
 // --- Inline input for rename / new item ---
@@ -177,6 +220,7 @@ interface TreeActions {
 function TreeItem({
   node,
   depth,
+  activePath,
   onToggle,
   onCopyPath,
   onPreview,
@@ -185,6 +229,7 @@ function TreeItem({
 }: {
   node: TreeNode
   depth: number
+  activePath: string | null
   onToggle: (path: string) => void
   onCopyPath: (path: string) => void
   onPreview: (path: string, name: string) => void
@@ -201,6 +246,7 @@ function TreeItem({
     newItemType: 'file' as const
   }
   const isRenaming = safeEditState.renamingPath === node.path
+  const isActive = activePath === node.path
 
   const handleCopy = useCallback(() => {
     onCopyPath(node.path)
@@ -211,13 +257,26 @@ function TreeItem({
   const rowContent = (
     <div
       className={cn(
-        'group flex items-center gap-1 py-[1px] pr-2 text-[12px] cursor-pointer rounded-sm hover:bg-muted/60 transition-colors',
+        'group relative flex items-center gap-1 py-1 pr-2 text-[12px] cursor-pointer rounded-md transition-colors',
+        isActive
+          ? 'bg-primary/10 text-foreground ring-1 ring-primary/20'
+          : isDir && node.expanded
+            ? 'bg-muted/40'
+            : 'hover:bg-muted/60',
         isIgnored && 'opacity-40'
       )}
       style={{ paddingLeft: `${depth * 14 + 4}px` }}
       onClick={() => (isDir && !isIgnored ? onToggle(node.path) : onPreview(node.path, node.name))}
       title={node.path}
     >
+      <DepthGuides depth={depth} />
+      {depth > 0 && (
+        <span
+          className="absolute top-1/2 h-px w-2 bg-border/60 pointer-events-none"
+          style={{ left: `${(depth - 1) * 14 + 9}px` }}
+        />
+      )}
+
       {/* Expand chevron */}
       {isDir ? (
         node.expanded ? (
@@ -356,18 +415,29 @@ function TreeItem({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            {node.children?.map((child) => (
-              <TreeItem
-                key={child.path}
-                node={child}
-                depth={depth + 1}
-                onToggle={onToggle}
-                onCopyPath={onCopyPath}
-                onPreview={onPreview}
-                editState={editState}
-                actions={actions}
-              />
-            ))}
+            {node.children?.length ? (
+              node.children.map((child) => (
+                <TreeItem
+                  key={child.path}
+                  node={child}
+                  depth={depth + 1}
+                  activePath={activePath}
+                  onToggle={onToggle}
+                  onCopyPath={onCopyPath}
+                  onPreview={onPreview}
+                  editState={editState}
+                  actions={actions}
+                />
+              ))
+            ) : (
+              <div
+                className="relative py-1 pl-8 text-[11px] text-muted-foreground/45"
+                style={{ paddingLeft: `${(depth + 1) * 14 + 18}px` }}
+              >
+                <DepthGuides depth={depth + 1} />
+                <span className="relative">{t('fileTree.empty')}</span>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -383,6 +453,7 @@ export function FileTreePanel(): React.JSX.Element {
   const activeSessionId = useChatStore((s) => s.activeSessionId)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const workingFolder = activeSession?.workingFolder
+  const previewPanelState = useUIStore((s) => s.previewPanelState)
 
   const [tree, setTree] = useState<TreeNode[]>([])
   const [loading, setLoading] = useState(false)
@@ -621,6 +692,9 @@ export function FileTreePanel(): React.JSX.Element {
 
   const handleNewItemCancel = useCallback(() => setNewItemParent(null), [])
 
+  const activePath = previewPanelState?.source === 'file' ? previewPanelState.filePath : null
+  const treeStats = useMemo(() => countTreeStats(tree), [tree])
+
   const editState: TreeEditState = { renamingPath, newItemParent, newItemType }
   const treeActions: TreeActions = {
     onDelete: handleDelete,
@@ -634,8 +708,11 @@ export function FileTreePanel(): React.JSX.Element {
   }
 
   const handlePreview = useCallback((filePath: string) => {
-    // Open file in unified preview panel
     useUIStore.getState().openFilePreview(filePath)
+  }, [])
+
+  const handleCollapseAll = useCallback(() => {
+    setTree((current) => collapseTree(current))
   }, [])
 
   if (!workingFolder) {
@@ -649,63 +726,85 @@ export function FileTreePanel(): React.JSX.Element {
 
   return (
     <div className="space-y-2">
-      {/* Header */}
-      <div className="flex items-center gap-2">
-        <FolderOpen className="size-3.5 text-amber-400 shrink-0" />
-        <span className="text-xs text-muted-foreground truncate flex-1" title={workingFolder}>
-          {workingFolder.split(/[\\/]/).pop()}
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-5"
-          onClick={loadRoot}
-          disabled={loading}
-          title={t('action.refresh', { ns: 'common' })}
-        >
-          <RefreshCw className={cn('size-3', loading && 'animate-spin')} />
-        </Button>
+      <div className="rounded-lg border border-border/60 bg-background/60 overflow-hidden">
+        <div className="flex items-center gap-2 px-2 py-2 border-b border-border/50 bg-muted/20">
+          <FolderOpen className="size-3.5 text-amber-400 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs text-foreground truncate" title={workingFolder}>
+              {workingFolder.split(/[\\/]/).pop()}
+            </div>
+            <div className="text-[10px] text-muted-foreground truncate" title={workingFolder}>
+              {workingFolder}
+            </div>
+          </div>
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <span className="rounded bg-muted px-1.5 py-0.5">
+              {treeStats.folders} {t('unit.folders', { ns: 'common' })}
+            </span>
+            <span className="rounded bg-muted px-1.5 py-0.5">
+              {treeStats.files} {t('unit.files', { ns: 'common' })}
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6"
+            onClick={handleCollapseAll}
+            disabled={tree.length === 0}
+            title={t('action.showLess', { ns: 'common' })}
+          >
+            <ChevronDown className="size-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6"
+            onClick={loadRoot}
+            disabled={loading}
+            title={t('action.refresh', { ns: 'common' })}
+          >
+            <RefreshCw className={cn('size-3', loading && 'animate-spin')} />
+          </Button>
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-destructive">
+            <AlertCircle className="size-3 shrink-0" />
+            <span className="truncate">{error}</span>
+          </div>
+        )}
+
+        {loading && tree.length === 0 ? (
+          <div className="flex items-center justify-center py-4">
+            <RefreshCw className="size-4 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="text-[12px] max-h-[calc(100vh-200px)] overflow-y-auto px-1 py-1">
+            {tree.map((node) => (
+              <TreeItem
+                key={node.path}
+                node={node}
+                depth={0}
+                activePath={activePath}
+                onToggle={handleToggle}
+                onCopyPath={handleCopyPath}
+                onPreview={handlePreview}
+                editState={editState}
+                actions={treeActions}
+              />
+            ))}
+          </div>
+        )}
+
+        {tree.length > 0 && (
+          <div className="border-t border-border/50 px-2 py-1 text-[10px] text-muted-foreground/70">
+            {t('fileTree.stats', {
+              folders: treeStats.folders,
+              files: treeStats.files
+            })}
+          </div>
+        )}
       </div>
-
-      {/* Error */}
-      {error && (
-        <div className="flex items-center gap-1.5 text-[11px] text-destructive px-1">
-          <AlertCircle className="size-3 shrink-0" />
-          <span className="truncate">{error}</span>
-        </div>
-      )}
-
-      {/* Tree */}
-      {loading && tree.length === 0 ? (
-        <div className="flex items-center justify-center py-4">
-          <RefreshCw className="size-4 animate-spin text-muted-foreground" />
-        </div>
-      ) : (
-        <div className="text-[12px] max-h-[calc(100vh-200px)] overflow-y-auto">
-          {tree.map((node) => (
-            <TreeItem
-              key={node.path}
-              node={node}
-              depth={0}
-              onToggle={handleToggle}
-              onCopyPath={handleCopyPath}
-              onPreview={handlePreview}
-              editState={editState}
-              actions={treeActions}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Stats */}
-      {tree.length > 0 && (
-        <div className="text-[9px] text-muted-foreground/30 px-1">
-          {t('fileTree.stats', {
-            folders: tree.filter((n) => n.type === 'directory').length,
-            files: tree.filter((n) => n.type === 'file').length
-          })}
-        </div>
-      )}
     </div>
   )
 }

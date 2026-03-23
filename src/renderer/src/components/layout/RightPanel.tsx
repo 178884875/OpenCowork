@@ -253,13 +253,15 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
     setTab(nextTab)
   }
 
+  const [isRailHovered, setIsRailHovered] = useState(false)
+
   return (
     <aside
       className="relative flex h-full shrink-0 z-10 transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
       style={{ 
         width: rightPanelOpen 
           ? targetPanelWidth + RIGHT_PANEL_RAIL_WIDTH 
-          : RIGHT_PANEL_RAIL_SLIM_WIDTH // Base width is slim when closed
+          : (isRailHovered ? RIGHT_PANEL_RAIL_WIDTH : RIGHT_PANEL_RAIL_SLIM_WIDTH)
       }}
     >
       {/* Rail is always visible or serves as the toggle area */}
@@ -269,6 +271,7 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
         onSelectTab={handleSelectTab}
         isOpen={rightPanelOpen}
         onToggle={() => setRightPanelOpen(!rightPanelOpen)}
+        onHoverChange={setIsRailHovered}
       />
 
       {/* Resize Handle */}

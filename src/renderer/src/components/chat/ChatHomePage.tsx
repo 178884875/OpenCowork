@@ -588,7 +588,7 @@ export function ChatHomePage(): React.JSX.Element {
 
         {/* Project selector (only for cowork/code modes) */}
         {mode !== 'chat' && (
-          <div className="mb-4 w-full max-w-3xl flex justify-center">
+          <div className="mx-auto mb-4 w-full max-w-3xl flex justify-center">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="h-8 gap-2 text-xs">
@@ -650,7 +650,7 @@ export function ChatHomePage(): React.JSX.Element {
         )}
 
         {/* Input area */}
-        <div className="w-full max-w-3xl">
+        <div className="mx-auto w-full max-w-3xl">
           <InputArea
             onSend={handleSend}
             onSelectFolder={mode !== 'chat' ? handleOpenFolderDialog : undefined}
@@ -661,7 +661,7 @@ export function ChatHomePage(): React.JSX.Element {
         </div>
 
         {/* Keyboard shortcuts hint */}
-        <div className="mt-4 rounded-xl border bg-muted/30 px-5 py-3">
+        <div className="mx-auto mt-4 w-full max-w-3xl rounded-xl border bg-muted/30 px-5 py-3">
           <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[11px]">
             <div className="flex items-center gap-2">
               <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">

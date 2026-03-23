@@ -8,12 +8,16 @@ import type { RightPanelTab } from '@renderer/stores/ui-store'
 import type { RightPanelTabDef } from './right-panel-defs'
 import { RIGHT_PANEL_RAIL_WIDTH, RIGHT_PANEL_RAIL_SLIM_WIDTH } from './right-panel-defs'
 
+import { usePlanStore } from '@renderer/stores/plan-store'
+import { useChatStore } from '@renderer/stores/chat-store'
+
 interface RightPanelRailProps {
   visibleTabs: RightPanelTabDef[]
   activeTab: RightPanelTab
   onSelectTab: (tab: RightPanelTab) => void
   isOpen: boolean
   onToggle: () => void
+  onHoverChange?: (isHovered: boolean) => void
 }
 
 export function RightPanelRail({
@@ -21,7 +25,8 @@ export function RightPanelRail({
   activeTab,
   onSelectTab,
   isOpen,
-  onToggle
+  onToggle,
+  onHoverChange
 }: RightPanelRailProps): React.JSX.Element {
   const { t } = useTranslation('layout')
   const [isHovered, setIsHovered] = useState(false)
@@ -31,14 +36,23 @@ export function RightPanelRail({
   const handleMouseEnter = () => {
     if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current)
     setIsHovered(true)
+    onHoverChange?.(true)
   }
 
   const handleMouseLeave = () => {
     hoverTimeoutRef.current = setTimeout(() => {
       setIsHovered(false)
+      onHoverChange?.(false)
       setHoveredTab(null)
     }, 300)
   }
+
+  const activeSessionId = useChatStore((s) => s.activeSessionId)
+  const hasUnreadPlan = usePlanStore((s) => {
+    if (!activeSessionId) return false
+    const plan = Object.values(s.plans).find((p) => p.sessionId === activeSessionId)
+    return plan && plan.status === 'pending'
+  })
 
   // Determine if we should show full rail or slim rail
   const showFullRail = isOpen || isHovered
@@ -55,11 +69,12 @@ export function RightPanelRail({
     >
       <div className={cn(
         "flex flex-1 flex-col items-center gap-4 transition-opacity duration-300",
-        !showFullRail && "opacity-0 pointer-events-none"
+        !showFullRail && "opacity-0"
       )}>
         {visibleTabs.map((tabDef) => {
           const Icon = tabDef.icon
           const isActive = tabDef.value === activeTab
+          const showDot = tabDef.value === 'plan' && hasUnreadPlan && !isOpen
 
           return (
             <div
@@ -79,8 +94,12 @@ export function RightPanelRail({
                         : 'text-muted-foreground hover:text-foreground hover:bg-muted/80'
                     )}
                     onClick={() => {
-                      onSelectTab(tabDef.value)
-                      if (!isOpen) onToggle()
+                      if (isActive) {
+                        onToggle()
+                      } else {
+                        onSelectTab(tabDef.value)
+                        if (!isOpen) onToggle()
+                      }
                     }}
                   >
                     <Icon className={cn(
@@ -88,8 +107,13 @@ export function RightPanelRail({
                       isActive ? 'scale-110 rotate-0' : 'group-hover:scale-110 group-hover:rotate-3'
                     )} />
                     
+                    {/* Unread Indicator Dot */}
+                    {showDot && (
+                      <div className="absolute top-1 right-1 size-2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)] animate-pulse z-10" />
+                    )}
+
                     {/* Active Indicator Dot */}
-                    {isActive && (
+                    {isActive && isOpen && (
                       <motion.div 
                         layoutId="activeTabIndicator"
                         className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-4 bg-primary rounded-r-full"
@@ -98,7 +122,7 @@ export function RightPanelRail({
                     )}
 
                     {/* Subtle pulse for active or processing tabs (placeholder logic) */}
-                    {isActive && (
+                    {isActive && isOpen && (
                       <div className="absolute inset-0 bg-primary/5 animate-pulse" />
                     )}
                   </Button>
@@ -115,15 +139,6 @@ export function RightPanelRail({
       {/* Slim indicator when collapsed and not hovered */}
       {!showFullRail && (
         <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 flex flex-col items-center justify-center gap-8 py-10 opacity-40">
-          {visibleTabs.map((tabDef) => (
-            <div 
-              key={tabDef.value} 
-              className={cn(
-                "w-1 rounded-full transition-all duration-300",
-                tabDef.value === activeTab ? "h-6 bg-primary" : "h-1 bg-muted-foreground/50"
-              )} 
-            />
-          ))}
         </div>
       )}
     </div>

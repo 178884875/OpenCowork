@@ -54,6 +54,7 @@ interface SettingsStore {
   toolResultFormat: 'toon' | 'json'
   userName: string
   userAvatar: string
+  conversationGuideSeen: boolean
 
   // Appearance Settings
   backgroundColor: string
@@ -118,6 +119,7 @@ export const useSettingsStore = create<SettingsStore>()(
       toolResultFormat: 'toon',
       userName: '',
       userAvatar: '',
+      conversationGuideSeen: false,
 
       // Appearance Settings
       backgroundColor: '',
@@ -221,6 +223,9 @@ export const useSettingsStore = create<SettingsStore>()(
         if (state.toolResultFormat === undefined) {
           state.toolResultFormat = 'toon'
         }
+        if (state.conversationGuideSeen === undefined) {
+          state.conversationGuideSeen = false
+        }
         return state as unknown as SettingsStore
       },
       partialize: (state) => ({
@@ -246,6 +251,7 @@ export const useSettingsStore = create<SettingsStore>()(
         toolResultFormat: state.toolResultFormat,
         userName: state.userName,
         userAvatar: state.userAvatar,
+        conversationGuideSeen: state.conversationGuideSeen,
         // Appearance Settings
         backgroundColor: state.backgroundColor,
         fontFamily: state.fontFamily,

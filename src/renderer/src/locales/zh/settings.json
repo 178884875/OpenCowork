@@ -560,6 +560,55 @@
     "allowSubAgentsDesc": "允许使用 Task 等子代理工具",
     "custom": "自定义",
     "wsUrl": "WS 中继地址",
+    "feishu": {
+      "appId": "飞书 App ID",
+      "appSecret": "飞书 App Secret"
+    },
+    "dingtalk": {
+      "appKey": "钉钉 App Key",
+      "appSecret": "钉钉 App Secret",
+      "cardTemplateId": "钉钉卡片模板 ID"
+    },
+    "wecom": {
+      "corpId": "企业微信 Corp ID",
+      "secret": "企业微信 Secret",
+      "agentId": "企业微信 Agent ID"
+    },
+    "qq": {
+      "appId": "QQ App ID",
+      "clientSecret": "QQ Client Secret",
+      "useSandbox": "QQ 沙箱开关",
+      "markdownSupport": "QQ Markdown 开关"
+    },
+    "telegram": {
+      "botToken": "Telegram Bot Token"
+    },
+    "discord": {
+      "botToken": "Discord Bot Token"
+    },
+    "whatsapp": {
+      "phoneNumberId": "WhatsApp Phone Number ID",
+      "accessToken": "WhatsApp Access Token"
+    },
+    "weixin": {
+      "baseUrl": "微信网关地址",
+      "routeTag": "SKRouteTag",
+      "token": "微信 Token",
+      "accountId": "微信账号 ID",
+      "userId": "微信用户 ID",
+      "binding": "微信绑定",
+      "bound": "已绑定官方微信账号",
+      "unbound": "未绑定官方微信账号",
+      "bindingDesc": "通过扫码获取 token，并启用长轮询收发消息。",
+      "bind": "绑定微信",
+      "rebind": "重新绑定",
+      "bindingInProgress": "绑定中...",
+      "baseUrlMissing": "请先填写微信网关地址",
+      "loginStarting": "正在生成二维码...",
+      "scanHint": "请使用微信扫码确认",
+      "loginSuccess": "微信绑定成功",
+      "loginFailed": "微信绑定失败"
+    },
     "toolsDesc": {
       "PluginSendMessage": "通过频道发送消息",
       "PluginReplyMessage": "通过频道回复指定消息",
@@ -607,6 +656,25 @@
     "qq": {
       "appId": "App ID",
       "clientSecret": "Client Secret"
+    },
+    "weixin": {
+      "baseUrl": "微信网关地址",
+      "routeTag": "SKRouteTag",
+      "token": "微信 Token",
+      "accountId": "微信账号 ID",
+      "userId": "微信用户 ID",
+      "binding": "微信绑定",
+      "bound": "已绑定官方微信账号",
+      "unbound": "未绑定官方微信账号",
+      "bindingDesc": "通过扫码获取 token，并启用长轮询收发消息。",
+      "bind": "绑定微信",
+      "rebind": "重新绑定",
+      "bindingInProgress": "绑定中...",
+      "baseUrlMissing": "请先填写微信网关地址",
+      "loginStarting": "正在生成二维码...",
+      "scanHint": "请使用微信扫码确认",
+      "loginSuccess": "微信绑定成功",
+      "loginFailed": "微信绑定失败"
     }
   },
   "mcp": {

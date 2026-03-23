@@ -99,6 +99,22 @@ export function WeComIcon(props: SVGProps<SVGSVGElement>): React.JSX.Element {
   )
 }
 
+export function WechatIcon(props: SVGProps<SVGSVGElement>): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
+      <circle cx="24" cy="24" r="24" fill="#07C160" />
+      <path
+        d="M19.8 14.5c-6.1 0-11.05 4.3-11.05 9.6 0 2.98 1.58 5.6 4.05 7.37l-1.05 3.98 4.55-2.3c1.13.3 2.3.47 3.5.47.43 0 .86-.02 1.28-.07-.78-1.22-1.2-2.6-1.2-4.07 0-5.3 4.95-9.6 11.05-9.6.32 0 .63.01.94.04-1.65-3.24-5.54-5.42-10.07-5.42Zm-4.15 7.55a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Zm8.35 0a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Z"
+        fill="#fff"
+      />
+      <path
+        d="M31.45 22.15c-4.85 0-8.8 3.35-8.8 7.48 0 4.12 3.95 7.47 8.8 7.47.98 0 1.93-.14 2.8-.42l4.2 2.1-1.18-3.47c1.92-1.36 3.08-3.41 3.08-5.68 0-4.13-3.95-7.48-8.9-7.48Zm-2.95 4.25a1.05 1.05 0 1 1 0-2.1 1.05 1.05 0 0 1 0 2.1Zm5.95 0a1.05 1.05 0 1 1 0-2.1 1.05 1.05 0 0 1 0 2.1Z"
+        fill="#fff"
+      />
+    </svg>
+  )
+}
+
 export function QQIcon(props: SVGProps<SVGSVGElement>): React.JSX.Element {
   return (
     <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>

@@ -560,6 +560,55 @@
     "allowSubAgentsDesc": "Allow using Task and other sub-agent tools",
     "custom": "Custom",
     "wsUrl": "WS Relay URL",
+    "feishu": {
+      "appId": "Feishu App ID",
+      "appSecret": "Feishu App Secret"
+    },
+    "dingtalk": {
+      "appKey": "DingTalk App Key",
+      "appSecret": "DingTalk App Secret",
+      "cardTemplateId": "DingTalk Card Template ID"
+    },
+    "wecom": {
+      "corpId": "WeCom Corp ID",
+      "secret": "WeCom Secret",
+      "agentId": "WeCom Agent ID"
+    },
+    "qq": {
+      "appId": "QQ App ID",
+      "clientSecret": "QQ Client Secret",
+      "useSandbox": "QQ Sandbox",
+      "markdownSupport": "QQ Markdown Support"
+    },
+    "telegram": {
+      "botToken": "Telegram Bot Token"
+    },
+    "discord": {
+      "botToken": "Discord Bot Token"
+    },
+    "whatsapp": {
+      "phoneNumberId": "WhatsApp Phone Number ID",
+      "accessToken": "WhatsApp Access Token"
+    },
+    "weixin": {
+      "baseUrl": "Weixin Gateway URL",
+      "routeTag": "SKRouteTag",
+      "token": "Weixin Token",
+      "accountId": "Weixin Account ID",
+      "userId": "Weixin User ID",
+      "binding": "Weixin Binding",
+      "bound": "Official Weixin account bound",
+      "unbound": "Official Weixin account not bound",
+      "bindingDesc": "Bind by QR code, then use long polling for inbound and outbound messages.",
+      "bind": "Bind Weixin",
+      "rebind": "Rebind",
+      "bindingInProgress": "Binding...",
+      "baseUrlMissing": "Please fill in the Weixin gateway URL first",
+      "loginStarting": "Generating QR code...",
+      "scanHint": "Please scan and confirm in Weixin",
+      "loginSuccess": "Weixin binding successful",
+      "loginFailed": "Weixin binding failed"
+    },
     "toolsDesc": {
       "PluginSendMessage": "Send a message via the channle",
       "PluginReplyMessage": "Reply to a specific message via the channle",
@@ -607,6 +656,25 @@
     "qq": {
       "appId": "App ID",
       "clientSecret": "Client Secret"
+    },
+    "weixin": {
+      "baseUrl": "Weixin Gateway URL",
+      "routeTag": "SKRouteTag",
+      "token": "Weixin Token",
+      "accountId": "Weixin Account ID",
+      "userId": "Weixin User ID",
+      "binding": "Weixin Binding",
+      "bound": "Official Weixin account bound",
+      "unbound": "Official Weixin account not bound",
+      "bindingDesc": "Bind by QR code, then use long polling for inbound and outbound messages.",
+      "bind": "Bind Weixin",
+      "rebind": "Rebind",
+      "bindingInProgress": "Binding...",
+      "baseUrlMissing": "Please fill in the Weixin gateway URL first",
+      "loginStarting": "Generating QR code...",
+      "scanHint": "Please scan and confirm in Weixin",
+      "loginSuccess": "Weixin binding successful",
+      "loginFailed": "Weixin binding failed"
     }
   },
   "mcp": {

@@ -14,9 +14,33 @@ import type {
   ChannelEvent,
   ChannelProviderDescriptor
 } from '../channels/channel-types'
+import {
+  startWeixinLoginWithQr,
+  waitForWeixinLogin,
+  DEFAULT_WEIXIN_BASE_URL
+} from '../channels/providers/weixin/weixin-login'
 
 const DATA_DIR = path.join(os.homedir(), '.open-cowork')
 const PLUGINS_FILE = path.join(DATA_DIR, 'plugins.json')
+
+async function normalizeQrDisplayUrl(url?: string): Promise<string | undefined> {
+  const value = url?.trim()
+  if (!value) return undefined
+  if (value.startsWith('data:')) return value
+  if (!/^https?:\/\//i.test(value)) return value
+
+  try {
+    const response = await fetch(value)
+    if (!response.ok) {
+      return value
+    }
+    const contentType = response.headers.get('content-type') || 'image/png'
+    const buffer = Buffer.from(await response.arrayBuffer())
+    return `data:${contentType};base64,${buffer.toString('base64')}`
+  } catch {
+    return value
+  }
+}
 
 // ── Persistence helpers ──
 
@@ -102,6 +126,68 @@ export function registerChannelHandlers(channelManager: ChannelManager): void {
     return CHANNEL_PROVIDERS
   })
 
+  ipcMain.handle(
+    'plugin:weixin:login-start',
+    async (
+      _event,
+      args: {
+        pluginId: string
+        baseUrl?: string
+        routeTag?: string
+        accountId?: string
+        force?: boolean
+      }
+    ) => {
+      try {
+        const result = await startWeixinLoginWithQr({
+          accountId: args.accountId,
+          apiBaseUrl: args.baseUrl || DEFAULT_WEIXIN_BASE_URL,
+          routeTag: args.routeTag,
+          force: args.force
+        })
+        return {
+          qrDataUrl: await normalizeQrDisplayUrl(result.qrcodeUrl),
+          qrUrl: result.qrcodeUrl,
+          message: result.message,
+          sessionKey: result.sessionKey
+        }
+      } catch (err) {
+        return {
+          message: err instanceof Error ? err.message : String(err),
+          sessionKey: args.accountId || ''
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'plugin:weixin:login-wait',
+    async (
+      _event,
+      args: {
+        pluginId: string
+        baseUrl?: string
+        routeTag?: string
+        sessionKey: string
+        timeoutMs?: number
+      }
+    ) => {
+      try {
+        return await waitForWeixinLogin({
+          sessionKey: args.sessionKey,
+          apiBaseUrl: args.baseUrl || DEFAULT_WEIXIN_BASE_URL,
+          routeTag: args.routeTag,
+          timeoutMs: args.timeoutMs
+        })
+      } catch (err) {
+        return {
+          connected: false,
+          message: err instanceof Error ? err.message : String(err)
+        }
+      }
+    }
+  )
+
   // List persisted plugin instances (auto-provisions built-in plugins)
   ipcMain.handle('plugin:list', () => {
     const plugins = readPlugins()
@@ -113,7 +199,10 @@ export function registerChannelHandlers(channelManager: ChannelManager): void {
       if (!existing) {
         const config: Record<string, string> = {}
         for (const field of descriptor.configSchema) {
-          config[field.key] = ''
+          config[field.key] =
+            descriptor.type === 'weixin-official' && field.key === 'baseUrl'
+              ? DEFAULT_WEIXIN_BASE_URL
+              : ''
         }
         plugins.push({
           id: nanoid(),
@@ -127,10 +216,15 @@ export function registerChannelHandlers(channelManager: ChannelManager): void {
           tools: buildToolsMap(descriptor)
         })
         changed = true
-      } else if (!existing.builtin) {
-        // Mark existing plugin as builtin if it matches a built-in type
-        existing.builtin = true
-        changed = true
+      } else {
+        if (!existing.builtin) {
+          existing.builtin = true
+          changed = true
+        }
+        if (existing.name !== descriptor.displayName) {
+          existing.name = descriptor.displayName
+          changed = true
+        }
       }
     }
 
@@ -141,9 +235,16 @@ export function registerChannelHandlers(channelManager: ChannelManager): void {
       const schemaKeys = new Set(desc.configSchema.map((f) => f.key))
       for (const field of desc.configSchema) {
         if (!(field.key in p.config)) {
-          p.config[field.key] = ''
+          p.config[field.key] =
+            desc.type === 'weixin-official' && field.key === 'baseUrl'
+              ? DEFAULT_WEIXIN_BASE_URL
+              : ''
           changed = true
         }
+      }
+      if (desc.type === 'weixin-official' && !p.config.baseUrl) {
+        p.config.baseUrl = DEFAULT_WEIXIN_BASE_URL
+        changed = true
       }
       // Remove config keys that are no longer in the schema
       for (const key of Object.keys(p.config)) {

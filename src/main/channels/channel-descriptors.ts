@@ -152,6 +152,48 @@ export const CHANNEL_PROVIDERS: ChannelProviderDescriptor[] = [
       }
     ]
   },
+  {
+    type: 'weixin-official',
+    displayName: '官方微信',
+    description: '官方微信绑定渠道（扫码登录 + 长轮询）',
+    icon: 'wechat',
+    builtin: true,
+    tools: COMMON_PLUGIN_TOOLS,
+    configSchema: [
+      {
+        key: 'baseUrl',
+        label: 'channel.weixin.baseUrl',
+        type: 'text',
+        required: false,
+        placeholder: 'https://ilinkai.weixin.qq.com'
+      },
+      {
+        key: 'routeTag',
+        label: 'channel.weixin.routeTag',
+        type: 'text',
+        required: false,
+        placeholder: 'optional'
+      },
+      {
+        key: 'token',
+        label: 'channel.weixin.token',
+        type: 'secret',
+        required: false
+      },
+      {
+        key: 'accountId',
+        label: 'channel.weixin.accountId',
+        type: 'text',
+        required: false
+      },
+      {
+        key: 'userId',
+        label: 'channel.weixin.userId',
+        type: 'text',
+        required: false
+      }
+    ]
+  },
   // ── International ──
   {
     type: 'telegram-bot',

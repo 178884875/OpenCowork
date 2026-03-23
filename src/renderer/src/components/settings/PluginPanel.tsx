@@ -32,8 +32,11 @@ import {
   DiscordIcon,
   WhatsAppIcon,
   WeComIcon,
-  QQIcon
+  QQIcon,
+  WechatIcon
 } from '@renderer/components/icons/plugin-icons'
+import { ipcClient } from '@renderer/lib/ipc/ipc-client'
+import { IPC } from '@renderer/lib/ipc/channels'
 
 // ─── Channel Icon Helper ───
 
@@ -44,7 +47,8 @@ const CHANNEL_ICON_COMPONENTS: Record<string, React.FC<React.SVGProps<SVGSVGElem
   discord: DiscordIcon,
   whatsapp: WhatsAppIcon,
   wecom: WeComIcon,
-  qq: QQIcon
+  qq: QQIcon,
+  wechat: WechatIcon
 }
 
 export const ChannelSettingsPanel = ChannelPanel
@@ -114,6 +118,10 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
     plugin.permissions ?? DEFAULT_PLUGIN_PERMISSIONS
   )
   const [newReadPath, setNewReadPath] = useState('')
+  const [weixinQrUrl, setWeixinQrUrl] = useState('')
+  const [weixinSessionKey, setWeixinSessionKey] = useState('')
+  const [weixinLoginPending, setWeixinLoginPending] = useState(false)
+  const [weixinLoginMessage, setWeixinLoginMessage] = useState('')
 
   // Refresh status on mount
   useEffect(() => {
@@ -218,6 +226,84 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
     }, {})
   }, [])
   const toolsList = descriptor?.tools ?? []
+  const isWeixinOfficial = plugin.type === 'weixin-official'
+
+  const handleWeixinBind = useCallback(async () => {
+    const baseUrl = (localConfig.baseUrl || 'https://ilinkai.weixin.qq.com').trim()
+
+    setWeixinLoginPending(true)
+    setWeixinLoginMessage(t('channel.weixin.loginStarting', '正在生成二维码...'))
+    setWeixinQrUrl('')
+    setWeixinSessionKey('')
+
+    try {
+      const startResult = (await ipcClient.invoke(IPC.PLUGIN_WEIXIN_LOGIN_START, {
+        pluginId: plugin.id,
+        baseUrl,
+        routeTag: (localConfig.routeTag || '').trim() || undefined,
+        accountId: (localConfig.accountId || '').trim() || undefined,
+        force: true
+      })) as {
+        qrDataUrl?: string
+        qrUrl?: string
+        message: string
+        sessionKey: string
+      }
+
+      if ((!startResult?.qrDataUrl && !startResult?.qrUrl) || !startResult.sessionKey) {
+        throw new Error(startResult?.message || '无法获取二维码')
+      }
+
+      setWeixinQrUrl(startResult.qrDataUrl || startResult.qrUrl || '')
+      setWeixinSessionKey(startResult.sessionKey)
+      setWeixinLoginMessage(
+        startResult.message || t('channel.weixin.scanHint', '请使用微信扫码确认')
+      )
+
+      const waitResult = (await ipcClient.invoke(IPC.PLUGIN_WEIXIN_LOGIN_WAIT, {
+        pluginId: plugin.id,
+        baseUrl,
+        routeTag: (localConfig.routeTag || '').trim() || undefined,
+        sessionKey: startResult.sessionKey,
+        accountId: (localConfig.accountId || '').trim() || undefined,
+        timeoutMs: 480000
+      })) as {
+        connected: boolean
+        message: string
+        token?: string
+        accountId?: string
+        userId?: string
+        baseUrl?: string
+      }
+
+      setWeixinLoginMessage(waitResult.message)
+
+      if (!waitResult.connected || !waitResult.token) {
+        throw new Error(waitResult.message || '微信绑定失败')
+      }
+
+      const nextConfig = {
+        ...localConfig,
+        baseUrl: waitResult.baseUrl || baseUrl,
+        token: waitResult.token,
+        accountId: waitResult.accountId || localConfig.accountId || '',
+        userId: waitResult.userId || localConfig.userId || ''
+      }
+      setLocalConfig(nextConfig)
+      await updateChannel(plugin.id, { config: nextConfig, enabled: true })
+      toast.success(t('channel.weixin.loginSuccess', '微信绑定成功'))
+      const err = await startChannel(plugin.id)
+      if (err) {
+        toast.error(t('channel.error', 'Error'), { description: err })
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setWeixinLoginMessage(message)
+      toast.error(t('channel.weixin.loginFailed', '微信绑定失败'), { description: message })
+    } finally {
+      setWeixinLoginPending(false)
+    }
+  }, [localConfig, plugin.id, startChannel, t, updateChannel])
 
   return (
     <div className="flex flex-col h-full overflow-y-auto px-4 py-3">
@@ -646,6 +732,57 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
       </section>
 
       <Separator className="mb-4" />
+
+      {isWeixinOfficial && (
+        <>
+          <section className="space-y-2 mb-4">
+            <label className="text-xs font-medium">{t('channel.weixin.binding', '微信绑定')}</label>
+            <div className="rounded-md border p-3 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs">
+                    {localConfig.token
+                      ? t('channel.weixin.bound', '已绑定官方微信账号')
+                      : t('channel.weixin.unbound', '未绑定官方微信账号')}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {t('channel.weixin.bindingDesc', '通过扫码获取 token，并启用长轮询收发消息。')}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => void handleWeixinBind()}
+                  disabled={weixinLoginPending}
+                >
+                  {weixinLoginPending
+                    ? t('channel.weixin.bindingInProgress', '绑定中...')
+                    : localConfig.token
+                      ? t('channel.weixin.rebind', '重新绑定')
+                      : t('channel.weixin.bind', '绑定微信')}
+                </Button>
+              </div>
+              {weixinLoginMessage && (
+                <p className="text-[10px] text-muted-foreground">{weixinLoginMessage}</p>
+              )}
+              {weixinQrUrl && (
+                <div className="space-y-2">
+                  <div className="rounded-md border bg-white p-3 flex justify-center">
+                    <img src={weixinQrUrl} alt="Weixin QR" className="size-44 object-contain" />
+                  </div>
+                  {weixinSessionKey && (
+                    <p className="text-[10px] text-muted-foreground font-mono break-all">
+                      session: {weixinSessionKey}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+          <Separator className="mb-4" />
+        </>
+      )}
       <section className="space-y-3 mb-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -738,7 +875,10 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
 // ─── Category grouping for built-in plugins ───
 
 const PLUGIN_CATEGORIES: { label: string; types: string[] }[] = [
-  { label: 'China', types: ['feishu-bot', 'dingtalk-bot', 'wecom-bot', 'qq-bot'] },
+  {
+    label: 'China',
+    types: ['feishu-bot', 'dingtalk-bot', 'wecom-bot', 'qq-bot', 'weixin-official']
+  },
   { label: 'International', types: ['telegram-bot', 'discord-bot', 'whatsapp-bot'] }
 ]
 
@@ -819,6 +959,8 @@ export function ChannelPanel(): React.JSX.Element {
                   </p>
                   {categoryPlugins.map((p) => {
                     const status = channelStatuses[p.id] ?? 'stopped'
+                    const descriptor = getDescriptor(p.type)
+                    const displayName = p.builtin ? (descriptor?.displayName ?? p.name) : p.name
                     return (
                       <div
                         key={p.id}
@@ -832,12 +974,9 @@ export function ChannelPanel(): React.JSX.Element {
                         onClick={() => setSelectedChannel(p.id)}
                       >
                         <span className={p.enabled ? '' : 'opacity-40'}>
-                          <ChannelIcon
-                            icon={getDescriptor(p.type)?.icon ?? ''}
-                            className="size-4"
-                          />
+                          <ChannelIcon icon={descriptor?.icon ?? ''} className="size-4" />
                         </span>
-                        <span className="flex-1 truncate text-xs">{p.name}</span>
+                        <span className="flex-1 truncate text-xs">{displayName}</span>
                         {p.enabled && (
                           <span
                             className={`size-1.5 rounded-full shrink-0 ${

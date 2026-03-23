@@ -962,7 +962,10 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
                                 </TooltipContent>
                               </Tooltip>
                             )}
-                            <div className="flex items-center gap-0.5 rounded-lg border border-border/50 bg-background/95 p-0.5 shadow-md backdrop-blur-sm">
+                            <div
+                              data-tour="mode-switch"
+                              className="flex items-center gap-0.5 rounded-lg border border-border/50 bg-background/95 p-0.5 shadow-md backdrop-blur-sm"
+                            >
                               {modes.map((m, i) => (
                                 <Tooltip key={m.value}>
                                   <TooltipTrigger asChild>

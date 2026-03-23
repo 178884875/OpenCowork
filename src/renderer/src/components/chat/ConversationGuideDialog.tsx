@@ -26,7 +26,10 @@ interface RectState {
 }
 
 const PADDING = 10
-const CARD_WIDTH = 340
+const VIEWPORT_MARGIN = 16
+const CARD_WIDTH = 320
+const CARD_MIN_WIDTH = 280
+const CARD_ESTIMATED_HEIGHT = 300
 
 export function ConversationGuideDialog({
   open,
@@ -42,6 +45,12 @@ export function ConversationGuideDialog({
 
   const steps = React.useMemo<TourStep[]>(
     () => [
+      {
+        key: 'modeSwitch',
+        selector: '[data-tour="mode-switch"]',
+        title: t('guide.steps.modeSwitch.title'),
+        description: t('guide.steps.modeSwitch.description')
+      },
       {
         key: 'leftSidebar',
         selector: '[data-tour="left-sidebar"]',
@@ -134,31 +143,66 @@ export function ConversationGuideDialog({
 
   const viewportWidth = window.innerWidth
   const viewportHeight = window.innerHeight
+  const safeCardWidth = Math.max(
+    CARD_MIN_WIDTH,
+    Math.min(CARD_WIDTH, viewportWidth - VIEWPORT_MARGIN * 2)
+  )
+
+  const clampLeft = (left: number): number => {
+    return Math.min(
+      Math.max(VIEWPORT_MARGIN, left),
+      Math.max(VIEWPORT_MARGIN, viewportWidth - safeCardWidth - VIEWPORT_MARGIN)
+    )
+  }
+
+  const clampTop = (top: number): number => {
+    return Math.min(
+      Math.max(VIEWPORT_MARGIN, top),
+      Math.max(VIEWPORT_MARGIN, viewportHeight - CARD_ESTIMATED_HEIGHT - VIEWPORT_MARGIN)
+    )
+  }
 
   const cardStyle = (() => {
     if (!targetRect) {
       return {
-        top: Math.max(24, viewportHeight / 2 - 140),
-        left: Math.max(24, viewportWidth / 2 - CARD_WIDTH / 2),
-        width: Math.min(CARD_WIDTH, viewportWidth - 48)
+        top: clampTop(viewportHeight / 2 - 140),
+        left: clampLeft(viewportWidth / 2 - safeCardWidth / 2),
+        width: safeCardWidth
       }
     }
 
-    const preferRight = targetRect.left + targetRect.width + CARD_WIDTH + 32 < viewportWidth
-    const preferLeft = targetRect.left - CARD_WIDTH - 24 > 0
-    const top = Math.min(Math.max(24, targetRect.top), Math.max(24, viewportHeight - 260))
+    const preferRight = targetRect.left + targetRect.width + safeCardWidth + 24 <= viewportWidth
+    const preferLeft = targetRect.left - safeCardWidth - 16 >= VIEWPORT_MARGIN
+    const top = clampTop(targetRect.top)
 
     if (preferRight) {
-      return { top, left: targetRect.left + targetRect.width + 16, width: CARD_WIDTH }
+      return {
+        top,
+        left: clampLeft(targetRect.left + targetRect.width + 16),
+        width: safeCardWidth
+      }
     }
     if (preferLeft) {
-      return { top, left: targetRect.left - CARD_WIDTH - 16, width: CARD_WIDTH }
+      return {
+        top,
+        left: clampLeft(targetRect.left - safeCardWidth - 16),
+        width: safeCardWidth
+      }
     }
 
+    const belowTop = targetRect.top + targetRect.height + 16
+    const aboveTop = targetRect.top - CARD_ESTIMATED_HEIGHT - 16
+    const canPlaceBelow = belowTop + CARD_ESTIMATED_HEIGHT + VIEWPORT_MARGIN <= viewportHeight
+    const canPlaceAbove = aboveTop >= VIEWPORT_MARGIN
+
     return {
-      top: Math.min(targetRect.top + targetRect.height + 16, viewportHeight - 260),
-      left: Math.min(Math.max(24, targetRect.left), Math.max(24, viewportWidth - CARD_WIDTH - 24)),
-      width: Math.min(CARD_WIDTH, viewportWidth - 48)
+      top: canPlaceBelow
+        ? clampTop(belowTop)
+        : canPlaceAbove
+          ? clampTop(aboveTop)
+          : clampTop(viewportHeight / 2 - CARD_ESTIMATED_HEIGHT / 2),
+      left: clampLeft(targetRect.left),
+      width: safeCardWidth
     }
   })()
 
@@ -207,8 +251,12 @@ export function ConversationGuideDialog({
       )}
 
       <div
-        className="absolute rounded-2xl border border-border/60 bg-background p-5 shadow-2xl"
-        style={cardStyle}
+        className="absolute rounded-2xl border border-border/60 bg-background p-4 shadow-2xl sm:p-5"
+        style={{
+          ...cardStyle,
+          maxHeight: `calc(100vh - ${VIEWPORT_MARGIN * 2}px)`,
+          overflowY: 'auto'
+        }}
       >
         <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 px-2 py-0.5 text-violet-600 dark:text-violet-400">
@@ -230,8 +278,8 @@ export function ConversationGuideDialog({
           ))}
         </div>
 
-        <div className="mt-5 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -247,7 +295,7 @@ export function ConversationGuideDialog({
               {t('guide.skip')}
             </Button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <Button
               variant="outline"
               size="sm"

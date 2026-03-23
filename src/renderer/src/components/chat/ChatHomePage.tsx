@@ -339,7 +339,10 @@ export function ChatHomePage(): React.JSX.Element {
     <div className="flex flex-1 flex-col overflow-auto bg-gradient-to-b from-background via-background to-muted/20">
       <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col justify-center px-4 py-8">
         <div className="mb-5 flex justify-center">
-          <div className="flex items-center gap-0.5 rounded-xl border border-border/50 bg-background/95 p-0.5 shadow-md backdrop-blur-sm">
+          <div
+            data-tour="mode-switch"
+            className="flex items-center gap-0.5 rounded-xl border border-border/50 bg-background/95 p-0.5 shadow-md backdrop-blur-sm"
+          >
             {modes.map((m, i) => (
               <Tooltip key={m.value}>
                 <TooltipTrigger asChild>

@@ -82,6 +82,10 @@
     "finish": "Finish",
     "skip": "Skip",
     "steps": {
+      "modeSwitch": {
+        "title": "Switch between Clarify, Cowork, and Code here",
+        "description": "Clarify is for understanding requirements first, Cowork is for general project help, and Code is for direct implementation tasks like editing files and advancing engineering work."
+      },
       "leftSidebar": {
         "title": "This is the project and session area",
         "description": "Your work is organized here as projects and sessions. Use it to switch projects, revisit old sessions, and search earlier context."

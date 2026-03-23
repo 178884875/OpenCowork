@@ -118,7 +118,10 @@ export function TopBar(): React.JSX.Element {
       <SidebarTrigger className="titlebar-no-drag shrink-0 -ml-1" />
       <div className="shrink-0 mr-2" />
 
-      <div className="titlebar-no-drag flex shrink-0 items-center gap-0.5 rounded-lg bg-muted/60 p-0.5">
+      <div
+        data-tour="mode-switch"
+        className="titlebar-no-drag flex shrink-0 items-center gap-0.5 rounded-lg bg-muted/60 p-0.5"
+      >
         {modes.map((m, i) => (
           <Tooltip key={m.value}>
             <TooltipTrigger asChild>

@@ -46,10 +46,22 @@ export function ConversationGuideDialog({
   const steps = React.useMemo<TourStep[]>(
     () => [
       {
-        key: 'modeSwitch',
-        selector: '[data-tour="mode-switch"]',
-        title: t('guide.steps.modeSwitch.title'),
-        description: t('guide.steps.modeSwitch.description')
+        key: 'modeClarify',
+        selector: '[data-tour="mode-clarify"]',
+        title: t('guide.steps.modeClarify.title'),
+        description: t('guide.steps.modeClarify.description')
+      },
+      {
+        key: 'modeCowork',
+        selector: '[data-tour="mode-cowork"]',
+        title: t('guide.steps.modeCowork.title'),
+        description: t('guide.steps.modeCowork.description')
+      },
+      {
+        key: 'modeCode',
+        selector: '[data-tour="mode-code"]',
+        title: t('guide.steps.modeCode.title'),
+        description: t('guide.steps.modeCode.description')
       },
       {
         key: 'leftSidebar',

@@ -970,6 +970,7 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
                                 <Tooltip key={m.value}>
                                   <TooltipTrigger asChild>
                                     <Button
+                                      data-tour={`mode-${m.value}`}
                                       variant="ghost"
                                       size="sm"
                                       className={cn(

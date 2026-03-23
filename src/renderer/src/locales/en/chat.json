@@ -82,9 +82,17 @@
     "finish": "Finish",
     "skip": "Skip",
     "steps": {
-      "modeSwitch": {
-        "title": "Switch between Clarify, Cowork, and Code here",
-        "description": "Clarify is for understanding requirements first, Cowork is for general project help, and Code is for direct implementation tasks like editing files and advancing engineering work."
+      "modeClarify": {
+        "title": "This is Clarify mode",
+        "description": "Use it to understand the goal, boundaries, constraints, and acceptance criteria before execution. It is better for asking and narrowing things down first."
+      },
+      "modeCowork": {
+        "title": "This is Cowork mode",
+        "description": "Use it for general project collaboration: researching, organizing plans, coordinating tools, handling files, and advancing multi-step work."
+      },
+      "modeCode": {
+        "title": "This is Code mode",
+        "description": "Use it for direct implementation tasks such as editing files, writing code, running checks, and handling engineering details."
       },
       "leftSidebar": {
         "title": "This is the project and session area",

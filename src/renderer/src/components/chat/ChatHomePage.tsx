@@ -347,6 +347,7 @@ export function ChatHomePage(): React.JSX.Element {
               <Tooltip key={m.value}>
                 <TooltipTrigger asChild>
                   <Button
+                    data-tour={`mode-${m.value}`}
                     variant="ghost"
                     size="sm"
                     className={cn(

@@ -126,6 +126,7 @@ export function TopBar(): React.JSX.Element {
           <Tooltip key={m.value}>
             <TooltipTrigger asChild>
               <Button
+                data-tour={`mode-${m.value}`}
                 variant={mode === m.value ? 'secondary' : 'ghost'}
                 size="sm"
                 className={cn(

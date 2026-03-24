@@ -17,8 +17,16 @@ import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { Switch } from '@renderer/components/ui/switch'
 import { Separator } from '@renderer/components/ui/separator'
+import { Badge } from '@renderer/components/ui/badge'
 import { Popover, PopoverContent, PopoverTrigger } from '@renderer/components/ui/popover'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger
+} from '@renderer/components/ui/accordion'
 import { useChannelStore } from '@renderer/stores/channel-store'
+import { useChatStore } from '@renderer/stores/chat-store'
 import { useProviderStore } from '@renderer/stores/provider-store'
 import { ProviderIcon, ModelIcon } from '@renderer/components/settings/provider-icons'
 import { cn } from '@renderer/lib/utils'
@@ -69,11 +77,34 @@ function ChannelIcon({
 
 // ─── Channel Config Panel (right side) ───
 
-function ChannelConfigPanel({ plugin }: { plugin: PluginInstance }): React.JSX.Element {
-  return <ChannelConfigPanelContent key={plugin.id} plugin={plugin} />
+function ChannelConfigPanel({
+  plugin,
+  projectId,
+  projectName
+}: {
+  plugin: PluginInstance
+  projectId?: string
+  projectName?: string
+}): React.JSX.Element {
+  return (
+    <ChannelConfigPanelContent
+      key={plugin.id}
+      plugin={plugin}
+      projectId={projectId}
+      projectName={projectName}
+    />
+  )
 }
 
-function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): React.JSX.Element {
+function ChannelConfigPanelContent({
+  plugin,
+  projectId,
+  projectName
+}: {
+  plugin: PluginInstance
+  projectId?: string
+  projectName?: string
+}): React.JSX.Element {
   const { t } = useTranslation('settings')
   const updateChannel = useChannelStore((s) => s.updateChannel)
   const removeChannel = useChannelStore((s) => s.removeChannel)
@@ -91,6 +122,7 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
 
   // Local state for debounced fields
   const providers = useProviderStore((s) => s.providers)
+  const projects = useChatStore((s) => s.projects)
   const activeProviderId = useProviderStore((s) => s.activeProviderId)
   const activeModelId = useProviderStore((s) => s.activeModelId)
   const enabledProviders = useMemo(() => providers.filter((p) => p.enabled), [providers])
@@ -227,6 +259,14 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
   }, [])
   const toolsList = descriptor?.tools ?? []
   const isWeixinOfficial = plugin.type === 'weixin-official'
+  const boundProject = plugin.projectId
+    ? projects.find((project) => project.id === plugin.projectId)
+    : undefined
+  const isBoundToCurrentProject = !!projectId && plugin.projectId === projectId
+  const ensureCurrentProjectBinding = useCallback(async (): Promise<void> => {
+    if (!projectId || plugin.projectId === projectId) return
+    await updateChannel(plugin.id, { projectId })
+  }, [plugin.id, plugin.projectId, projectId, updateChannel])
 
   const handleWeixinBind = useCallback(async () => {
     const baseUrl = (localConfig.baseUrl || 'https://ilinkai.weixin.qq.com').trim()
@@ -290,7 +330,11 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
         userId: waitResult.userId || localConfig.userId || ''
       }
       setLocalConfig(nextConfig)
-      await updateChannel(plugin.id, { config: nextConfig, enabled: true })
+      await updateChannel(plugin.id, {
+        config: nextConfig,
+        enabled: true,
+        ...(projectId && plugin.projectId !== projectId ? { projectId } : {})
+      })
       toast.success(t('channel.weixin.loginSuccess', '微信绑定成功'))
       const err = await startChannel(plugin.id)
       if (err) {
@@ -303,31 +347,83 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
     } finally {
       setWeixinLoginPending(false)
     }
-  }, [localConfig, plugin.id, startChannel, t, updateChannel])
+  }, [localConfig, plugin.id, plugin.projectId, projectId, startChannel, t, updateChannel])
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto px-4 py-3">
-      {/* Header with icon + name + enabled toggle */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <ChannelIcon icon={descriptor?.icon ?? ''} className="size-8" />
-          <div>
-            <h3 className="text-sm font-semibold">{localName}</h3>
-            <p className="text-xs text-muted-foreground">
-              {descriptor?.description ?? plugin.type}
-            </p>
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <div className="border-b border-border/60 px-6 py-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-4">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-border/60 bg-muted/30">
+              <ChannelIcon icon={descriptor?.icon ?? ''} className="size-6" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="truncate text-xl font-semibold text-foreground">{localName}</h3>
+                <Badge variant={status === 'running' ? 'secondary' : status === 'error' ? 'destructive' : 'outline'}>
+                  {status === 'running'
+                    ? t('channel.running', 'Running')
+                    : status === 'error'
+                      ? t('channel.error', 'Error')
+                      : t('channel.stopped', 'Stopped')}
+                </Badge>
+                <Badge variant={plugin.enabled ? 'outline' : 'secondary'}>
+                  {plugin.enabled ? t('channel.enabled', '已启用') : t('channel.disabled', '已停用')}
+                </Badge>
+              </div>
+              <p className="mt-1 truncate text-sm text-muted-foreground">
+                {descriptor?.description ?? plugin.type}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <span className="text-xs text-muted-foreground">
+              {t('channel.autoSaveHint', '修改后自动保存')}
+            </span>
+            <Switch
+              checked={plugin.enabled}
+              onCheckedChange={async () => {
+                if (!plugin.enabled) {
+                  await ensureCurrentProjectBinding()
+                }
+                await toggleChannelEnabled(plugin.id)
+              }}
+            />
           </div>
         </div>
-        <Switch checked={plugin.enabled} onCheckedChange={() => toggleChannelEnabled(plugin.id)} />
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Badge variant="outline">{t('channel.platform', '平台')} · {descriptor?.displayName ?? plugin.type}</Badge>
+          {projectId && (
+            <Badge variant={isBoundToCurrentProject ? 'secondary' : 'outline'}>
+              {isBoundToCurrentProject
+                ? t('channel.boundCurrentProject', '已绑定当前项目')
+                : boundProject?.name ?? t('channel.unboundProject', '未绑定项目')}
+            </Badge>
+          )}
+          {(localModel || globalDefaultModel?.model?.name) && (
+            <Badge variant="outline">
+              {t('channel.replyModelShort', '模型')} · {localModel || globalDefaultModel?.model?.name}
+            </Badge>
+          )}
+        </div>
       </div>
 
-      <Separator className="mb-4" />
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
 
       {/* Bot Name */}
-      <section className="space-y-2 mb-4">
-        <label className="text-xs font-medium">{t('channel.botName', 'Channel Name')}</label>
+      <section className="grid gap-3 border-b border-border/60 pb-5 md:grid-cols-[220px_minmax(0,1fr)] md:items-start">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium">{t('channel.botName', 'Channel Name')}</label>
+            <Badge variant="outline" className="px-1.5 text-[10px] font-mono">name</Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t('channel.botNameDesc', '用于在项目内识别当前聊天频道。')}
+          </p>
+        </div>
         <Input
-          className="h-8 text-xs"
+          className="h-10 text-sm"
           value={localName}
           onChange={(e) => handleNameChange(e.target.value)}
           placeholder={descriptor?.displayName ?? 'Plugin'}
@@ -335,37 +431,92 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
       </section>
 
       {/* Config fields from schema */}
-      {configFields.map((field) => (
-        <section key={field.key} className="space-y-2 mb-4">
-          <label className="text-xs font-medium">
-            {t(field.label, field.key)}
-            {field.required && <span className="text-destructive ml-0.5">*</span>}
-          </label>
-          <div className="relative">
-            <Input
-              className="h-8 text-xs pr-8"
-              type={field.type === 'secret' && !showSecrets[field.key] ? 'password' : 'text'}
-              placeholder={field.placeholder}
-              value={localConfig[field.key] ?? ''}
-              onChange={(e) => handleConfigChange(field.key, e.target.value)}
-            />
-            {field.type === 'secret' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="absolute right-0 top-0 h-8 w-8 p-0"
-                onClick={() => toggleSecret(field.key)}
-              >
-                {showSecrets[field.key] ? (
-                  <EyeOff className="size-3.5" />
+      <div className="space-y-4 border-b border-border/60 py-5">
+        {configFields.map((field) => (
+          <section key={field.key} className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)] md:items-start">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium">
+                  {t(field.label, field.key)}
+                  {field.required && <span className="text-destructive ml-0.5">*</span>}
+                </label>
+                <Badge variant="outline" className="px-1.5 text-[10px] font-mono">
+                  {field.key}
+                </Badge>
+              </div>
+              {field.placeholder && (
+                <p className="text-xs text-muted-foreground">{field.placeholder}</p>
+              )}
+            </div>
+            <div className="relative">
+              <Input
+                className="h-10 pr-10 text-sm"
+                type={field.type === 'secret' && !showSecrets[field.key] ? 'password' : 'text'}
+                placeholder={field.placeholder}
+                value={localConfig[field.key] ?? ''}
+                onChange={(e) => handleConfigChange(field.key, e.target.value)}
+              />
+              {field.type === 'secret' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1 h-8 w-8 p-0"
+                  onClick={() => toggleSecret(field.key)}
+                >
+                  {showSecrets[field.key] ? (
+                    <EyeOff className="size-3.5" />
+                  ) : (
+                    <Eye className="size-3.5" />
+                  )}
+                </Button>
+              )}
+            </div>
+          </section>
+        ))}
+      </div>
+
+      {projectId && (
+        <>
+          <section className="space-y-2 mb-4">
+            <label className="text-xs font-medium">
+              {t('channel.boundProject', 'Bound Project')}
+            </label>
+            <div className="rounded-md border p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs">{boundProject?.name ?? t('channel.unboundProject', '未绑定项目')}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {t(
+                      'channel.boundProjectDesc',
+                      '频道工作目录会自动跟随绑定项目的工作目录。'
+                    )}
+                  </p>
+                </div>
+                {isBoundToCurrentProject ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => void updateChannel(plugin.id, { projectId: null })}
+                  >
+                    {t('channel.unbindCurrentProject', '解绑')}
+                  </Button>
                 ) : (
-                  <Eye className="size-3.5" />
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => void updateChannel(plugin.id, { projectId })}
+                  >
+                    {t('channel.bindCurrentProject', {
+                      defaultValue: projectName ? `绑定到 ${projectName}` : '绑定到当前项目'
+                    })}
+                  </Button>
                 )}
-              </Button>
-            )}
-          </div>
-        </section>
-      ))}
+              </div>
+            </div>
+          </section>
+        </>
+      )}
 
       <Separator className="mb-4" />
 
@@ -500,238 +651,246 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
         </section>
       )}
 
-      {/* Feature toggles */}
-      <section className="space-y-2 mb-4">
-        <label className="text-xs font-medium">{t('channel.features', 'Features')}</label>
-        <div className="space-y-2 rounded-md border p-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs">{t('channel.autoReply', 'Auto Reply')}</p>
-              <p className="text-[10px] text-muted-foreground">
-                {t(
-                  'channel.autoReplyDesc',
-                  'Automatically reply to incoming messages using the Agent'
-                )}
-              </p>
-            </div>
-            <Switch
-              checked={localFeatures.autoReply}
-              onCheckedChange={(v) => handleFeatureToggle('autoReply', v)}
-              className="scale-75"
-            />
+      <section className="border-b border-border/60 py-5">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">{t('channel.advanced', '高级设置')}</p>
+            <p className="text-xs text-muted-foreground">
+              {t('channel.advancedDesc', '按需展开回复策略、工具能力和权限边界。')}
+            </p>
           </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs">{t('channel.streamingReply', 'Streaming Reply')}</p>
-              <p className="text-[10px] text-muted-foreground">
-                {t(
-                  'channel.streamingReplyDesc',
-                  'Stream responses in real-time via CardKit (Feishu only)'
-                )}
-              </p>
-            </div>
-            <Switch
-              checked={localFeatures.streamingReply}
-              onCheckedChange={(v) => handleFeatureToggle('streamingReply', v)}
-              className="scale-75"
-            />
-          </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs">{t('channel.autoStart', 'Auto Start')}</p>
-              <p className="text-[10px] text-muted-foreground">
-                {t(
-                  'channel.autoStartDesc',
-                  'Automatically start this plugin when the app launches'
-                )}
-              </p>
-            </div>
-            <Switch
-              checked={localFeatures.autoStart}
-              onCheckedChange={(v) => handleFeatureToggle('autoStart', v)}
-              className="scale-75"
-            />
-          </div>
+          <Badge variant="outline">{t('channel.advancedHint', '可折叠')}</Badge>
         </div>
-      </section>
-
-      <Separator className="mb-4" />
-
-      {/* Tools */}
-      {toolsList.length > 0 && (
-        <section className="space-y-2 mb-4">
-          <label className="text-xs font-medium">{t('channel.tools', 'Tools')}</label>
-          <div className="space-y-2 rounded-md border p-3">
-            {toolsList.map((toolName, idx) => {
-              const enabled = localTools?.[toolName] !== false
-              const description = t(
-                `channel.toolsDesc.${toolName}`,
-                toolDefinitions[toolName] ?? ''
-              )
-              return (
-                <div key={toolName}>
-                  {idx > 0 && <Separator />}
-                  <div className="flex items-center justify-between gap-3 py-2">
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium truncate">{toolName}</p>
-                      {description && (
-                        <p className="text-[10px] text-muted-foreground">{description}</p>
-                      )}
-                    </div>
-                    <Switch
-                      checked={enabled}
-                      onCheckedChange={(v) => handleToolToggle(toolName, v)}
-                      className="scale-75"
-                    />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
-      <Separator className="mb-4" />
-
-      {/* Security & Permissions */}
-      <section className="space-y-2 mb-4">
-        <div className="flex items-center gap-1.5 text-xs font-medium">
-          <Shield className="size-3.5" />
-          {t('channel.security', 'Security & Permissions')}
-        </div>
-        <div className="space-y-2 rounded-md border p-3">
-          {/* Read Home Directory */}
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs">{t('channel.allowReadHome', 'Read Home Directory')}</p>
-              <p className="text-[10px] text-muted-foreground">
-                {t(
-                  'channel.allowReadHomeDesc',
-                  'Allow reading files under your home directory (~)'
-                )}
-              </p>
-            </div>
-            <Switch
-              checked={localPerms.allowReadHome}
-              onCheckedChange={(v) => handlePermToggle('allowReadHome', v)}
-              className="scale-75"
-            />
-          </div>
-
-          {/* Readable Path Prefixes (shown when allowReadHome is false) */}
-          {!localPerms.allowReadHome && (
-            <>
-              <Separator />
-              <div className="space-y-1.5">
-                <p className="text-xs">{t('channel.readablePaths', 'Allowed Read Paths')}</p>
-                <p className="text-[10px] text-muted-foreground">
-                  {t(
-                    'channel.readablePathsDesc',
-                    'Whitelist specific directories the plugin can read'
-                  )}
+        <Accordion type="multiple" defaultValue={['features']} className="w-full">
+          <AccordionItem value="features" className="border-border/60">
+            <AccordionTrigger className="py-3 hover:no-underline">
+              <div>
+                <div className="text-sm font-medium">{t('channel.features', 'Features')}</div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t('channel.featuresDesc', '自动回复、流式回复和自动启动策略。')}
                 </p>
-                {localPerms.readablePathPrefixes.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {localPerms.readablePathPrefixes.map((p) => (
-                      <span
-                        key={p}
-                        className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[10px] font-mono"
-                      >
-                        {p}
-                        <button
-                          onClick={() => handleRemoveReadPath(p)}
-                          className="text-muted-foreground hover:text-foreground"
-                        >
-                          <X className="size-2.5" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="flex gap-1">
-                  <Input
-                    className="h-6 text-[10px] font-mono flex-1"
-                    placeholder="/home/user/docs"
-                    value={newReadPath}
-                    onChange={(e) => setNewReadPath(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleAddReadPath()
-                    }}
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-6 text-[10px] px-2"
-                    onClick={handleAddReadPath}
-                  >
-                    {t('channel.addPath', 'Add')}
-                  </Button>
-                </div>
               </div>
-            </>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-3">
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">{t('channel.autoReply', 'Auto Reply')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      'channel.autoReplyDesc',
+                      'Automatically reply to incoming messages using the Agent'
+                    )}
+                  </p>
+                </div>
+                <Switch
+                  checked={localFeatures.autoReply}
+                  onCheckedChange={(v) => handleFeatureToggle('autoReply', v)}
+                  className="scale-75"
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">{t('channel.streamingReply', 'Streaming Reply')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      'channel.streamingReplyDesc',
+                      'Stream responses in real-time via CardKit (Feishu only)'
+                    )}
+                  </p>
+                </div>
+                <Switch
+                  checked={localFeatures.streamingReply}
+                  onCheckedChange={(v) => handleFeatureToggle('streamingReply', v)}
+                  className="scale-75"
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">{t('channel.autoStart', 'Auto Start')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      'channel.autoStartDesc',
+                      'Automatically start this plugin when the app launches'
+                    )}
+                  </p>
+                </div>
+                <Switch
+                  checked={localFeatures.autoStart}
+                  onCheckedChange={(v) => handleFeatureToggle('autoStart', v)}
+                  className="scale-75"
+                />
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+
+          {toolsList.length > 0 && (
+            <AccordionItem value="tools" className="border-border/60">
+              <AccordionTrigger className="py-3 hover:no-underline">
+                <div>
+                  <div className="text-sm font-medium">{t('channel.tools', 'Tools')}</div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t('channel.toolsPanelDesc', '控制频道可调用的专属工具集合。')}
+                  </p>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="space-y-3">
+                {toolsList.map((toolName) => {
+                  const enabled = localTools?.[toolName] !== false
+                  const description = t(
+                    `channel.toolsDesc.${toolName}`,
+                    toolDefinitions[toolName] ?? ''
+                  )
+                  return (
+                    <div
+                      key={toolName}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{toolName}</p>
+                        {description && (
+                          <p className="text-xs text-muted-foreground">{description}</p>
+                        )}
+                      </div>
+                      <Switch
+                        checked={enabled}
+                        onCheckedChange={(v) => handleToolToggle(toolName, v)}
+                        className="scale-75"
+                      />
+                    </div>
+                  )
+                })}
+              </AccordionContent>
+            </AccordionItem>
           )}
 
-          <Separator />
+          <AccordionItem value="security" className="border-border/60">
+            <AccordionTrigger className="py-3 hover:no-underline">
+              <div className="flex items-start gap-2">
+                <Shield className="mt-0.5 size-4 text-muted-foreground" />
+                <div>
+                  <div className="text-sm font-medium">
+                    {t('channel.security', 'Security & Permissions')}
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t('channel.securityDesc', '限制频道读写范围、命令执行和子代理能力。')}
+                  </p>
+                </div>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-3">
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">{t('channel.allowReadHome', 'Read Home Directory')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      'channel.allowReadHomeDesc',
+                      'Allow reading files under your home directory (~)'
+                    )}
+                  </p>
+                </div>
+                <Switch
+                  checked={localPerms.allowReadHome}
+                  onCheckedChange={(v) => handlePermToggle('allowReadHome', v)}
+                  className="scale-75"
+                />
+              </div>
 
-          {/* Shell Execution */}
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs">{t('channel.allowShell', 'Shell Execution')}</p>
-              <p className="text-[10px] text-muted-foreground">
-                {t('channel.allowShellDesc', 'Allow executing terminal commands (high risk)')}
-              </p>
-            </div>
-            <Switch
-              checked={localPerms.allowShell}
-              onCheckedChange={(v) => handlePermToggle('allowShell', v)}
-              className="scale-75"
-            />
-          </div>
+              {!localPerms.allowReadHome && (
+                <div className="space-y-2 rounded-xl border border-border/60 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">{t('channel.readablePaths', 'Allowed Read Paths')}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        'channel.readablePathsDesc',
+                        'Whitelist specific directories the plugin can read'
+                      )}
+                    </p>
+                  </div>
+                  {localPerms.readablePathPrefixes.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {localPerms.readablePathPrefixes.map((p) => (
+                        <span
+                          key={p}
+                          className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[10px] font-mono"
+                        >
+                          {p}
+                          <button
+                            onClick={() => handleRemoveReadPath(p)}
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            <X className="size-2.5" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <Input
+                      className="h-9 flex-1 font-mono text-xs"
+                      placeholder="/home/user/docs"
+                      value={newReadPath}
+                      onChange={(e) => setNewReadPath(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleAddReadPath()
+                      }}
+                    />
+                    <Button variant="outline" size="sm" className="h-9 px-3" onClick={handleAddReadPath}>
+                      {t('channel.addPath', 'Add')}
+                    </Button>
+                  </div>
+                </div>
+              )}
 
-          <Separator />
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">{t('channel.allowShell', 'Shell Execution')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('channel.allowShellDesc', 'Allow executing terminal commands (high risk)')}
+                  </p>
+                </div>
+                <Switch
+                  checked={localPerms.allowShell}
+                  onCheckedChange={(v) => handlePermToggle('allowShell', v)}
+                  className="scale-75"
+                />
+              </div>
 
-          {/* Write Outside */}
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs">
-                {t('channel.allowWriteOutside', 'Write Outside Working Dir')}
-              </p>
-              <p className="text-[10px] text-muted-foreground">
-                {t(
-                  'channel.allowWriteOutsideDesc',
-                  'Allow writing files outside the plugin directory'
-                )}
-              </p>
-            </div>
-            <Switch
-              checked={localPerms.allowWriteOutside}
-              onCheckedChange={(v) => handlePermToggle('allowWriteOutside', v)}
-              className="scale-75"
-            />
-          </div>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">
+                    {t('channel.allowWriteOutside', 'Write Outside Working Dir')}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      'channel.allowWriteOutsideDesc',
+                      'Allow writing files outside the plugin directory'
+                    )}
+                  </p>
+                </div>
+                <Switch
+                  checked={localPerms.allowWriteOutside}
+                  onCheckedChange={(v) => handlePermToggle('allowWriteOutside', v)}
+                  className="scale-75"
+                />
+              </div>
 
-          <Separator />
-
-          {/* Sub-agents */}
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs">{t('channel.allowSubAgents', 'Sub-Agent Tools')}</p>
-              <p className="text-[10px] text-muted-foreground">
-                {t('channel.allowSubAgentsDesc', 'Allow using Task and other sub-agent tools')}
-              </p>
-            </div>
-            <Switch
-              checked={localPerms.allowSubAgents}
-              onCheckedChange={(v) => handlePermToggle('allowSubAgents', v)}
-              className="scale-75"
-            />
-          </div>
-        </div>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">{t('channel.allowSubAgents', 'Sub-Agent Tools')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('channel.allowSubAgentsDesc', 'Allow using Task and other sub-agent tools')}
+                  </p>
+                </div>
+                <Switch
+                  checked={localPerms.allowSubAgents}
+                  onCheckedChange={(v) => handlePermToggle('allowSubAgents', v)}
+                  className="scale-75"
+                />
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       </section>
-
-      <Separator className="mb-4" />
 
       {isWeixinOfficial && (
         <>
@@ -800,91 +959,61 @@ function ChannelConfigPanelContent({ plugin }: { plugin: PluginInstance }): Reac
           <Separator className="mb-4" />
         </>
       )}
-      <section className="space-y-3 mb-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium">{t('channel.status', 'Status')}</span>
-            <span
-              className={`inline-flex items-center gap-1 text-xs ${
-                status === 'running'
-                  ? 'text-emerald-500'
-                  : status === 'error'
-                    ? 'text-destructive'
-                    : 'text-muted-foreground'
-              }`}
+      </div>
+
+      <div className="flex items-center justify-between gap-3 border-t border-border/60 px-6 py-4">
+        <div className="text-xs text-muted-foreground">
+          {t('channel.autoSaveFooter', '当前频道配置会自动保存，并在项目内立即生效。')}
+        </div>
+        <div className="flex items-center gap-2">
+          {!plugin.builtin && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => {
+                removeChannel(plugin.id)
+                toast.success(t('channel.removed', 'Plugin removed'))
+              }}
             >
-              <span
-                className={`size-1.5 rounded-full ${
-                  status === 'running'
-                    ? 'bg-emerald-500'
-                    : status === 'error'
-                      ? 'bg-destructive'
-                      : 'bg-muted-foreground/50'
-                }`}
-              />
-              {status === 'running'
-                ? t('channel.running', 'Running')
-                : status === 'error'
-                  ? t('channel.error', 'Error')
-                  : t('channel.stopped', 'Stopped')}
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            {status === 'running' ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={async () => {
-                  await stopChannel(plugin.id)
-                  toast.success(t('channel.stopped', 'Stopped'))
-                }}
-              >
-                <Square className="size-3 mr-1" />
-                {t('channel.stop', 'Stop')}
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={async () => {
-                  const err = await startChannel(plugin.id)
-                  if (err) {
-                    toast.error(t('channel.error', 'Error'), { description: err })
-                  } else {
-                    toast.success(t('channel.running', 'Running'))
-                  }
-                }}
-                disabled={!plugin.enabled}
-              >
-                <Play className="size-3 mr-1" />
-                {t('channel.start', 'Start')}
-              </Button>
-            )}
-          </div>
+              {t('channel.remove', 'Remove')}
+            </Button>
+          )}
+          {status === 'running' ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 px-4 text-xs"
+              onClick={async () => {
+                await stopChannel(plugin.id)
+                toast.success(t('channel.stopped', 'Stopped'))
+              }}
+            >
+              <Square className="mr-1 size-3" />
+              {t('channel.stop', 'Stop')}
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 px-4 text-xs"
+              onClick={async () => {
+                await ensureCurrentProjectBinding()
+                const err = await startChannel(plugin.id)
+                if (err) {
+                  toast.error(t('channel.error', 'Error'), { description: err })
+                } else {
+                  toast.success(t('channel.running', 'Running'))
+                }
+              }}
+              disabled={!plugin.enabled}
+            >
+              <Play className="mr-1 size-3" />
+              {t('channel.start', 'Start')}
+            </Button>
+          )}
         </div>
-      </section>
-
-      <Separator className="mb-4" />
-
-      {/* Danger zone — only for non-builtin plugins */}
-      {!plugin.builtin && (
-        <div className="mt-auto pt-4">
-          <Separator className="mb-4" />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
-            onClick={() => {
-              removeChannel(plugin.id)
-              toast.success(t('channel.removed', 'Plugin removed'))
-            }}
-          >
-            {t('channel.remove', 'Remove')}
-          </Button>
-        </div>
-      )}
+      </div>
     </div>
   )
 }
@@ -901,7 +1030,12 @@ const PLUGIN_CATEGORIES: { label: string; types: string[] }[] = [
 
 // ─── Main Plugin Panel ───
 
-export function ChannelPanel(): React.JSX.Element {
+interface ChannelPanelProps {
+  projectId?: string
+  projectName?: string
+}
+
+export function ChannelPanel({ projectId, projectName }: ChannelPanelProps = {}): React.JSX.Element {
   const { t } = useTranslation('settings')
   const channels = useChannelStore((s) => s.channels)
   const selectedChannelId = useChannelStore((s) => s.selectedChannelId)
@@ -911,8 +1045,29 @@ export function ChannelPanel(): React.JSX.Element {
   const channelStatuses = useChannelStore((s) => s.channelStatuses)
   const getDescriptor = useChannelStore((s) => s.getDescriptor)
   const toggleChannelEnabled = useChannelStore((s) => s.toggleChannelEnabled)
+  const updateChannel = useChannelStore((s) => s.updateChannel)
 
   const [searchQuery, setSearchQuery] = useState('')
+
+  const handleSelectChannel = useCallback(
+    async (channel: PluginInstance): Promise<void> => {
+      if (projectId && channel.projectId !== projectId) {
+        await updateChannel(channel.id, { projectId })
+      }
+      setSelectedChannel(channel.id)
+    },
+    [projectId, setSelectedChannel, updateChannel]
+  )
+
+  const handleToggleChannelEnabled = useCallback(
+    async (channel: PluginInstance): Promise<void> => {
+      if (projectId && !channel.enabled && channel.projectId !== projectId) {
+        await updateChannel(channel.id, { projectId })
+      }
+      await toggleChannelEnabled(channel.id)
+    },
+    [projectId, toggleChannelEnabled, updateChannel]
+  )
 
   // Load providers and plugins on mount
   useEffect(() => {
@@ -920,171 +1075,208 @@ export function ChannelPanel(): React.JSX.Element {
     loadChannels()
   }, [loadProviders, loadChannels])
 
-  // Auto-select first plugin if none selected
-  useEffect(() => {
-    if (!selectedChannelId && channels.length > 0) {
-      setSelectedChannel(channels[0].id)
-    }
-  }, [selectedChannelId, channels, setSelectedChannel])
+  const projectScopedChannels = useMemo(() => {
+    if (!projectId) return channels
+    return channels.filter((channel) => !channel.projectId || channel.projectId === projectId)
+  }, [channels, projectId])
 
   const filteredChannels = useMemo(() => {
-    if (!searchQuery.trim()) return channels
+    if (!searchQuery.trim()) return projectScopedChannels
     const q = searchQuery.toLowerCase()
-    return channels.filter(
+    return projectScopedChannels.filter(
       (p) => p.name.toLowerCase().includes(q) || p.type.toLowerCase().includes(q)
     )
-  }, [channels, searchQuery])
+  }, [projectScopedChannels, searchQuery])
 
-  const selectedChannel = channels.find((p) => p.id === selectedChannelId)
+  useEffect(() => {
+    const hasSelectedVisibleChannel = filteredChannels.some((channel) => channel.id === selectedChannelId)
+    if (hasSelectedVisibleChannel) return
+    if (!projectId) {
+      setSelectedChannel(filteredChannels[0]?.id ?? null)
+      return
+    }
+    const firstBoundChannel = filteredChannels.find((channel) => channel.projectId === projectId)
+    setSelectedChannel(firstBoundChannel?.id ?? null)
+  }, [filteredChannels, projectId, selectedChannelId, setSelectedChannel])
+
+  const selectedChannel = filteredChannels.find((p) => p.id === selectedChannelId) ?? null
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="mb-3 shrink-0">
-        <h2 className="text-lg font-semibold">{t('channel.title', 'Channels')}</h2>
-        <p className="text-sm text-muted-foreground">
-          {t('channel.subtitle', 'Configure and manage your messaging channels')}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="mb-4 shrink-0">
+        <h2 className="text-lg font-semibold text-foreground">{t('channel.title', 'Channels')}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {projectId
+            ? t(
+                'channel.projectSubtitle',
+                '管理当前项目绑定的聊天频道，频道工作目录会自动跟随项目。'
+              )
+            : t('channel.subtitle', 'Configure and manage your messaging channels')}
         </p>
       </div>
 
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left: Channel list */}
-        <div className="w-52 shrink-0 border-r flex flex-col">
-          {/* Search */}
-          <div className="flex items-center gap-1 p-2 border-b">
-            <div className="relative flex-1">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground/50" />
+      <div className="grid min-h-0 flex-1 overflow-hidden rounded-3xl border border-border/60 bg-background/70 md:grid-cols-[280px_minmax(0,1fr)]">
+        <div className="flex min-h-0 flex-col border-r border-border/60 bg-muted/10">
+          <div className="border-b border-border/60 px-4 py-4">
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/60">
+              {t('channel.platforms', '平台')}
+            </p>
+            <div className="relative mt-3">
+              <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/50" />
               <Input
                 placeholder={t('channel.search', 'Search channels...')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-7 pl-7 text-[11px] bg-transparent border-0 shadow-none focus-visible:ring-0"
+                className="h-9 rounded-xl border-border/60 bg-background/60 pl-9 text-xs"
               />
             </div>
           </div>
 
-          {/* List — grouped by category */}
-          <div className="flex-1 overflow-y-auto py-1">
+          <div className="flex-1 overflow-y-auto px-3 py-3">
             {PLUGIN_CATEGORIES.map((category) => {
-              const categoryPlugins = filteredChannels.filter((p) =>
-                category.types.includes(p.type)
-              )
+              const categoryPlugins = filteredChannels.filter((p) => category.types.includes(p.type))
               if (categoryPlugins.length === 0) return null
               return (
-                <div key={category.label} className="px-2 pt-2 pb-1">
-                  <p className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-wider px-1 mb-1">
+                <section key={category.label} className="mb-4 last:mb-0">
+                  <p className="mb-2 px-2 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/50">
                     {category.label}
                   </p>
-                  {categoryPlugins.map((p) => {
-                    const status = channelStatuses[p.id] ?? 'stopped'
-                    const descriptor = getDescriptor(p.type)
-                    const displayName = p.builtin ? (descriptor?.displayName ?? p.name) : p.name
-                    return (
-                      <div
-                        key={p.id}
-                        className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 mt-0.5 transition-colors cursor-pointer ${
-                          selectedChannelId === p.id
-                            ? 'bg-accent text-accent-foreground'
-                            : p.enabled
-                              ? 'text-foreground/80 hover:bg-muted/60'
-                              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                        }`}
-                        onClick={() => setSelectedChannel(p.id)}
-                      >
-                        <span className={p.enabled ? '' : 'opacity-40'}>
-                          <ChannelIcon icon={descriptor?.icon ?? ''} className="size-4" />
-                        </span>
-                        <span className="flex-1 truncate text-xs">{displayName}</span>
-                        {p.enabled && (
-                          <span
-                            className={`size-1.5 rounded-full shrink-0 ${
-                              status === 'running'
-                                ? 'bg-emerald-500'
-                                : status === 'error'
-                                  ? 'bg-destructive'
-                                  : 'bg-muted-foreground/30'
-                            }`}
+                  <div className="space-y-1.5">
+                    {categoryPlugins.map((p) => {
+                      const status = channelStatuses[p.id] ?? 'stopped'
+                      const descriptor = getDescriptor(p.type)
+                      const displayName = p.builtin ? (descriptor?.displayName ?? p.name) : p.name
+                      const isSelected = selectedChannelId === p.id
+                      const isBoundToProject = !!projectId && p.projectId === projectId
+                      return (
+                        <div
+                          key={p.id}
+                          className={cn(
+                            'flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors',
+                            isSelected
+                              ? 'bg-accent text-accent-foreground'
+                              : 'hover:bg-muted/60 text-foreground/85',
+                            !p.enabled && !isSelected && 'text-muted-foreground'
+                          )}
+                          onClick={() => void handleSelectChannel(p)}
+                        >
+                          <div className={cn('shrink-0', !p.enabled && 'opacity-40')}>
+                            <ChannelIcon icon={descriptor?.icon ?? ''} className="size-5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium">{displayName}</span>
+                              <span
+                                className={cn(
+                                  'size-1.5 shrink-0 rounded-full',
+                                  status === 'running'
+                                    ? 'bg-emerald-500'
+                                    : status === 'error'
+                                      ? 'bg-destructive'
+                                      : 'bg-muted-foreground/30'
+                                )}
+                              />
+                            </div>
+                            <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                              <span className="truncate">{descriptor?.description ?? p.type}</span>
+                              {isBoundToProject && <Badge variant="outline">{t('channel.bound', '已绑定')}</Badge>}
+                            </div>
+                          </div>
+                          <Switch
+                            checked={p.enabled}
+                            onCheckedChange={() => {
+                              void handleToggleChannelEnabled(p)
+                            }}
+                            className="scale-75"
+                            onClick={(e) => e.stopPropagation()}
                           />
-                        )}
-                        <Switch
-                          checked={p.enabled}
-                          onCheckedChange={() => toggleChannelEnabled(p.id)}
-                          className="scale-75"
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </div>
-                    )
-                  })}
-                </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </section>
               )
             })}
 
-            {/* Non-categorized channels (user-added, if any) */}
             {filteredChannels.filter(
               (p) => !PLUGIN_CATEGORIES.some((c) => c.types.includes(p.type))
             ).length > 0 && (
-              <div className="px-2 pt-2 pb-1">
-                <p className="text-[10px] font-medium text-muted-foreground/50 uppercase tracking-wider px-1 mb-1">
+              <section>
+                <p className="mb-2 px-2 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/50">
                   {t('channel.custom', 'Custom')}
                 </p>
-                {filteredChannels
-                  .filter((p) => !PLUGIN_CATEGORIES.some((c) => c.types.includes(p.type)))
-                  .map((p) => {
-                    const status = channelStatuses[p.id] ?? 'stopped'
-                    return (
-                      <div
-                        key={p.id}
-                        className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 mt-0.5 transition-colors cursor-pointer ${
-                          selectedChannelId === p.id
-                            ? 'bg-accent text-accent-foreground'
-                            : p.enabled
-                              ? 'text-foreground/80 hover:bg-muted/60'
-                              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                        }`}
-                        onClick={() => setSelectedChannel(p.id)}
-                      >
-                        <span className={p.enabled ? '' : 'opacity-40'}>
-                          <ChannelIcon
-                            icon={getDescriptor(p.type)?.icon ?? ''}
-                            className="size-4"
+                <div className="space-y-1.5">
+                  {filteredChannels
+                    .filter((p) => !PLUGIN_CATEGORIES.some((c) => c.types.includes(p.type)))
+                    .map((p) => {
+                      const status = channelStatuses[p.id] ?? 'stopped'
+                      const isSelected = selectedChannelId === p.id
+                      return (
+                        <div
+                          key={p.id}
+                          className={cn(
+                            'flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors',
+                            isSelected
+                              ? 'bg-accent text-accent-foreground'
+                              : 'hover:bg-muted/60 text-foreground/85',
+                            !p.enabled && !isSelected && 'text-muted-foreground'
+                          )}
+                          onClick={() => void handleSelectChannel(p)}
+                        >
+                          <div className={cn('shrink-0', !p.enabled && 'opacity-40')}>
+                            <ChannelIcon icon={getDescriptor(p.type)?.icon ?? ''} className="size-5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium">{p.name}</span>
+                              <span
+                                className={cn(
+                                  'size-1.5 shrink-0 rounded-full',
+                                  status === 'running'
+                                    ? 'bg-emerald-500'
+                                    : status === 'error'
+                                      ? 'bg-destructive'
+                                      : 'bg-muted-foreground/30'
+                                )}
+                              />
+                            </div>
+                            <p className="mt-1 truncate text-[11px] text-muted-foreground">{p.type}</p>
+                          </div>
+                          <Switch
+                            checked={p.enabled}
+                            onCheckedChange={() => {
+                              void handleToggleChannelEnabled(p)
+                            }}
+                            className="scale-75"
+                            onClick={(e) => e.stopPropagation()}
                           />
-                        </span>
-                        <span className="flex-1 truncate text-xs">{p.name}</span>
-                        {p.enabled && (
-                          <span
-                            className={`size-1.5 rounded-full shrink-0 ${
-                              status === 'running'
-                                ? 'bg-emerald-500'
-                                : status === 'error'
-                                  ? 'bg-destructive'
-                                  : 'bg-muted-foreground/30'
-                            }`}
-                          />
-                        )}
-                        <Switch
-                          checked={p.enabled}
-                          onCheckedChange={() => toggleChannelEnabled(p.id)}
-                          className="scale-75"
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </div>
-                    )
-                  })}
-              </div>
+                        </div>
+                      )
+                    })}
+                </div>
+              </section>
             )}
 
             {filteredChannels.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                <Puzzle className="size-8 mb-2 opacity-30" />
-                <p className="text-xs">{t('channel.noChannels', 'No channels found')}</p>
+              <div className="flex h-full min-h-[220px] flex-col items-center justify-center text-muted-foreground">
+                <Puzzle className="mb-3 size-8 opacity-30" />
+                <p className="text-sm">
+                  {projectId
+                    ? t('channel.noProjectChannels', '当前项目暂无可配置频道')
+                    : t('channel.noChannels', 'No channels found')}
+                </p>
               </div>
             )}
           </div>
         </div>
 
-        {/* Right: Config panel */}
-        <div className="flex-1 min-w-0">
+        <div className="min-h-0 min-w-0 bg-background/60">
           {selectedChannel ? (
-            <ChannelConfigPanel plugin={selectedChannel} />
+            <ChannelConfigPanel
+              plugin={selectedChannel}
+              projectId={projectId}
+              projectName={projectName}
+            />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
               {t('channel.selectToConfig', 'Select a channel to configure')}

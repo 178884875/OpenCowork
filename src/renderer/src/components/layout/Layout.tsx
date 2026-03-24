@@ -27,14 +27,15 @@ import {
 } from '@renderer/components/ui/tooltip'
 import { cn } from '@renderer/lib/utils'
 import { TitleBar } from './TitleBar'
-import { NavRail } from './NavRail'
-import { SessionListPanel } from './SessionListPanel'
+import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { RightPanel } from './RightPanel'
 import { DetailPanel } from './DetailPanel'
 import { MessageList } from '@renderer/components/chat/MessageList'
 import { InputArea } from '@renderer/components/chat/InputArea'
 import { SettingsDialog } from '@renderer/components/settings/SettingsDialog'
 import { ChatHomePage } from '@renderer/components/chat/ChatHomePage'
+import { ProjectHomePage } from '@renderer/components/chat/ProjectHomePage'
+import { ProjectArchivePage } from '@renderer/components/chat/ProjectArchivePage'
 import { KeyboardShortcutsDialog } from '@renderer/components/settings/KeyboardShortcutsDialog'
 import { PermissionDialog } from '@renderer/components/cowork/PermissionDialog'
 import { ConversationGuideDialog } from '@renderer/components/chat/ConversationGuideDialog'
@@ -776,6 +777,16 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
   }
 
   const normalizedWorkingFolder = activeWorkingFolder?.toLowerCase()
+  const chatSurfaceActive =
+    !tasksPageOpen &&
+    !resourcesPageOpen &&
+    !skillsPageOpen &&
+    !settingsPageOpen &&
+    !drawPageOpen &&
+    !translatePageOpen &&
+    !sshPageOpen
+  const showEmbeddedSidebar = leftSidebarOpen
+  const showGlobalExpandButton = !leftSidebarOpen && !chatSurfaceActive
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -784,18 +795,35 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
         <TitleBar updateInfo={updateInfo} onOpenUpdateDialog={onOpenUpdateDialog} />
 
         <div className="flex flex-1 overflow-hidden px-1 pt-1 pb-1.5">
-          <div className="flex flex-1 overflow-hidden rounded-lg border border-border/60 bg-background/85 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.55)] backdrop-blur-sm">
-            {/* Narrow icon nav rail */}
-            <NavRail />
-
-            {/* Session list panel */}
+          <div className="relative flex flex-1 overflow-hidden rounded-lg border border-border/60 bg-background/85 shadow-[0_12px_40px_-20px_rgba(0,0,0,0.55)] backdrop-blur-sm">
+            {/* Embedded workspace sidebar */}
             <AnimatePresence>
-              {leftSidebarOpen && !tasksPageOpen && (
+              {showEmbeddedSidebar && (
                 <PanelTransition side="left" disabled={false} className="h-full z-10">
-                  <SessionListPanel />
+                  <WorkspaceSidebar />
                 </PanelTransition>
               )}
             </AnimatePresence>
+
+            {showGlobalExpandButton && (
+              <div className="absolute left-3 top-3 z-20">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 rounded-lg border border-border/60 bg-background/80 backdrop-blur-sm"
+                      onClick={toggleLeftSidebar}
+                    >
+                      <PanelLeftOpen className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {t('layout.expandSidebar', { defaultValue: 'Expand sidebar' })}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            )}
 
             {/* SSH page – always mounted after first visit, hidden via CSS to preserve xterm buffers */}
             {sshPageEverOpened.current && (
@@ -872,6 +900,20 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
                     className="flex flex-1 min-w-0 flex-col overflow-hidden"
                   >
                     <ChatHomePage />
+                  </PageTransition>
+                ) : chatView === 'project' ? (
+                  <PageTransition
+                    key="project-home"
+                    className="flex flex-1 min-w-0 flex-col overflow-hidden"
+                  >
+                    <ProjectHomePage />
+                  </PageTransition>
+                ) : chatView === 'archive' || chatView === 'channels' ? (
+                  <PageTransition
+                    key={chatView === 'channels' ? 'project-channels' : 'project-archive'}
+                    className="flex flex-1 min-w-0 flex-col overflow-hidden"
+                  >
+                    <ProjectArchivePage />
                   </PageTransition>
                 ) : (
                   <PageTransition

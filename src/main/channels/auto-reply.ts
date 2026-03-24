@@ -9,8 +9,19 @@ import type { ChannelEvent, ChannelInstance, ChannelIncomingMessageData } from '
 import type { ChannelManager } from './channel-manager'
 import { tryHandleCommand } from './plugin-commands'
 
-const PLUGINS_WORK_DIR = path.join(os.homedir(), '.open-cowork', 'plugins')
 const PLUGINS_FILE = path.join(os.homedir(), '.open-cowork', 'plugins.json')
+
+function encodeSessionKeyPart(value: string): string {
+  return encodeURIComponent(value)
+}
+
+function buildPluginMessageSessionKey(pluginId: string, chatId: string): string {
+  return `plugin:${pluginId}:chat:${encodeSessionKeyPart(chatId)}`
+}
+
+function buildLegacyPluginMessageSessionKeyPrefix(pluginId: string, chatId: string): string {
+  return `plugin:${pluginId}:chat:${encodeSessionKeyPart(chatId)}:message:`
+}
 
 function shouldReplaceSessionTitle(
   currentTitle: string | undefined,
@@ -47,7 +58,8 @@ export function handleChannelAutoReply(event: ChannelEvent): void {
   if (!data || !data.chatId || (!data.content && !data.images?.length && !data.audio)) return
 
   const pluginId = event.pluginId
-  const compositeKey = `plugin:${pluginId}:chat:${data.chatId}`
+  const compositeKey = buildPluginMessageSessionKey(pluginId, data.chatId)
+  const legacyCompositeKeyPrefix = buildLegacyPluginMessageSessionKeyPrefix(pluginId, data.chatId)
 
   try {
     const db = getDb()
@@ -62,16 +74,36 @@ export function handleChannelAutoReply(event: ChannelEvent): void {
       /* ignore read errors */
     }
 
-    const pluginProject = projectsDao.ensurePluginProject(
-      pluginId,
-      pluginInstance?.name || `Plugin ${pluginId}`
-    )
-    const pluginWorkDir = pluginProject.working_folder ?? path.join(PLUGINS_WORK_DIR, pluginId)
-    const pluginSshConnectionId = pluginProject.ssh_connection_id ?? null
+    const pluginProject = pluginInstance?.projectId
+      ? projectsDao.getProject(pluginInstance.projectId)
+      : undefined
+    const pluginWorkDir = pluginProject?.working_folder ?? ''
+    const pluginSshConnectionId = pluginProject?.ssh_connection_id ?? null
 
     let session = db
       .prepare('SELECT id, title, project_id FROM sessions WHERE external_chat_id = ? LIMIT 1')
       .get(compositeKey) as { id: string; title: string; project_id?: string | null } | undefined
+
+    if (!session) {
+      session = db
+        .prepare(
+          `SELECT id, title, project_id
+             FROM sessions
+            WHERE plugin_id = ? AND external_chat_id LIKE ?
+            ORDER BY updated_at DESC
+            LIMIT 1`
+        )
+        .get(pluginId, `${legacyCompositeKeyPrefix}%`) as
+        | { id: string; title: string; project_id?: string | null }
+        | undefined
+
+      if (session) {
+        db.prepare('UPDATE sessions SET external_chat_id = ? WHERE id = ?').run(
+          compositeKey,
+          session.id
+        )
+      }
+    }
 
     const now = Date.now()
     const sessionProviderId = pluginInstance?.providerId ?? null
@@ -88,24 +120,28 @@ export function handleChannelAutoReply(event: ChannelEvent): void {
         title,
         now,
         now,
-        pluginProject.id,
-        pluginWorkDir,
+        pluginProject?.id ?? null,
+        pluginWorkDir || null,
         pluginSshConnectionId,
         pluginId,
         compositeKey,
         sessionProviderId,
         sessionModelId
       )
-      session = { id: sessionId, title, project_id: pluginProject.id }
+      session = { id: sessionId, title, project_id: pluginProject?.id ?? null }
     } else {
-      db.prepare(
-        `UPDATE sessions
-            SET updated_at = ?,
-                project_id = ?,
-                working_folder = ?,
-                ssh_connection_id = ?
-          WHERE id = ?`
-      ).run(now, pluginProject.id, pluginWorkDir, pluginSshConnectionId, session.id)
+      if (pluginProject) {
+        db.prepare(
+          `UPDATE sessions
+              SET updated_at = ?,
+                  project_id = ?,
+                  working_folder = ?,
+                  ssh_connection_id = ?
+            WHERE id = ?`
+        ).run(now, pluginProject.id, pluginWorkDir || null, pluginSshConnectionId, session.id)
+      } else {
+        db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, session.id)
+      }
 
       if (sessionProviderId || sessionModelId) {
         db.prepare('UPDATE sessions SET provider_id = ?, model_id = ? WHERE id = ?').run(
@@ -172,8 +208,8 @@ export function handleChannelAutoReply(event: ChannelEvent): void {
         images: data.images,
         audio: data.audio,
         chatType: data.chatType,
-        projectId: pluginProject.id,
-        workingFolder: pluginWorkDir,
+        projectId: pluginProject?.id ?? undefined,
+        workingFolder: pluginWorkDir || undefined,
         sshConnectionId: pluginSshConnectionId
       })
     }

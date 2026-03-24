@@ -163,6 +163,10 @@ export function SessionListPanel(): React.JSX.Element {
   }, [sessionDigest])
   const activeProjectId = useChatStore((s) => s.activeProjectId)
   const activeSessionId = useChatStore((s) => s.activeSessionId)
+  const activeSessionProjectId = useMemo(
+    () => sessions.find((session) => session.id === activeSessionId)?.projectId ?? null,
+    [activeSessionId, sessions]
+  )
   const deleteSession = useChatStore((s) => s.deleteSession)
   const setActiveSession = useChatStore((s) => s.setActiveSession)
   const setActiveProject = useChatStore((s) => s.setActiveProject)
@@ -286,9 +290,27 @@ export function SessionListPanel(): React.JSX.Element {
 
   useEffect(() => {
     if (initialProjectCollapseAppliedRef.current || projects.length === 0) return
-    setCollapsedProjectIds(new Set(projects.map((project) => project.id)))
+    const expandedProjectId = activeSessionProjectId ?? activeProjectId
+    setCollapsedProjectIds(
+      new Set(
+        projects
+          .map((project) => project.id)
+          .filter((projectId) => !expandedProjectId || projectId !== expandedProjectId)
+      )
+    )
     initialProjectCollapseAppliedRef.current = true
-  }, [projects])
+  }, [activeProjectId, activeSessionProjectId, projects])
+
+  useEffect(() => {
+    const expandedProjectId = activeSessionProjectId ?? activeProjectId
+    if (!expandedProjectId) return
+    setCollapsedProjectIds((prev) => {
+      if (!prev.has(expandedProjectId)) return prev
+      const next = new Set(prev)
+      next.delete(expandedProjectId)
+      return next
+    })
+  }, [activeProjectId, activeSessionProjectId])
 
   useEffect(() => {
     if (isDraggingSidebar) return

@@ -16,7 +16,7 @@ export type NavItem =
   | 'ssh'
   | 'tasks'
 
-export type ChatView = 'home' | 'session'
+export type ChatView = 'home' | 'project' | 'archive' | 'channels' | 'session'
 
 export type RightPanelTab = 'steps' | 'team' | 'artifacts' | 'context' | 'files' | 'plan'
 export type RightPanelSection = 'execution' | 'resources' | 'collaboration' | 'monitoring'
@@ -242,9 +242,12 @@ interface UIStore {
   enterPlanMode: (sessionId?: string | null) => void
   exitPlanMode: (sessionId?: string | null) => void
 
-  /** Chat view navigation: 'home' = /chat homepage, 'session' = /chat/:id */
+  /** Chat view navigation */
   chatView: ChatView
   navigateToHome: () => void
+  navigateToProject: () => void
+  navigateToArchive: () => void
+  navigateToChannels: () => void
   navigateToSession: () => void
 }
 
@@ -292,23 +295,24 @@ export const useUIStore = create<UIStore>((set, get) => ({
   settingsPageOpen: false,
   settingsTab: 'general',
   openSettingsPage: (tab) =>
-    set({
+    set((state) => ({
       settingsPageOpen: true,
       settingsTab: tab ?? 'general',
-      leftSidebarOpen: false,
+      leftSidebarOpen: state.leftSidebarOpen,
       skillsPageOpen: false,
       resourcesPageOpen: false,
       translatePageOpen: false,
       drawPageOpen: false,
       sshPageOpen: false,
       tasksPageOpen: false
-    }),
+    })),
   closeSettingsPage: () => set({ settingsPageOpen: false }),
   setSettingsTab: (tab) => set({ settingsTab: tab }),
 
   skillsPageOpen: false,
   openSkillsPage: () =>
-    set({
+    set((state) => ({
+      activeNavItem: 'skills',
       skillsPageOpen: true,
       resourcesPageOpen: false,
       settingsPageOpen: false,
@@ -316,13 +320,14 @@ export const useUIStore = create<UIStore>((set, get) => ({
       drawPageOpen: false,
       sshPageOpen: false,
       tasksPageOpen: false,
-      leftSidebarOpen: false
-    }),
+      leftSidebarOpen: state.leftSidebarOpen
+    })),
   closeSkillsPage: () => set({ skillsPageOpen: false }),
 
   resourcesPageOpen: false,
   openResourcesPage: () =>
-    set({
+    set((state) => ({
+      activeNavItem: 'resources',
       resourcesPageOpen: true,
       settingsPageOpen: false,
       skillsPageOpen: false,
@@ -330,13 +335,14 @@ export const useUIStore = create<UIStore>((set, get) => ({
       drawPageOpen: false,
       sshPageOpen: false,
       tasksPageOpen: false,
-      leftSidebarOpen: false
-    }),
+      leftSidebarOpen: state.leftSidebarOpen
+    })),
   closeResourcesPage: () => set({ resourcesPageOpen: false }),
 
   translatePageOpen: false,
   openTranslatePage: () =>
-    set({
+    set((state) => ({
+      activeNavItem: 'translate',
       translatePageOpen: true,
       settingsPageOpen: false,
       skillsPageOpen: false,
@@ -344,13 +350,14 @@ export const useUIStore = create<UIStore>((set, get) => ({
       drawPageOpen: false,
       sshPageOpen: false,
       tasksPageOpen: false,
-      leftSidebarOpen: false
-    }),
+      leftSidebarOpen: state.leftSidebarOpen
+    })),
   closeTranslatePage: () => set({ translatePageOpen: false }),
 
   drawPageOpen: false,
   openDrawPage: () =>
-    set({
+    set((state) => ({
+      activeNavItem: 'draw',
       drawPageOpen: true,
       settingsPageOpen: false,
       skillsPageOpen: false,
@@ -358,13 +365,14 @@ export const useUIStore = create<UIStore>((set, get) => ({
       translatePageOpen: false,
       sshPageOpen: false,
       tasksPageOpen: false,
-      leftSidebarOpen: false
-    }),
+      leftSidebarOpen: state.leftSidebarOpen
+    })),
   closeDrawPage: () => set({ drawPageOpen: false }),
 
   sshPageOpen: false,
   openSshPage: () =>
-    set({
+    set((state) => ({
+      activeNavItem: 'ssh',
       sshPageOpen: true,
       settingsPageOpen: false,
       skillsPageOpen: false,
@@ -372,13 +380,14 @@ export const useUIStore = create<UIStore>((set, get) => ({
       translatePageOpen: false,
       drawPageOpen: false,
       tasksPageOpen: false,
-      leftSidebarOpen: false
-    }),
+      leftSidebarOpen: state.leftSidebarOpen
+    })),
   closeSshPage: () => set({ sshPageOpen: false }),
 
   tasksPageOpen: false,
   openTasksPage: () =>
-    set({
+    set((state) => ({
+      activeNavItem: 'tasks',
       tasksPageOpen: true,
       settingsPageOpen: false,
       skillsPageOpen: false,
@@ -386,8 +395,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
       translatePageOpen: false,
       drawPageOpen: false,
       sshPageOpen: false,
-      leftSidebarOpen: false
-    }),
+      leftSidebarOpen: state.leftSidebarOpen
+    })),
   closeTasksPage: () => set({ tasksPageOpen: false }),
 
   shortcutsOpen: false,
@@ -650,7 +659,41 @@ export const useUIStore = create<UIStore>((set, get) => ({
   chatView: 'home',
   navigateToHome: () =>
     set({
+      activeNavItem: 'chat',
       chatView: 'home',
+      settingsPageOpen: false,
+      skillsPageOpen: false,
+      resourcesPageOpen: false,
+      translatePageOpen: false,
+      sshPageOpen: false,
+      tasksPageOpen: false
+    }),
+  navigateToProject: () =>
+    set({
+      activeNavItem: 'chat',
+      chatView: 'project',
+      settingsPageOpen: false,
+      skillsPageOpen: false,
+      resourcesPageOpen: false,
+      translatePageOpen: false,
+      sshPageOpen: false,
+      tasksPageOpen: false
+    }),
+  navigateToArchive: () =>
+    set({
+      activeNavItem: 'chat',
+      chatView: 'archive',
+      settingsPageOpen: false,
+      skillsPageOpen: false,
+      resourcesPageOpen: false,
+      translatePageOpen: false,
+      sshPageOpen: false,
+      tasksPageOpen: false
+    }),
+  navigateToChannels: () =>
+    set({
+      activeNavItem: 'chat',
+      chatView: 'channels',
       settingsPageOpen: false,
       skillsPageOpen: false,
       resourcesPageOpen: false,
@@ -660,6 +703,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
     }),
   navigateToSession: () =>
     set({
+      activeNavItem: 'chat',
       chatView: 'session',
       settingsPageOpen: false,
       skillsPageOpen: false,

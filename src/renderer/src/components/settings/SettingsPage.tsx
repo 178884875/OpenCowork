@@ -4,7 +4,6 @@ import {
   BrainCircuit,
   Info,
   Server,
-  MessageSquare,
   Cable,
   Loader2,
   Github,
@@ -292,12 +291,6 @@ const menuGroupDefs: Array<{
         icon: <Puzzle className="size-4" />,
         labelKey: 'plugin.title',
         descKey: 'plugin.subtitle'
-      },
-      {
-        id: 'channel',
-        icon: <MessageSquare className="size-4" />,
-        labelKey: 'channel.title',
-        descKey: 'channel.subtitle'
       },
       {
         id: 'mcp',
@@ -2181,7 +2174,8 @@ export function SettingsPage(): React.JSX.Element {
   const settingsTab = useUIStore((s) => s.settingsTab)
   const setSettingsTab = useUIStore((s) => s.setSettingsTab)
 
-  const ActivePanel = panelMap[settingsTab]
+  const effectiveSettingsTab = settingsTab === 'channel' ? 'general' : settingsTab
+  const ActivePanel = panelMap[effectiveSettingsTab]
 
   return (
     <div className="flex h-screen w-full bg-background">
@@ -2208,14 +2202,14 @@ export function SettingsPage(): React.JSX.Element {
                   key={item.id}
                   onClick={() => setSettingsTab(item.id)}
                   className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-all duration-150 ${
-                    settingsTab === item.id
+                    effectiveSettingsTab === item.id
                       ? 'bg-accent text-accent-foreground font-medium'
                       : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
                   }`}
                 >
                   <span
                     className={`flex items-center justify-center size-5 ${
-                      settingsTab === item.id ? 'text-accent-foreground' : 'text-muted-foreground'
+                      effectiveSettingsTab === item.id ? 'text-accent-foreground' : 'text-muted-foreground'
                     }`}
                   >
                     {item.icon}
@@ -2235,13 +2229,12 @@ export function SettingsPage(): React.JSX.Element {
       <div className="relative flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden px-6 py-4">
         {/* Content */}
         <AnimatePresence mode="wait">
-          {settingsTab === 'provider' ||
-          settingsTab === 'plugin' ||
-          settingsTab === 'channel' ||
-          settingsTab === 'mcp' ? (
+          {effectiveSettingsTab === 'provider' ||
+          effectiveSettingsTab === 'plugin' ||
+          effectiveSettingsTab === 'mcp' ? (
             <div className="flex-1 min-h-0 min-w-0 overflow-hidden pb-4" key="full-panel">
               <SlideIn
-                key={settingsTab}
+                key={effectiveSettingsTab}
                 direction="right"
                 duration={0.25}
                 className="h-full min-h-0"
@@ -2252,7 +2245,7 @@ export function SettingsPage(): React.JSX.Element {
           ) : (
             <div className="flex-1 overflow-y-auto" key="scroll-panel">
               <div className="mx-auto max-w-2xl px-8 pb-16">
-                <FadeIn key={settingsTab} duration={0.25}>
+                <FadeIn key={effectiveSettingsTab} duration={0.25}>
                   <ActivePanel />
                 </FadeIn>
               </div>

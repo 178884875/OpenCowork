@@ -3,7 +3,7 @@
     "placeholder": "输入消息...",
     "placeholderClarify": "描述你的想法，我会先不断追问把需求问透...",
     "placeholderCowork": "让助手帮你处理项目...",
-    "placeholderCode": "描述你想构建的内容...",
+    "placeholderCode": "描述你想构建的内容，例如修复 Bug、写脚本，或使用 /commit 提交仓库...",
     "noApiKey": "未配置 API Key，点击此处打开设置。",
     "attachImages": "附加图片（也支持粘贴或拖放）",
     "dropImages": "拖放图片或文件",
@@ -385,6 +385,7 @@
     "summarizeProject": "总结项目结构",
     "findBugs": "查找并修复潜在 Bug",
     "addErrorHandling": "给主模块添加错误处理",
+    "useCommitCommand": "使用 /commit 提交仓库",
     "reviewCodebase": "审查代码库并提出改进建议",
     "addTests": "给主模块添加测试",
     "refactorError": "重构以改善错误处理",
@@ -450,6 +451,7 @@
     "req": "请求 {{count}}",
     "ttft": "首 token",
     "tps": "TPS",
+    "regenerateReference": "重新生成参考",
     "imageError": {
       "titleTimeout": "图片生成超时",
       "descTimeout": "请求已超过 10 分钟。建议简化提示词、降低复杂度后重试。",
@@ -463,6 +465,20 @@
       "descUnknown": "生成过程中发生未知错误，请稍后重试。",
       "details": "查看技术详情"
     }
+  },
+  "messageActions": {
+    "translate": "翻译",
+    "readAloud": "语音朗读",
+    "share": "分享",
+    "collapse": "收起消息",
+    "expand": "展开消息",
+    "deleteAndRegenerate": "删除并重新生成",
+    "sentToTranslator": "已填入翻译页",
+    "copiedForShare": "已复制到剪贴板，可直接分享",
+    "shareFailed": "分享失败",
+    "speechNotSupported": "当前环境不支持语音朗读",
+    "collapsedMessage": "已收起消息",
+    "imagesCollapsed": "{{count}} 张图片"
   },
   "toolGroup": {
     "readFiles": "读取了 {{count}} 个文件",

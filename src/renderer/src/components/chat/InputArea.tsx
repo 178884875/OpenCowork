@@ -6,6 +6,7 @@ import {
   FolderOpen,
   AlertTriangle,
   FileUp,
+  FileCode2,
   Sparkles,
   X,
   Trash2,
@@ -42,20 +43,17 @@ import {
   type ImageAttachment
 } from '@renderer/lib/image-attachments'
 import {
+  createSelectFileToken,
   getSelectFileMentionQuery,
   selectFileTextToPlainText
 } from '@renderer/lib/select-file-tags'
 import {
-  createFileReferenceNode,
-  createTextReplacementNode,
   deserializeEditorState,
   documentHasFileReferences,
   editorDocumentToPlainText,
   ensureSelectedFile,
   mergeSelectedFiles,
-  normalizeSelectionToFileBoundaries,
   removeReferenceNode,
-  removeSelectedFile,
   replaceEditorRange,
   serializeEditorDocument,
   type EditorDocumentNode,
@@ -64,7 +62,6 @@ import {
 import { SkillsMenu } from './SkillsMenu'
 import { ModelSwitcher } from './ModelSwitcher'
 import { FileAwareEditor, type FileAwareEditorHandle } from './FileAwareEditor'
-import { SelectedFileBar } from './SelectedFileBar'
 import { listCommands, type CommandCatalogItem } from '@renderer/lib/commands/command-loader'
 import { useMcpStore } from '@renderer/stores/mcp-store'
 import {
@@ -97,6 +94,7 @@ import {
   DialogTitle
 } from '@renderer/components/ui/dialog'
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
+import { cn } from '@renderer/lib/utils'
 
 function ContextRing(): React.JSX.Element | null {
   const chatView = useUIStore((s) => s.chatView)
@@ -221,19 +219,6 @@ const defaultRecommendationKeys: Record<AppMode, string> = {
   code: 'input.recommendationDefaultCode'
 }
 
-interface InputHistoryEntry {
-  text: string
-  images: ImageAttachment[]
-  selectedFiles: SelectedFileItem[]
-}
-
-interface InputHistoryDraft {
-  text: string
-  images: ImageAttachment[]
-  selectedSkill: string | null
-  selectedFiles: SelectedFileItem[]
-}
-
 interface FileSearchItem {
   name: string
   path: string
@@ -241,12 +226,11 @@ interface FileSearchItem {
 
 const EMPTY_QUEUED_MESSAGES: PendingSessionMessageItem[] = []
 const EMPTY_SESSION_MESSAGES: UnifiedMessage[] = []
-const INPUT_HISTORY_LIMIT = 30
-const PENDING_HISTORY_KEY = '__pending_session__'
 const MIN_INPUT_HEIGHT = 120
 const DEFAULT_SESSION_INPUT_HEIGHT = 160
 const MAX_INPUT_HEIGHT = 500
 const MIN_MESSAGE_LIST_HEIGHT = 120
+const EDITOR_MIN_HEIGHT = 60
 const FALLBACK_MAX_VIEWPORT_RATIO = 0.6
 const MAX_SLASH_COMMAND_RESULTS = 8
 
@@ -327,23 +311,21 @@ export function InputArea({
   disabled = false
 }: InputAreaProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  const [editorDocument, setEditorDocument] = React.useState<EditorDocumentNode[]>([])
+  const chatView = useUIStore((s) => s.chatView)
+  const isHomeComposer = chatView === 'home'
+  const minComposerHeight = isHomeComposer ? HOME_INPUT_MIN_HEIGHT : MIN_INPUT_HEIGHT
+  const [documentNodes, setDocumentNodes] = React.useState<EditorDocumentNode[]>([])
   const [selectedFiles, setSelectedFiles] = React.useState<SelectedFileItem[]>([])
-  const [highlightedFileId, setHighlightedFileId] = React.useState<string | null>(null)
   const [editorSelection, setEditorSelection] = React.useState({ start: 0, end: 0 })
   const text = React.useMemo(
-    () => serializeEditorDocument(editorDocument, selectedFiles),
-    [editorDocument, selectedFiles]
+    () => editorDocumentToPlainText(documentNodes, selectedFiles),
+    [documentNodes, selectedFiles]
   )
   const finalSerializedText = React.useMemo(
-    () => serializeEditorDocument(editorDocument, selectedFiles, { appendUnreferencedFiles: true }),
-    [editorDocument, selectedFiles]
+    () => serializeEditorDocument(documentNodes, selectedFiles),
+    [documentNodes, selectedFiles]
   )
-  const plainText = React.useMemo(
-    () => editorDocumentToPlainText(editorDocument, selectedFiles),
-    [editorDocument, selectedFiles]
-  )
-  const debouncedTokens = useDebouncedTokens(text)
+  const debouncedTokens = useDebouncedTokens(finalSerializedText)
   const [selectedSkill, setSelectedSkill] = React.useState<string | null>(null)
   const [slashCommands, setSlashCommands] = React.useState<CommandCatalogItem[]>([])
   const [slashCommandsLoading, setSlashCommandsLoading] = React.useState(false)
@@ -365,7 +347,7 @@ export function InputArea({
   )
   const chatView = useUIStore((s) => s.chatView)
   const contentScrollRef = React.useRef<HTMLDivElement>(null)
-  const editorRef = React.useRef<FileAwareEditorHandle>(null)
+  const editorRef = React.useRef<FileAwareEditorHandle | null>(null)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const queueFileInputRef = React.useRef<HTMLInputElement>(null)
   const rootRef = React.useRef<HTMLDivElement>(null)
@@ -374,8 +356,8 @@ export function InputArea({
   )
   const dragRef = React.useRef<{ startY: number; startH: number; maxH: number } | null>(null)
   const containerRef = React.useRef<HTMLDivElement>(null)
-  const setInputSelection = setEditorSelection
-  const serializedTextRef = React.useRef(text)
+  const textRef = React.useRef(text)
+  const documentRef = React.useRef(documentNodes)
   const selectedFilesRef = React.useRef(selectedFiles)
 
   const getMaxInputHeight = React.useCallback(() => {
@@ -490,10 +472,6 @@ export function InputArea({
     },
     [getMaxInputHeight]
   )
-  const [sentHistory, setSentHistory] = React.useState<InputHistoryEntry[]>([])
-  const [historyCursor, setHistoryCursor] = React.useState<number | null>(null)
-  const historyDraftRef = React.useRef<InputHistoryDraft | null>(null)
-  const historyBySessionRef = React.useRef<Record<string, InputHistoryEntry[]>>({})
   const prevSessionIdRef = React.useRef<string | null>(null)
   /** Per-session input draft (text + images + skill + files) */
   const draftBySessionRef = React.useRef<
@@ -570,6 +548,51 @@ export function InputArea({
   const [isQueueExpanded, setIsQueueExpanded] = React.useState(false)
   const [queueClearConfirmOpen, setQueueClearConfirmOpen] = React.useState(false)
   const [autoAcceptCountdown, setAutoAcceptCountdown] = React.useState<number | null>(null)
+
+  const syncAutoInputHeight = React.useCallback(() => {
+    if (inputHeight !== null) return
+    const container = containerRef.current
+    const editorMetrics = editorRef.current?.getScrollMetrics()
+    if (!container || !editorMetrics) return
+
+    const chromeHeight = Math.max(0, container.offsetHeight - editorMetrics.clientHeight)
+    const nextHeight = Math.max(
+      minComposerHeight,
+      Math.min(
+        autoMaxInputHeight,
+        Math.ceil(chromeHeight + Math.max(EDITOR_MIN_HEIGHT, editorMetrics.scrollHeight))
+      )
+    )
+
+    setAutoInputHeight((prev) => (prev === nextHeight ? prev : nextHeight))
+  }, [autoMaxInputHeight, inputHeight, minComposerHeight])
+
+  React.useLayoutEffect(() => {
+    syncAutoInputHeight()
+  }, [
+    syncAutoInputHeight,
+    documentNodes,
+    selectedFiles,
+    attachedImages.length,
+    selectedSkill,
+    queuedMessages.length,
+    isQueueExpanded
+  ])
+
+  React.useEffect(() => {
+    if (inputHeight !== null || typeof ResizeObserver === 'undefined') return
+    const container = containerRef.current
+    if (!container) return
+
+    const observer = new ResizeObserver(() => {
+      syncAutoInputHeight()
+    })
+    observer.observe(container)
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [inputHeight, syncAutoInputHeight])
 
   const startEditQueuedMessage = React.useCallback((msg: PendingSessionMessageItem) => {
     setEditingQueueItemId(msg.id)
@@ -668,104 +691,93 @@ export function InputArea({
     dispatchNextQueuedMessageForSession(activeSessionId)
   }, [activeSessionId])
 
-  const getHistoryKey = React.useCallback(
-    () => activeSessionId ?? PENDING_HISTORY_KEY,
-    [activeSessionId]
-  )
-  const updateSessionHistory = React.useCallback(
-    (updater: (prev: InputHistoryEntry[]) => InputHistoryEntry[]) => {
-      const historyKey = getHistoryKey()
-      const prevHistory = historyBySessionRef.current[historyKey] ?? []
-      const nextHistory = updater(prevHistory)
-      historyBySessionRef.current[historyKey] = nextHistory
-      setSentHistory(nextHistory)
-    },
-    [getHistoryKey]
-  )
-  const clearHistoryNavigation = React.useCallback(() => {
-    if (historyCursor !== null) {
-      setHistoryCursor(null)
-      historyDraftRef.current = null
-    }
-  }, [historyCursor])
   React.useEffect(() => {
-    serializedTextRef.current = text
+    textRef.current = text
   }, [text])
+  React.useEffect(() => {
+    documentRef.current = documentNodes
+  }, [documentNodes])
   React.useEffect(() => {
     selectedFilesRef.current = selectedFiles
   }, [selectedFiles])
+
   const applyEditorStateFromSerializedText = React.useCallback(
-    (nextText: string, nextSelectedFiles?: SelectedFileItem[]) => {
-      const parsed = deserializeEditorState(
-        nextText,
-        workingFolder,
-        nextSelectedFiles ?? selectedFiles
-      )
-      setEditorDocument(parsed.document)
-      setSelectedFiles(parsed.selectedFiles)
-    },
-    [selectedFiles, workingFolder]
-  )
-  const setText = React.useCallback(
-    (value: string | ((prev: string) => string)) => {
-      const previousText = serializedTextRef.current
-      const previousFiles = selectedFilesRef.current
-      const nextText = typeof value === 'function' ? value(previousText) : value
-      const parsed = deserializeEditorState(nextText, workingFolder, previousFiles)
-      setEditorDocument(parsed.document)
-      setSelectedFiles(parsed.selectedFiles)
+    (nextText: string, baseFiles: SelectedFileItem[] = selectedFilesRef.current) => {
+      const nextState = deserializeEditorState(nextText, workingFolder, baseFiles)
+      setDocumentNodes(nextState.document)
+      setSelectedFiles(nextState.selectedFiles)
     },
     [workingFolder]
+  )
+
+  const setText = React.useCallback(
+    (value: string | ((prev: string) => string)) => {
+      const previousText = textRef.current
+      const nextText = typeof value === 'function' ? value(previousText) : value
+      applyEditorStateFromSerializedText(nextText, selectedFilesRef.current)
+    },
+    [applyEditorStateFromSerializedText]
   )
 
   const focusInputAtEnd = React.useCallback(() => {
     editorRef.current?.focusAtEnd()
   }, [])
 
-  const getNormalizedSelection = React.useCallback(
-    (start: number, end: number) =>
-      normalizeSelectionToFileBoundaries(editorDocument, selectedFiles, start, end),
-    [editorDocument, selectedFiles]
-  )
-  const hasFileReferences = React.useMemo(
-    () => documentHasFileReferences(editorDocument),
-    [editorDocument]
-  )
+  const hasFileReferences = React.useMemo(() => selectedFiles.length > 0, [selectedFiles])
 
-  const replaceSelectionWithNodes = React.useCallback(
+  const replaceSelectionWithText = React.useCallback(
     (
-      replacement: EditorDocumentNode[],
+      replacement: string,
       selection: { start: number; end: number } = editorSelection,
-      cursorOffset = 0
+      cursorOffset = 0,
+      nextSelectedFiles?: SelectedFileItem[]
     ) => {
-      const normalized = getNormalizedSelection(selection.start, selection.end)
+      const replacementState = deserializeEditorState(
+        replacement,
+        workingFolder,
+        nextSelectedFiles ?? selectedFilesRef.current
+      )
+      const candidateFiles = mergeSelectedFiles(
+        nextSelectedFiles ?? selectedFilesRef.current,
+        replacementState.selectedFiles
+      )
       const nextDocument = replaceEditorRange(
-        editorDocument,
-        selectedFiles,
-        normalized.start,
-        normalized.end,
-        replacement
+        documentRef.current,
+        selectedFilesRef.current,
+        selection.start,
+        selection.end,
+        replacementState.document
       )
-      const replacementLength = replacement.reduce(
-        (sum, node) => sum + editorDocumentToPlainText([node], selectedFiles).length,
-        0
+      const referencedFileIds = new Set(
+        nextDocument
+          .filter(
+            (node): node is Extract<EditorDocumentNode, { type: 'file' }> => node.type === 'file'
+          )
+          .map((node) => node.fileId)
       )
-      const nextCursor = normalized.start + replacementLength + cursorOffset
-      setEditorDocument(nextDocument)
+      const nextFiles = candidateFiles.filter((file) => referencedFileIds.has(file.id))
+      const nextCursor =
+        selection.start +
+        editorDocumentToPlainText(replacementState.document, candidateFiles).length +
+        cursorOffset
+
+      setDocumentNodes(nextDocument)
+      setSelectedFiles(nextFiles)
       requestAnimationFrame(() => {
         editorRef.current?.focus()
         editorRef.current?.setSelectionOffsets(nextCursor, nextCursor)
+        setEditorSelection({ start: nextCursor, end: nextCursor })
       })
     },
-    [editorDocument, editorSelection, getNormalizedSelection, selectedFiles]
+    [editorSelection, workingFolder]
   )
 
   const recommendationFallback = t(defaultRecommendationKeys[mode])
   const shouldAutoAcceptRecommendation =
     mode === 'clarify' && clarifyAutoAcceptRecommended && !disabled && !isOptimizing && !isStreaming
   const getCaretAtEnd = React.useCallback(() => {
-    return editorSelection.start === editorSelection.end && editorSelection.end === plainText.length
-  }, [editorSelection.end, editorSelection.start, plainText.length])
+    return editorSelection.start === editorSelection.end && editorSelection.end === text.length
+  }, [editorSelection.end, editorSelection.start, text.length])
   const {
     suggestionText,
     effectivePlaceholder,
@@ -789,15 +801,15 @@ export function InputArea({
   })
   const activeFileMention = React.useMemo(() => {
     if (editorSelection.start === editorSelection.end) {
-      const selectionMention = getSelectFileMentionQuery(plainText, editorSelection.end)
+      const selectionMention = getSelectFileMentionQuery(text, editorSelection.end)
       if (selectionMention) return selectionMention
     }
 
-    return getSelectFileMentionQuery(plainText, plainText.length)
-  }, [editorSelection.end, editorSelection.start, plainText])
+    return getSelectFileMentionQuery(text, text.length)
+  }, [editorSelection.end, editorSelection.start, text])
   const fileQuery = activeFileMention?.query.trim() ?? ''
   const fileMenuOpen = Boolean(activeFileMention)
-  const slashQuery = React.useMemo(() => getSlashCommandQuery(plainText), [plainText])
+  const slashQuery = React.useMemo(() => getSlashCommandQuery(text), [text])
   const filteredSlashCommands = React.useMemo(() => {
     const query = slashQuery ?? ''
     return slashCommands
@@ -813,6 +825,7 @@ export function InputArea({
       .map((item) => item.command)
   }, [slashCommands, slashQuery])
   const slashMenuOpen = slashQuery !== null
+  const hasFloatingSuggestionMenu = fileMenuOpen || slashMenuOpen
 
   React.useEffect(() => {
     if (!slashMenuOpen) {
@@ -892,10 +905,13 @@ export function InputArea({
 
   const insertSelectedFile = React.useCallback(
     (filePath: string) => {
-      clearHistoryNavigation()
       setSelectedSkill(null)
 
-      const { files: nextFiles, file } = ensureSelectedFile(selectedFiles, filePath, workingFolder)
+      const { files: nextFiles, file } = ensureSelectedFile(
+        selectedFilesRef.current,
+        filePath,
+        workingFolder
+      )
       if (!file) return
 
       const mention = activeFileMention ?? {
@@ -903,121 +919,42 @@ export function InputArea({
         end: editorSelection.end
       }
       const suffix =
-        plainText.slice(mention.end).startsWith(' ') ||
-        plainText.slice(mention.end).startsWith('\n') ||
-        mention.end >= plainText.length
+        text.slice(mention.end).startsWith(' ') ||
+        text.slice(mention.end).startsWith('\n') ||
+        mention.end >= text.length
           ? ''
           : ' '
 
-      setSelectedFiles(nextFiles)
-      replaceSelectionWithNodes(
-        [
-          createFileReferenceNode(file.id, file.sendPath),
-          ...(suffix ? [createTextReplacementNode(suffix)] : [])
-        ],
-        mention
+      replaceSelectionWithText(
+        `${createSelectFileToken(file.sendPath)}${suffix}`,
+        mention,
+        0,
+        nextFiles
       )
     },
     [
       activeFileMention,
-      clearHistoryNavigation,
       editorSelection.end,
       editorSelection.start,
-      plainText,
-      replaceSelectionWithNodes,
-      selectedFiles,
+      replaceSelectionWithText,
+      text,
       workingFolder
     ]
   )
 
   const insertSlashCommand = React.useCallback(
     (commandName: string) => {
-      clearHistoryNavigation()
       setSelectedSkill(null)
       applyEditorStateFromSerializedText(`/${commandName} `, selectedFiles)
       requestAnimationFrame(() => {
         focusInputAtEnd()
       })
     },
-    [applyEditorStateFromSerializedText, clearHistoryNavigation, focusInputAtEnd, selectedFiles]
-  )
-
-  const applyHistoryEntry = React.useCallback(
-    (entry: InputHistoryEntry) => {
-      applyEditorStateFromSerializedText(entry.text, entry.selectedFiles)
-      setAttachedImages(cloneImageAttachments(entry.images))
-      setSelectedSkill(null)
-      requestAnimationFrame(() => {
-        focusInputAtEnd()
-      })
-    },
-    [applyEditorStateFromSerializedText, focusInputAtEnd]
-  )
-  const restoreDraftFromHistory = React.useCallback(() => {
-    const draft = historyDraftRef.current
-    applyEditorStateFromSerializedText(draft?.text ?? '', draft?.selectedFiles ?? [])
-    setAttachedImages(cloneImageAttachments(draft?.images ?? []))
-    setSelectedSkill(draft?.selectedSkill ?? null)
-    historyDraftRef.current = null
-    requestAnimationFrame(() => {
-      focusInputAtEnd()
-    })
-  }, [applyEditorStateFromSerializedText, focusInputAtEnd])
-  const navigateHistory = React.useCallback(
-    (direction: 'up' | 'down') => {
-      if (sentHistory.length === 0) return
-      if (direction === 'up') {
-        if (historyCursor === null) {
-          historyDraftRef.current = {
-            text,
-            images: cloneImageAttachments(attachedImages),
-            selectedSkill,
-            selectedFiles: selectedFiles.map((file) => ({ ...file }))
-          }
-          const latest = sentHistory.length - 1
-          setHistoryCursor(latest)
-          applyHistoryEntry(sentHistory[latest])
-          return
-        }
-        const next = Math.max(historyCursor - 1, 0)
-        if (next !== historyCursor) {
-          setHistoryCursor(next)
-          applyHistoryEntry(sentHistory[next])
-        }
-        return
-      }
-      if (historyCursor === null) return
-      const next = historyCursor + 1
-      if (next >= sentHistory.length) {
-        setHistoryCursor(null)
-        restoreDraftFromHistory()
-        return
-      }
-      setHistoryCursor(next)
-      applyHistoryEntry(sentHistory[next])
-    },
-    [
-      historyCursor,
-      sentHistory,
-      text,
-      attachedImages,
-      selectedSkill,
-      selectedFiles,
-      applyHistoryEntry,
-      restoreDraftFromHistory
-    ]
+    [applyEditorStateFromSerializedText, focusInputAtEnd, selectedFiles]
   )
   const hasApiKey = !!activeProvider?.apiKey || activeProvider?.requiresApiKey === false
   const needsWorkingFolder = mode !== 'chat' && !workingFolder
   const planMode = useUIStore((s) => s.planMode)
-  const togglePlanMode = React.useCallback(() => {
-    const store = useUIStore.getState()
-    if (store.planMode) {
-      store.exitPlanMode()
-    } else {
-      store.enterPlanMode()
-    }
-  }, [])
 
   React.useEffect(() => {
     if (!isStreaming && !disabled) {
@@ -1059,7 +996,6 @@ export function InputArea({
   }, [
     acceptSuggestion,
     applyEditorStateFromSerializedText,
-    clearHistoryNavigation,
     focusInputAtEnd,
     handleRecommendationSelectionChange,
     selectedFiles,
@@ -1117,7 +1053,7 @@ export function InputArea({
     // Save current draft to the previous session before switching
     if (prevSessionId) {
       draftBySessionRef.current[prevSessionId] = {
-        text,
+        text: finalSerializedText,
         images: cloneImageAttachments(attachedImages),
         skill: selectedSkill,
         selectedFiles: selectedFiles.map((file) => ({ ...file }))
@@ -1130,21 +1066,6 @@ export function InputArea({
     setAttachedImages(draft?.images ? cloneImageAttachments(draft.images) : [])
     setSelectedSkill(draft?.skill ?? null)
 
-    if (!prevSessionId && activeSessionId) {
-      const pendingHistory = historyBySessionRef.current[PENDING_HISTORY_KEY]
-      if (
-        pendingHistory &&
-        pendingHistory.length > 0 &&
-        !historyBySessionRef.current[activeSessionId]
-      ) {
-        historyBySessionRef.current[activeSessionId] = pendingHistory
-        delete historyBySessionRef.current[PENDING_HISTORY_KEY]
-      }
-    }
-    const historyKey = activeSessionId ?? PENDING_HISTORY_KEY
-    setSentHistory(historyBySessionRef.current[historyKey] ?? [])
-    setHistoryCursor(null)
-    historyDraftRef.current = null
     prevSessionIdRef.current = activeSessionId
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId])
@@ -1154,41 +1075,21 @@ export function InputArea({
   React.useEffect(() => {
     if (!pendingInsert) return
 
-    clearHistoryNavigation()
-    const parsed = deserializeEditorState(pendingInsert, workingFolder)
-    const pendingPlainText = editorDocumentToPlainText(parsed.document, parsed.selectedFiles)
     const selection = editorRef.current?.getSelectionOffsets() ?? {
-      start: plainText.length,
-      end: plainText.length
+      start: text.length,
+      end: text.length
     }
+    const pendingPlainText = selectFileTextToPlainText(pendingInsert)
     const needsPrefix =
       selection.start === selection.end &&
       selection.start > 0 &&
-      !/\s$/.test(plainText.slice(0, selection.start)) &&
+      !/\s$/.test(text.slice(0, selection.start)) &&
       pendingPlainText.length > 0 &&
       !/^\s/.test(pendingPlainText)
 
-    const mergedFiles = mergeSelectedFiles(selectedFilesRef.current, parsed.selectedFiles)
-    const fileIdBySendPath = new Map(
-      mergedFiles.map((file) => [file.sendPath.toLowerCase(), file.id])
-    )
-    const nextDocument = parsed.document.map((node) => {
-      if (node.type !== 'file') return node
-      const sourceFile = parsed.selectedFiles.find((file) => file.id === node.fileId)
-      if (!sourceFile) return node
-      return {
-        ...node,
-        fileId: fileIdBySendPath.get(sourceFile.sendPath.toLowerCase()) ?? node.fileId
-      }
-    })
-
-    setSelectedFiles(mergedFiles)
-    replaceSelectionWithNodes(
-      [...(needsPrefix ? [createTextReplacementNode(' ')] : []), ...nextDocument],
-      selection
-    )
+    replaceSelectionWithText(`${needsPrefix ? ' ' : ''}${pendingInsert}`, selection)
     useUIStore.getState().setPendingInsertText(null)
-  }, [clearHistoryNavigation, pendingInsert, plainText, replaceSelectionWithNodes, workingFolder])
+  }, [pendingInsert, replaceSelectionWithText, text])
 
   // --- Image helpers ---
   const addImages = React.useCallback(
@@ -1196,26 +1097,28 @@ export function InputArea({
       const results = await Promise.all(files.map(fileToImageAttachment))
       const valid = results.filter(Boolean) as ImageAttachment[]
       if (valid.length > 0) {
-        clearHistoryNavigation()
         setAttachedImages((prev) => [...prev, ...valid])
       }
     },
-    [clearHistoryNavigation]
+    []
   )
 
   const removeImage = React.useCallback(
     (id: string) => {
-      clearHistoryNavigation()
       setAttachedImages((prev) => prev.filter((img) => img.id !== id))
     },
-    [clearHistoryNavigation]
+    []
   )
 
   const addFilesToEditor = React.useCallback(
     (filePaths: string[], selection?: { start: number; end: number }) => {
-      const nextSelection = selection ?? editorRef.current?.getSelectionOffsets() ?? editorSelection
+      const nextSelection = selection ??
+        editorRef.current?.getSelectionOffsets() ?? {
+          start: editorSelection.start,
+          end: editorSelection.end
+        }
       const filesToInsert: SelectedFileItem[] = []
-      let mergedFiles = selectedFiles
+      let mergedFiles = selectedFilesRef.current
 
       for (const filePath of filePaths) {
         const ensured = ensureSelectedFile(mergedFiles, filePath, workingFolder)
@@ -1227,69 +1130,29 @@ export function InputArea({
 
       if (filesToInsert.length === 0) return
 
-      const replacement: EditorDocumentNode[] = []
-      filesToInsert.forEach((file, index) => {
-        if (index > 0) replacement.push(createTextReplacementNode('\n'))
-        replacement.push(createFileReferenceNode(file.id, file.sendPath))
-      })
+      const replacement = filesToInsert
+        .map((file) => createSelectFileToken(file.sendPath))
+        .filter(Boolean)
+        .join('\n')
 
-      setSelectedFiles(mergedFiles)
-      replaceSelectionWithNodes(replacement, nextSelection)
+      replaceSelectionWithText(replacement, nextSelection, 0, mergedFiles)
     },
-    [editorSelection, replaceSelectionWithNodes, selectedFiles, workingFolder]
+    [editorSelection.end, editorSelection.start, replaceSelectionWithText, workingFolder]
   )
 
   const handlePreviewFile = React.useCallback(
-    (file: SelectedFileItem) => {
-      openFilePreview(file.previewPath)
+    (fileId: string) => {
+      const file = selectedFilesRef.current.find((item) => item.id === fileId)
+      if (file) {
+        openFilePreview(file.previewPath)
+      }
     },
     [openFilePreview]
   )
 
-  const scrollFileBarItemIntoView = React.useCallback((fileId: string) => {
-    const target = document.getElementById(`selected-file-bar-item-${fileId}`)
-    target?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }, [])
-
-  const handleLocateFile = React.useCallback(
-    (fileId: string) => {
-      setHighlightedFileId(fileId)
-      const found = editorRef.current?.scrollToReference(fileId) ?? false
-      if (!found) {
-        scrollFileBarItemIntoView(fileId)
-      }
-    },
-    [scrollFileBarItemIntoView]
-  )
-
-  const handleLocateReferenceToBar = React.useCallback(
-    (fileId: string) => {
-      setHighlightedFileId(fileId)
-      scrollFileBarItemIntoView(fileId)
-    },
-    [scrollFileBarItemIntoView]
-  )
-
-  const handleReferencePreview = React.useCallback(
-    (fileId: string) => {
-      const file = selectedFilesRef.current.find((item) => item.id === fileId)
-      if (file) handlePreviewFile(file)
-    },
-    [handlePreviewFile]
-  )
-
-  const handleEditorDocumentChange = React.useCallback(
-    (nextDocument: EditorDocumentNode[]) => {
-      clearHistoryNavigation()
-      setEditorDocument(nextDocument)
-      setHighlightedFileId(null)
-    },
-    [clearHistoryNavigation]
-  )
-
   const handleEditorSelectionChange = React.useCallback(
     (selection: { start: number; end: number }) => {
-      setInputSelection((current) =>
+      setEditorSelection((current) =>
         current.start === selection.start && current.end === selection.end ? current : selection
       )
       handleRecommendationSelectionChange()
@@ -1297,57 +1160,42 @@ export function InputArea({
     [handleRecommendationSelectionChange]
   )
 
-  const handleRemoveSelectedFile = React.useCallback(
-    (fileId: string) => {
-      clearHistoryNavigation()
-      const nextState = removeSelectedFile(selectedFiles, editorDocument, fileId)
-      setSelectedFiles(nextState.files)
-      setEditorDocument(nextState.document)
-      if (highlightedFileId === fileId) {
-        setHighlightedFileId(null)
-      }
-    },
-    [clearHistoryNavigation, editorDocument, highlightedFileId, selectedFiles]
-  )
-
-  const handleClearSelectedFiles = React.useCallback(() => {
-    clearHistoryNavigation()
-    let nextFiles = selectedFiles
-    let nextDocument = editorDocument
-    for (const file of selectedFiles) {
-      const nextState = removeSelectedFile(nextFiles, nextDocument, file.id)
-      nextFiles = nextState.files
-      nextDocument = nextState.document
-    }
-    setSelectedFiles(nextFiles)
-    setEditorDocument(nextDocument)
-    setHighlightedFileId(null)
-  }, [clearHistoryNavigation, editorDocument, selectedFiles])
-
-  const handleRemoveReference = React.useCallback(
+  const handleRemoveFileReference = React.useCallback(
     (nodeId: string) => {
-      clearHistoryNavigation()
-      setEditorDocument((current) => removeReferenceNode(current, nodeId, selectedFilesRef.current))
+      const currentDocument = documentRef.current
+      const targetNode = currentDocument.find(
+        (node): node is Extract<EditorDocumentNode, { type: 'file' }> =>
+          node.type === 'file' && node.id === nodeId
+      )
+      if (!targetNode) return
+
+      const nextDocument = removeReferenceNode(currentDocument, nodeId, selectedFilesRef.current)
+      const hasRemainingReferences = documentHasFileReferences(nextDocument, targetNode.fileId)
+      const nextFiles = hasRemainingReferences
+        ? selectedFilesRef.current
+        : selectedFilesRef.current.filter((file) => file.id !== targetNode.fileId)
+
+      setDocumentNodes(nextDocument)
+      setSelectedFiles(nextFiles)
     },
-    [clearHistoryNavigation]
+    []
   )
 
-  const findAdjacentReferenceNode = React.useCallback(
-    (cursor: number, direction: 'before' | 'after') => {
-      let offset = 0
-      for (const node of editorDocument) {
-        const length = editorDocumentToPlainText([node], selectedFiles).length
-        const start = offset
-        const end = offset + length
-        offset = end
-
-        if (node.type !== 'file') continue
-        if (direction === 'before' && end === cursor) return node
-        if (direction === 'after' && start === cursor) return node
-      }
-      return null
+  const handleEditorDocumentChange = React.useCallback(
+    (nextDocument: EditorDocumentNode[]) => {
+      const referencedFileIds = new Set(
+        nextDocument
+          .filter(
+            (node): node is Extract<EditorDocumentNode, { type: 'file' }> => node.type === 'file'
+          )
+          .map((node) => node.fileId)
+      )
+      setDocumentNodes(nextDocument)
+      setSelectedFiles((currentFiles) =>
+        currentFiles.filter((file) => referencedFileIds.has(file.id))
+      )
     },
-    [editorDocument, selectedFiles]
+    []
   )
 
   const handleSend = (): void => {
@@ -1355,34 +1203,22 @@ export function InputArea({
     if (!serialized && attachedImages.length === 0) return
     if (disabled || needsWorkingFolder) return
 
-    const hasLeadingSlashCommand = plainText.trimStart().startsWith('/')
+    const hasLeadingSlashCommand = text.trimStart().startsWith('/')
     const message =
       selectedSkill && !hasLeadingSlashCommand
         ? `[Skill: ${selectedSkill}]\n${serialized}`
         : serialized
 
     onSend(message, attachedImages.length > 0 ? attachedImages : undefined)
-    updateSessionHistory((prevHistory) => {
-      const nextHistory = [
-        ...prevHistory,
-        {
-          text: message,
-          images: cloneImageAttachments(attachedImages),
-          selectedFiles: selectedFiles.map((file) => ({ ...file }))
-        }
-      ]
-      return nextHistory.length > INPUT_HISTORY_LIMIT
-        ? nextHistory.slice(nextHistory.length - INPUT_HISTORY_LIMIT)
-        : nextHistory
-    })
 
-    setHistoryCursor(null)
-    historyDraftRef.current = null
-    setEditorDocument([])
+    setDocumentNodes([])
     setSelectedFiles([])
-    setHighlightedFileId(null)
+    setEditorSelection({ start: 0, end: 0 })
     setAttachedImages([])
     setSelectedSkill(null)
+    requestAnimationFrame(() => {
+      editorRef.current?.setSelectionOffsets(0, 0)
+    })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -1390,35 +1226,6 @@ export function InputArea({
 
     const selectionStart = editorSelection.start
     const selectionEnd = editorSelection.end
-    const collapsed = selectionStart === selectionEnd
-
-    if (!e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'Backspace' || e.key === 'Delete')) {
-      if (!collapsed) {
-        const expanded = getNormalizedSelection(selectionStart, selectionEnd)
-        if (expanded.start !== expanded.end) {
-          e.preventDefault()
-          replaceSelectionWithNodes([], expanded)
-          return
-        }
-      }
-
-      if (collapsed) {
-        const adjacentNode = findAdjacentReferenceNode(
-          selectionStart,
-          e.key === 'Backspace' ? 'before' : 'after'
-        )
-        if (adjacentNode) {
-          e.preventDefault()
-          setEditorDocument((current) =>
-            removeReferenceNode(current, adjacentNode.id, selectedFiles)
-          )
-          requestAnimationFrame(() => {
-            editorRef.current?.setSelectionOffsets(selectionStart, selectionStart)
-          })
-          return
-        }
-      }
-    }
 
     if (fileMenuOpen) {
       if (!e.altKey && !e.ctrlKey && !e.metaKey && e.key === 'ArrowDown') {
@@ -1448,7 +1255,10 @@ export function InputArea({
       if (!e.altKey && !e.ctrlKey && !e.metaKey && e.key === 'Escape') {
         e.preventDefault()
         const nextCursor = activeFileMention?.start ?? 0
+        editorRef.current?.focus()
         editorRef.current?.setSelectionOffsets(nextCursor, nextCursor)
+        setEditorSelection({ start: nextCursor, end: nextCursor })
+        handleRecommendationSelectionChange()
         return
       }
     }
@@ -1484,31 +1294,11 @@ export function InputArea({
       const acceptedSuggestion = acceptSuggestion()
       if (acceptedSuggestion) {
         e.preventDefault()
-        clearHistoryNavigation()
         applyEditorStateFromSerializedText(acceptedSuggestion, selectedFiles)
         requestAnimationFrame(() => {
           focusInputAtEnd()
           handleRecommendationSelectionChange()
         })
-        return
-      }
-    }
-
-    if (
-      !e.altKey &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      !e.shiftKey &&
-      (e.key === 'ArrowUp' || e.key === 'ArrowDown')
-    ) {
-      if (collapsed && e.key === 'ArrowUp' && selectionStart === 0) {
-        e.preventDefault()
-        navigateHistory('up')
-        return
-      }
-      if (collapsed && e.key === 'ArrowDown' && selectionStart === plainText.length) {
-        e.preventDefault()
-        navigateHistory('down')
         return
       }
     }
@@ -1521,18 +1311,28 @@ export function InputArea({
 
   const handlePaste = React.useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>): void => {
-      if (!supportsVision) return
       const items = Array.from(e.clipboardData.items)
-      const imageFiles = items
-        .filter((item) => item.kind === 'file' && ACCEPTED_IMAGE_TYPES.includes(item.type))
-        .map((item) => item.getAsFile())
-        .filter(Boolean) as File[]
+      const imageFiles = supportsVision
+        ? (items
+            .filter((item) => item.kind === 'file' && ACCEPTED_IMAGE_TYPES.includes(item.type))
+            .map((item) => item.getAsFile())
+            .filter(Boolean) as File[])
+        : []
+
       if (imageFiles.length > 0) {
         e.preventDefault()
         void addImages(imageFiles)
+        return
       }
+
+      const plainText = e.clipboardData.getData('text/plain')
+      if (!plainText) return
+
+      e.preventDefault()
+      const selection = editorRef.current?.getSelectionOffsets() ?? editorSelection
+      replaceSelectionWithText(plainText, selection)
     },
-    [addImages, supportsVision]
+    [addImages, editorSelection, replaceSelectionWithText, supportsVision]
   )
 
   const handleDropFiles = React.useCallback(
@@ -1693,7 +1493,11 @@ export function InputArea({
   }, [])
 
   return (
-    <div ref={rootRef} data-tour="composer" className="px-4 py-3 pb-4">
+    <div
+      ref={rootRef}
+      data-tour="composer"
+      className={isHomeComposer ? 'px-0 py-0' : 'px-4 py-3 pb-4'}
+    >
       {/* API key warning */}
       {!hasApiKey && (
         <button
@@ -1748,14 +1552,16 @@ export function InputArea({
         </div>
       )}
 
-      <div className="mx-auto max-w-3xl">
+      <div className={isHomeComposer ? 'mx-auto max-w-4xl' : 'mx-auto max-w-3xl'}>
         <div
           ref={containerRef}
           className={`relative rounded-lg border bg-background shadow-lg transition-shadow focus-within:shadow-xl focus-within:ring-1 focus-within:ring-ring/20 flex flex-col ${dragging ? 'ring-2 ring-primary/50' : ''}`}
           style={inputHeight !== null ? { height: inputHeight } : { maxHeight: autoMaxInputHeight }}
         >
           {/* Top drag handle */}
-          <div className="h-1.5 cursor-row-resize rounded-t-lg" onMouseDown={handleDragStart} />
+          {!isHomeComposer && (
+            <div className="h-1.5 cursor-row-resize rounded-t-lg" onMouseDown={handleDragStart} />
+          )}
           {/* Queued message list */}
           {queuedMessages.length > 0 && (
             <div className="px-3 pt-3 pb-1">
@@ -2135,7 +1941,16 @@ export function InputArea({
 
           {/* Text input area */}
           <div
-            className={`relative px-3 flex-1 min-h-0 flex flex-col ${selectedSkill || attachedImages.length > 0 ? 'pt-1.5' : 'pt-3'}`}
+            className={cn(
+              'relative flex min-h-0 flex-1 flex-col px-3',
+              isHomeComposer
+                ? selectedSkill || attachedImages.length > 0
+                  ? 'pt-1.5'
+                  : 'pt-5'
+                : selectedSkill || attachedImages.length > 0
+                  ? 'pt-1.5'
+                  : 'pt-3'
+            )}
             onDrop={handleDropWrapped}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -2148,15 +1963,7 @@ export function InputArea({
                 </span>
               </div>
             )}
-            <SelectedFileBar
-              files={selectedFiles}
-              highlightedFileId={highlightedFileId}
-              onPreview={handlePreviewFile}
-              onLocate={handleLocateFile}
-              onRemove={handleRemoveSelectedFile}
-              onClear={handleClearSelectedFiles}
-            />
-            <div className="relative z-0 flex-1 min-h-[60px]">
+            <div className="relative flex-1 min-h-0">
               {shouldAutoAcceptRecommendation &&
                 autoAcceptCountdown !== null &&
                 suggestionText &&
@@ -2167,15 +1974,20 @@ export function InputArea({
                 )}
               <FileAwareEditor
                 ref={editorRef}
-                document={editorDocument}
+                document={documentNodes}
                 files={selectedFiles}
                 disabled={disabled || isOptimizing}
                 placeholder={
                   effectivePlaceholder ?? t(placeholderKeys[mode] ?? 'input.placeholder')
                 }
                 suggestionText={suggestionText}
-                showSuggestion={!hasFileReferences && !activeFileMention && !slashMenuOpen}
-                highlightedFileId={highlightedFileId}
+                showSuggestion={Boolean(
+                  suggestionText &&
+                  text.length > 0 &&
+                  !hasFileReferences &&
+                  !activeFileMention &&
+                  !slashMenuOpen
+                )}
                 onDocumentChange={handleEditorDocumentChange}
                 onSelectionChange={handleEditorSelectionChange}
                 onFocus={handleRecommendationFocus}
@@ -2183,10 +1995,17 @@ export function InputArea({
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 onCompositionStart={handleRecommendationCompositionStart}
-                onCompositionEnd={handleRecommendationCompositionEnd}
-                onReferencePreview={handleReferencePreview}
-                onReferenceLocate={handleLocateReferenceToBar}
-                onReferenceDelete={handleRemoveReference}
+                onCompositionEnd={() => {
+                  handleRecommendationCompositionEnd()
+                }}
+                onReferencePreview={handlePreviewFile}
+                onReferenceDelete={handleRemoveFileReference}
+                className={cn(
+                  'w-full',
+                  isHomeComposer && (selectedSkill || attachedImages.length > 0)
+                    ? 'h-auto'
+                    : 'h-full'
+                )}
               />
               {fileMenuOpen && (
                 <div className="absolute inset-x-0 bottom-full z-30 mb-2 overflow-hidden rounded-xl border border-border/70 bg-popover shadow-xl">
@@ -2238,7 +2057,7 @@ export function InputArea({
                               insertSelectedFile(file.path)
                             }}
                           >
-                            <FolderOpen className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                            <FileCode2 className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium">{file.name}</div>
                               <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
@@ -2336,10 +2155,17 @@ export function InputArea({
           />
 
           {/* Bottom toolbar */}
-          <div className="relative z-20 mt-1 flex items-center justify-between gap-2 px-2 pb-2">
+          <div
+            className={cn(
+              'relative z-20 mt-1 flex items-center justify-between gap-2 px-2 pb-2',
+              isHomeComposer && 'border-t border-border/50 px-4 pb-3.5 pt-2.5'
+            )}
+          >
             {/* Left tools */}
             <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pr-1">
-              <ModelSwitcher />
+              <div className={cn(isHomeComposer && 'mr-1')}>
+                <ModelSwitcher />
+              </div>
 
               {/* Web search toggle */}
               {mode !== 'chat' && webSearchEnabled && (
@@ -2383,32 +2209,6 @@ export function InputArea({
                 </>
               )}
 
-              {/* Plan mode toggle */}
-              {mode !== 'chat' && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      className={`h-8 rounded-lg px-2 gap-1 transition-colors ${
-                        planMode
-                          ? 'text-violet-600 dark:text-violet-400 bg-violet-500/10 hover:bg-violet-500/20'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                      onClick={togglePlanMode}
-                      disabled={disabled || isStreaming}
-                    >
-                      <ClipboardList className="size-4" />
-                      {planMode && <span className="text-[10px] font-medium">Plan</span>}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {planMode
-                      ? t('input.exitPlanMode', { defaultValue: 'Exit Plan Mode' })
-                      : t('input.enterPlanMode', { defaultValue: 'Enter Plan Mode' })}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-
               {/* Image upload button */}
               {supportsVision && (
                 <Tooltip>
@@ -2416,7 +2216,10 @@ export function InputArea({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="size-8 rounded-lg text-muted-foreground hover:text-foreground"
+                      className={cn(
+                        'size-8 rounded-lg text-muted-foreground hover:text-foreground',
+                        isHomeComposer && 'rounded-full hover:bg-white/5'
+                      )}
                       onClick={() => fileInputRef.current?.click()}
                       disabled={disabled}
                     >
@@ -2434,7 +2237,10 @@ export function InputArea({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="size-8 rounded-lg text-muted-foreground hover:text-foreground"
+                      className={cn(
+                        'size-8 rounded-lg text-muted-foreground hover:text-foreground',
+                        isHomeComposer && 'rounded-full hover:bg-white/5'
+                      )}
                       onClick={onSelectFolder}
                     >
                       <FolderOpen className="size-4" />
@@ -2533,7 +2339,7 @@ export function InputArea({
                       size="icon"
                       className="size-8 rounded-lg text-muted-foreground hover:text-foreground disabled:opacity-50"
                       onClick={handleOptimizePrompt}
-                      disabled={!plainText.trim() || disabled || isOptimizing}
+                      disabled={!text.trim() || disabled || isOptimizing}
                     >
                       {isOptimizing ? <Spinner className="size-4" /> : <Wand2 className="size-4" />}
                     </Button>
@@ -2548,7 +2354,12 @@ export function InputArea({
                 <TooltipTrigger asChild>
                   <Button
                     size="sm"
-                    className="h-8 rounded-lg px-3 bg-primary text-primary-foreground hover:bg-primary/90 transition-all shadow-sm"
+                    className={cn(
+                      'transition-all shadow-sm',
+                      isHomeComposer
+                        ? 'size-9 rounded-full bg-white p-0 text-black hover:bg-white/90 shadow-[0_10px_24px_-14px_rgba(255,255,255,0.65)]'
+                        : 'h-8 rounded-lg bg-primary px-3 text-primary-foreground hover:bg-primary/90'
+                    )}
                     onClick={handleSend}
                     disabled={
                       (!finalSerializedText.trim() && attachedImages.length === 0) ||
@@ -2557,8 +2368,14 @@ export function InputArea({
                       isOptimizing
                     }
                   >
-                    <span>{t('action.start', { ns: 'common' })}</span>
-                    <Send className="size-3.5 ml-1.5" />
+                    {isHomeComposer ? (
+                      <Send className="size-4" />
+                    ) : (
+                      <>
+                        <span>{t('action.start', { ns: 'common' })}</span>
+                        <Send className="ml-1.5 size-3.5" />
+                      </>
+                    )}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>

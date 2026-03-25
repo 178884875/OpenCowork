@@ -233,8 +233,10 @@ export function deserializeEditorState(
   document: EditorDocumentNode[]
   selectedFiles: SelectedFileItem[]
 } {
-  const selectedFiles = mergeSelectedFiles([], baseFiles)
-  const bySendPath = new Map(selectedFiles.map((file) => [normalizePathKey(file.sendPath), file]))
+  const reusableFiles = mergeSelectedFiles([], baseFiles)
+  const selectedFiles: SelectedFileItem[] = []
+  const selectedFileIds = new Set<string>()
+  const bySendPath = new Map(reusableFiles.map((file) => [normalizePathKey(file.sendPath), file]))
   const document: EditorDocumentNode[] = []
 
   for (const segment of parseSelectFileText(text)) {
@@ -251,8 +253,12 @@ export function deserializeEditorState(
     if (!file) continue
 
     if (!existingFile) {
-      selectedFiles.push(file)
       bySendPath.set(normalizePathKey(file.sendPath), file)
+    }
+
+    if (!selectedFileIds.has(file.id)) {
+      selectedFileIds.add(file.id)
+      selectedFiles.push(file)
     }
 
     document.push(createFileNode(file.id, file.sendPath))

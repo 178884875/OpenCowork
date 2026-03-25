@@ -17,6 +17,7 @@ export interface FileAwareEditorHandle {
   focusAtEnd: () => void
   setSelectionOffsets: (start: number, end?: number) => void
   getSelectionOffsets: () => EditorSelectionOffsets
+  getScrollMetrics: () => { scrollHeight: number; clientHeight: number }
   scrollToReference: (fileId: string) => boolean
 }
 
@@ -100,42 +101,54 @@ function buildFileChip(
   label.textContent = file?.sendPath || node.fallbackText
   trigger.append(icon, label)
 
-  const actions = document.createElement('span')
-  actions.className =
-    'inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover/file-ref:opacity-100'
+  const actions: HTMLElement[] = []
 
-  const locateBtn = document.createElement('button')
-  locateBtn.type = 'button'
-  locateBtn.className =
-    'inline-flex size-4 items-center justify-center rounded-sm hover:bg-blue-500/15'
-  locateBtn.title = '定位到文件条'
-  locateBtn.addEventListener('mousedown', (event) => {
-    event.preventDefault()
-  })
-  locateBtn.addEventListener('click', (event) => {
-    event.preventDefault()
-    handlers.onReferenceLocate?.(node.fileId)
-  })
-  locateBtn.innerHTML =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-3"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="1"></circle><line x1="12" y1="2" x2="12" y2="5"></line><line x1="12" y1="19" x2="12" y2="22"></line><line x1="2" y1="12" x2="5" y2="12"></line><line x1="19" y1="12" x2="22" y2="12"></line></svg>'
+  if (handlers.onReferenceLocate) {
+    const locateBtn = document.createElement('button')
+    locateBtn.type = 'button'
+    locateBtn.className =
+      'inline-flex size-4 items-center justify-center rounded-sm hover:bg-blue-500/15'
+    locateBtn.title = '定位到文件条'
+    locateBtn.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+    })
+    locateBtn.addEventListener('click', (event) => {
+      event.preventDefault()
+      handlers.onReferenceLocate?.(node.fileId)
+    })
+    locateBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-3"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="1"></circle><line x1="12" y1="2" x2="12" y2="5"></line><line x1="12" y1="19" x2="12" y2="22"></line><line x1="2" y1="12" x2="5" y2="12"></line><line x1="19" y1="12" x2="22" y2="12"></line></svg>'
+    actions.push(locateBtn)
+  }
 
-  const deleteBtn = document.createElement('button')
-  deleteBtn.type = 'button'
-  deleteBtn.className =
-    'inline-flex size-4 items-center justify-center rounded-sm hover:bg-blue-500/15'
-  deleteBtn.title = '删除引用'
-  deleteBtn.addEventListener('mousedown', (event) => {
-    event.preventDefault()
-  })
-  deleteBtn.addEventListener('click', (event) => {
-    event.preventDefault()
-    handlers.onReferenceDelete?.(node.id)
-  })
-  deleteBtn.innerHTML =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-3"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>'
+  if (handlers.onReferenceDelete) {
+    const deleteBtn = document.createElement('button')
+    deleteBtn.type = 'button'
+    deleteBtn.className =
+      'inline-flex size-4 items-center justify-center rounded-sm hover:bg-blue-500/15'
+    deleteBtn.title = '删除引用'
+    deleteBtn.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+    })
+    deleteBtn.addEventListener('click', (event) => {
+      event.preventDefault()
+      handlers.onReferenceDelete?.(node.id)
+    })
+    deleteBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-3"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>'
+    actions.push(deleteBtn)
+  }
 
-  actions.append(locateBtn, deleteBtn)
-  wrapper.append(trigger, actions)
+  wrapper.append(trigger)
+
+  if (actions.length > 0) {
+    const actionsContainer = document.createElement('span')
+    actionsContainer.className =
+      'inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover/file-ref:opacity-100'
+    actionsContainer.append(...actions)
+    wrapper.append(actionsContainer)
+  }
+
   return wrapper
 }
 
@@ -378,6 +391,7 @@ export const FileAwareEditor = React.forwardRef<FileAwareEditorHandle, FileAware
     ref
   ) {
     const editorRef = React.useRef<HTMLDivElement>(null)
+    const suggestionOverlayRef = React.useRef<HTMLDivElement>(null)
     const selectionRef = React.useRef<EditorSelectionOffsets>({ start: 0, end: 0 })
     const focusedRef = React.useRef(false)
     const selectionSyncFrameRef = React.useRef<number | null>(null)
@@ -452,6 +466,13 @@ export const FileAwareEditor = React.forwardRef<FileAwareEditorHandle, FileAware
           const root = editorRef.current
           if (!root) return { start: 0, end: 0 }
           return getSelectionOffsets(root, files)
+        },
+        getScrollMetrics: () => {
+          const root = editorRef.current
+          return {
+            scrollHeight: root?.scrollHeight ?? 0,
+            clientHeight: root?.clientHeight ?? 0
+          }
         },
         scrollToReference: (fileId: string) => {
           const root = editorRef.current
@@ -542,14 +563,17 @@ export const FileAwareEditor = React.forwardRef<FileAwareEditorHandle, FileAware
     const hasContent = document.length > 0 && plainText.length > 0
 
     return (
-      <div className={cn('relative h-full min-h-[60px]', className)}>
+      <div className={cn('relative flex min-h-0 flex-col', className)}>
         {!hasContent && placeholder && (
           <div className="pointer-events-none absolute inset-0 p-1 text-base text-muted-foreground md:text-sm">
             {placeholder}
           </div>
         )}
         {showSuggestion && suggestionText && plainText.length > 0 && (
-          <div className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words p-1 text-base text-muted-foreground/45 md:text-sm">
+          <div
+            ref={suggestionOverlayRef}
+            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words p-1 text-base text-muted-foreground/45 md:text-sm"
+          >
             <span className="invisible">{plainText}</span>
             <span>{suggestionText}</span>
           </div>
@@ -560,7 +584,8 @@ export const FileAwareEditor = React.forwardRef<FileAwareEditorHandle, FileAware
           suppressContentEditableWarning
           spellCheck={false}
           data-gramm="false"
-          className="relative z-10 h-full min-h-[60px] overflow-y-auto whitespace-pre-wrap break-words p-1 text-base outline-none md:text-sm"
+          className="relative z-10 block min-h-[60px] flex-1 overflow-y-auto whitespace-pre-wrap break-words p-1 pr-2 text-base outline-none md:text-sm"
+          style={{ scrollbarGutter: 'stable' }}
           onInput={handleInput}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
@@ -581,6 +606,11 @@ export const FileAwareEditor = React.forwardRef<FileAwareEditorHandle, FileAware
           }}
           onMouseUp={() => {
             scheduleSelectionSync()
+          }}
+          onScroll={(event) => {
+            if (!suggestionOverlayRef.current) return
+            suggestionOverlayRef.current.scrollTop = event.currentTarget.scrollTop
+            suggestionOverlayRef.current.scrollLeft = event.currentTarget.scrollLeft
           }}
           onCompositionStart={onCompositionStart}
           onCompositionUpdate={handleCompositionUpdateInternal}

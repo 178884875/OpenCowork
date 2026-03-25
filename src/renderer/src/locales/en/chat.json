@@ -3,7 +3,7 @@
     "placeholder": "Type a message...",
     "placeholderClarify": "Describe your idea and I will keep probing until the requirements are clear...",
     "placeholderCowork": "Ask the assistant to help with your project...",
-    "placeholderCode": "Describe what you want to build...",
+    "placeholderCode": "Describe what you want to build, like fixing bugs, writing scripts, or using /commit to commit the repository...",
     "noApiKey": "No API key configured. Click here to open Settings.",
     "attachImages": "Attach images (paste or drag & drop also supported)",
     "dropImages": "Drop images or files",
@@ -385,6 +385,7 @@
     "summarizeProject": "Summarize this project structure",
     "findBugs": "Find and fix potential bugs",
     "addErrorHandling": "Add error handling to the main module",
+    "useCommitCommand": "Use /commit to commit the repository",
     "reviewCodebase": "Review this codebase and suggest improvements",
     "addTests": "Add tests for the main module",
     "refactorError": "Refactor for better error handling",
@@ -450,6 +451,7 @@
     "req": "Req {{count}}",
     "ttft": "TTFT",
     "tps": "TPS",
+    "regenerateReference": "Regenerate reference",
     "imageError": {
       "titleTimeout": "Image generation timed out",
       "descTimeout": "The request exceeded 10 minutes. Try simplifying the prompt, reducing image complexity, or retrying.",
@@ -463,6 +465,20 @@
       "descUnknown": "An unexpected error occurred while generating the image. Please retry.",
       "details": "View technical details"
     }
+  },
+  "messageActions": {
+    "translate": "Translate",
+    "readAloud": "Read aloud",
+    "share": "Share",
+    "collapse": "Collapse message",
+    "expand": "Expand message",
+    "deleteAndRegenerate": "Delete and regenerate",
+    "sentToTranslator": "Sent to translator",
+    "copiedForShare": "Copied to clipboard for sharing",
+    "shareFailed": "Share failed",
+    "speechNotSupported": "Speech synthesis is not supported in this environment",
+    "collapsedMessage": "Message collapsed",
+    "imagesCollapsed": "{{count}} images"
   },
   "toolGroup": {
     "readFiles": "Read {{count}} files",

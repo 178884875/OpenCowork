@@ -1,6 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
-  ChevronDown,
   Check,
   Search,
   Eye,
@@ -378,7 +377,16 @@ export function ModelSwitcher(): React.JSX.Element {
           <TooltipTrigger asChild>
             <span className="inline-flex">
               <PopoverTrigger asChild>
-                <button className="inline-flex items-center gap-1.5 h-8 rounded-l-lg px-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                <button
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-l-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                  aria-label={
+                    isAutoModeActive
+                      ? autoRoutingState === 'routing'
+                        ? t('topbar.autoModelRoutingShort')
+                        : t('topbar.autoModel')
+                      : (displayModel?.name ?? displayModelId ?? t('topbar.noModel'))
+                  }
+                >
                   {isAutoModeActive ? (
                     autoRoutingState === 'routing' ? (
                       <Loader2 size={16} className="animate-spin text-amber-500" />
@@ -393,14 +401,6 @@ export function ModelSwitcher(): React.JSX.Element {
                       size={20}
                     />
                   )}
-                  <span className="max-w-24 truncate text-xs font-medium">
-                    {isAutoModeActive
-                      ? autoRoutingState === 'routing'
-                        ? t('topbar.autoModelRoutingShort')
-                        : t('topbar.autoModel')
-                      : (displayModel?.name ?? displayModelId ?? t('topbar.noModel'))}
-                  </span>
-                  <ChevronDown className="size-2.5 opacity-40" />
                 </button>
               </PopoverTrigger>
             </span>

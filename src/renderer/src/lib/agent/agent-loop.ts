@@ -429,11 +429,7 @@ export async function* runAgentLoop(
         output = encodeToolError(errMsg)
       }
 
-      if (config.signal.aborted) {
-        yield { type: 'loop_end', reason: 'aborted' }
-        return
-      }
-
+      const completedAt = Date.now()
       yield {
         type: 'tool_call_result',
         toolCall: {
@@ -442,8 +438,13 @@ export async function* runAgentLoop(
           output,
           ...(toolError ? { error: toolError } : {}),
           startedAt,
-          completedAt: Date.now()
+          completedAt
         }
+      }
+
+      if (config.signal.aborted) {
+        yield { type: 'loop_end', reason: 'aborted' }
+        return
       }
 
       toolResults.push({

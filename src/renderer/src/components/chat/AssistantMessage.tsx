@@ -1,5 +1,6 @@
-import { useState, useCallback, useMemo, useEffect, useId } from 'react'
+import { useState, useCallback, useMemo, useEffect, useId, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import mermaid from 'mermaid'
@@ -17,7 +18,12 @@ import {
   Bug,
   ImageDown,
   ZoomIn,
-  Trash2
+  Trash2,
+  RotateCcw,
+  Ellipsis,
+  Languages,
+  Volume2,
+  Share2
 } from 'lucide-react'
 import { FadeIn, ScaleIn } from '@renderer/components/animate-ui'
 import { ImageGeneratingLoader } from './ImageGeneratingLoader'
@@ -70,6 +76,16 @@ import {
 } from '@renderer/lib/app-plugin/types'
 import { LazySyntaxHighlighter } from './LazySyntaxHighlighter'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@renderer/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@renderer/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip'
+import { useTranslateStore } from '@renderer/stores/translate-store'
+import { useUIStore } from '@renderer/stores/ui-store'
 
 interface AssistantMessageProps {
   content: string | ContentBlock[]
@@ -77,6 +93,8 @@ interface AssistantMessageProps {
   usage?: TokenUsage
   toolResults?: Map<string, { content: ToolResultContent; isError?: boolean }>
   msgId?: string
+  showRetry?: boolean
+  onRetry?: () => void
   onDelete?: (messageId: string) => void
 }
 
@@ -205,6 +223,34 @@ function CopyButton({ text }: { text: string }): React.JSX.Element {
       {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
       {copied ? t('userMessage.copied') : t('action.copy', { ns: 'common' })}
     </button>
+  )
+}
+
+function ActionIconButton({
+  label,
+  icon,
+  onClick,
+  danger = false
+}: {
+  label: string
+  icon: ReactNode
+  onClick: () => void
+  danger?: boolean
+}): React.JSX.Element {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          onClick={onClick}
+          className={`flex size-7 items-center justify-center rounded-md border border-border/50 bg-background/80 text-muted-foreground transition-colors hover:bg-muted/80 ${danger ? 'hover:text-destructive' : 'hover:text-foreground'}`}
+        >
+          {icon}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -612,12 +658,17 @@ export function AssistantMessage({
   usage,
   toolResults,
   msgId,
+  showRetry,
+  onRetry,
   onDelete
 }: AssistantMessageProps): React.JSX.Element {
   const { t } = useTranslation('chat')
   const devMode = useSettingsStore((s) => s.devMode)
   const debugInfo = devMode && msgId ? getLastDebugInfo(msgId) : undefined
+  const openTranslatePage = useUIStore((s) => s.openTranslatePage)
+  const setTranslateSourceText = useTranslateStore((s) => s.setSourceText)
   const [toolsCollapsed, setToolsCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
 
   // Memoize the plain text extraction for token estimation (used only when no API usage)
   const plainTextForTokens = useMemo(() => {
@@ -1171,6 +1222,53 @@ export function AssistantMessage({
             .join('\n')
         : ''
 
+  const handleCopy = useCallback((): void => {
+    if (!plainText) return
+    navigator.clipboard.writeText(plainText)
+  }, [plainText])
+
+  const handleTranslate = useCallback((): void => {
+    const text = plainText.trim()
+    if (!text) return
+    setTranslateSourceText(text)
+    openTranslatePage()
+    toast.success(t('messageActions.sentToTranslator'))
+  }, [openTranslatePage, plainText, setTranslateSourceText, t])
+
+  const handleSpeak = useCallback((): void => {
+    const text = plainText.trim()
+    if (!text) return
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      toast.error(t('messageActions.speechNotSupported'))
+      return
+    }
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = /[\u4e00-\u9fff]/.test(text) ? 'zh-CN' : 'en-US'
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utterance)
+  }, [plainText, t])
+
+  const handleShare = useCallback(async (): Promise<void> => {
+    const text = plainText.trim()
+    if (!text) return
+    try {
+      if (navigator.share) {
+        await navigator.share({ text })
+        return
+      }
+      await navigator.clipboard.writeText(text)
+      toast.success(t('messageActions.copiedForShare'))
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      toast.error(t('messageActions.shareFailed'))
+    }
+  }, [plainText, t])
+
+  const handleDeleteAndRegenerate = useCallback((): void => {
+    if (!showRetry || !onRetry) return
+    onRetry()
+  }, [onRetry, showRetry])
+
   const timingSummary = useMemo(() => {
     if (!usage) return null
     const totalDuration = usage.totalDurationMs ? formatMs(usage.totalDurationMs) : null
@@ -1225,72 +1323,162 @@ export function AssistantMessage({
         </AvatarFallback>
       </Avatar>
       <div className="min-w-0 flex-1 pt-0.5 overflow-hidden">
-        <div className="flex items-center gap-2 mb-1">
+        <div className="mb-1 flex items-center gap-2">
           <p className="text-sm font-medium">{modelDisplayName}</p>
-          {!isStreaming && (
-            <span className="opacity-0 group-hover/msg:opacity-100 transition-opacity flex items-center gap-0.5">
-              {plainText && <CopyButton text={plainText} />}
-              {msgId && onDelete && (
-                <button
-                  onClick={() => onDelete(msgId)}
-                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted-foreground/10 hover:text-destructive transition-colors"
-                >
-                  <Trash2 className="size-3" />
-                  {t('action.delete', { ns: 'common' })}
-                </button>
-              )}
-              {devMode && debugInfo && <DebugToggleButton debugInfo={debugInfo} />}
-            </span>
-          )}
         </div>
-        {renderContent()}
-        {!isStreaming && runChangeSet && runChangeSet.changes.length > 0 && (
-          <RunChangeReviewCard runId={runChangeSet.runId} changeSet={runChangeSet} />
-        )}
-        {!isStreaming && plainText && (
-          <p className="mt-1 text-[10px] text-muted-foreground/40 tabular-nums">
-            {usage
-              ? (() => {
-                  const u = usage!
-                  const provider = requestTrace?.providerId
-                    ? useProviderStore
-                        .getState()
-                        .providers.find((item) => item.id === requestTrace.providerId)
-                    : null
-                  const modelCfg =
-                    provider?.models.find((item) => item.id === requestTrace?.model) ?? null
-                  const total = getBillableTotalTokens(u, modelCfg?.type)
-                  const billableInput = getBillableInputTokens(u, modelCfg?.type)
-                  const cost = calculateCost(u, modelCfg)
-                  return (
-                    <>
-                      {`${formatTokens(total)} ${t('unit.tokens', { ns: 'common' })} (${formatTokens(billableInput)}↓ ${formatTokens(u.outputTokens)}↑`}
-                      {u.cacheReadTokens
-                        ? ` · ${formatTokens(u.cacheReadTokens)} ${t('unit.cached', { ns: 'common' })}`
-                        : ''}
-                      {u.reasoningTokens
-                        ? ` · ${formatTokens(u.reasoningTokens)} ${t('unit.reasoning', { ns: 'common' })}`
-                        : ''}
-                      {')'}
-                      {cost !== null && (
-                        <span className="text-emerald-500/70"> · {formatCost(cost)}</span>
-                      )}
-                    </>
-                  )
-                })()
-              : `~${formatTokens(fallbackTokens)} ${t('unit.tokens', { ns: 'common' })}`}
-          </p>
-        )}
-        {!isStreaming && timingSummary && (
-          <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground/40 tabular-nums">
-            {timingSummary.totalDuration && (
-              <div>
-                {t('assistantMessage.totalDuration', { duration: timingSummary.totalDuration })}
+        {collapsed ? (
+          <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            <div className="max-h-10 overflow-hidden whitespace-pre-wrap break-words">
+              {plainText.trim() || t('messageActions.collapsedMessage')}
+            </div>
+          </div>
+        ) : (
+          <>
+            {renderContent()}
+            {!isStreaming && runChangeSet && runChangeSet.changes.length > 0 && (
+              <RunChangeReviewCard runId={runChangeSet.runId} changeSet={runChangeSet} />
+            )}
+            {!isStreaming && plainText && (
+              <p className="mt-1 text-[10px] text-muted-foreground/40 tabular-nums">
+                {usage
+                  ? (() => {
+                      const u = usage!
+                      const provider = requestTrace?.providerId
+                        ? useProviderStore
+                            .getState()
+                            .providers.find((item) => item.id === requestTrace.providerId)
+                        : null
+                      const modelCfg =
+                        provider?.models.find((item) => item.id === requestTrace?.model) ?? null
+                      const total = getBillableTotalTokens(u, modelCfg?.type)
+                      const billableInput = getBillableInputTokens(u, modelCfg?.type)
+                      const cost = calculateCost(u, modelCfg)
+                      return (
+                        <>
+                          {`${formatTokens(total)} ${t('unit.tokens', { ns: 'common' })} (${formatTokens(billableInput)}↓ ${formatTokens(u.outputTokens)}↑`}
+                          {u.cacheReadTokens
+                            ? ` · ${formatTokens(u.cacheReadTokens)} ${t('unit.cached', { ns: 'common' })}`
+                            : ''}
+                          {u.reasoningTokens
+                            ? ` · ${formatTokens(u.reasoningTokens)} ${t('unit.reasoning', { ns: 'common' })}`
+                            : ''}
+                          {')'}
+                          {cost !== null && (
+                            <span className="text-emerald-500/70"> · {formatCost(cost)}</span>
+                          )}
+                        </>
+                      )
+                    })()
+                  : `~${formatTokens(fallbackTokens)} ${t('unit.tokens', { ns: 'common' })}`}
+              </p>
+            )}
+            {!isStreaming && timingSummary && (
+              <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground/40 tabular-nums">
+                {timingSummary.totalDuration && (
+                  <div>
+                    {t('assistantMessage.totalDuration', { duration: timingSummary.totalDuration })}
+                  </div>
+                )}
+                {timingSummary.lastDetail && <div>{timingSummary.lastDetail}</div>}
               </div>
             )}
-            {timingSummary.lastDetail && <div>{timingSummary.lastDetail}</div>}
-          </div>
+          </>
         )}
+        {!isStreaming &&
+          (plainText ||
+            (msgId && onDelete) ||
+            (devMode && debugInfo) ||
+            (showRetry && onRetry)) && (
+            <div className="mt-2 flex items-center gap-1 opacity-0 transition-opacity group-hover/msg:opacity-100">
+              {plainText && (
+                <ActionIconButton
+                  label={t('action.copy', { ns: 'common' })}
+                  icon={<Copy className="size-3.5" />}
+                  onClick={handleCopy}
+                />
+              )}
+              {showRetry && onRetry ? (
+                <ActionIconButton
+                  label={t('assistantMessage.regenerateReference', {
+                    defaultValue: '重新生成参考'
+                  })}
+                  icon={<RotateCcw className="size-3.5" />}
+                  onClick={onRetry}
+                />
+              ) : null}
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label={t('action.showMore', { ns: 'common' })}
+                        className="flex size-7 items-center justify-center rounded-md border border-border/50 bg-background/80 text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground"
+                      >
+                        <Ellipsis className="size-3.5" />
+                      </button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    {t('action.showMore', { ns: 'common' })}
+                  </TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent align="start" className="w-56">
+                  <DropdownMenuItem onSelect={handleCopy} disabled={!plainText.trim()}>
+                    <Copy className="size-4" />
+                    {t('action.copy', { ns: 'common' })}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={handleTranslate} disabled={!plainText.trim()}>
+                    <Languages className="size-4" />
+                    {t('messageActions.translate')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={handleSpeak} disabled={!plainText.trim()}>
+                    <Volume2 className="size-4" />
+                    {t('messageActions.readAloud')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => void handleShare()}
+                    disabled={!plainText.trim()}
+                  >
+                    <Share2 className="size-4" />
+                    {t('messageActions.share')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setCollapsed((value) => !value)}>
+                    {collapsed ? (
+                      <ChevronsDownUp className="size-4" />
+                    ) : (
+                      <ChevronsUpDown className="size-4" />
+                    )}
+                    {collapsed ? t('messageActions.expand') : t('messageActions.collapse')}
+                  </DropdownMenuItem>
+                  {showRetry && onRetry && (
+                    <DropdownMenuItem onSelect={onRetry}>
+                      <RotateCcw className="size-4" />
+                      {t('assistantMessage.regenerateReference', {
+                        defaultValue: '重新生成参考'
+                      })}
+                    </DropdownMenuItem>
+                  )}
+                  {showRetry && onRetry && (
+                    <DropdownMenuItem onSelect={handleDeleteAndRegenerate}>
+                      <RotateCcw className="size-4" />
+                      {t('messageActions.deleteAndRegenerate')}
+                    </DropdownMenuItem>
+                  )}
+                  {msgId && onDelete && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="destructive" onSelect={() => onDelete(msgId)}>
+                        <Trash2 className="size-4" />
+                        {t('action.delete', { ns: 'common' })}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {devMode && debugInfo && <DebugToggleButton debugInfo={debugInfo} />}
+            </div>
+          )}
       </div>
     </div>
   )

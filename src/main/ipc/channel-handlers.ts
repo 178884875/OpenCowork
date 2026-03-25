@@ -355,6 +355,7 @@ export function registerChannelHandlers(channelManager: ChannelManager): void {
             'builtin',
             'config',
             'createdAt',
+            'projectId',
             'tools',
             'providerId',
             'model',
@@ -425,6 +426,23 @@ export function registerChannelHandlers(channelManager: ChannelManager): void {
           )
         } catch (err) {
           console.error('[Channels] Failed to sync channel session model:', err)
+        }
+      }
+
+      if ('projectId' in patch) {
+        try {
+          const db = getDb()
+          const boundProject = next.projectId ? projectsDao.getProject(next.projectId) : undefined
+          db.prepare(
+            'UPDATE sessions SET project_id = ?, working_folder = ?, ssh_connection_id = ? WHERE plugin_id = ?'
+          ).run(
+            boundProject?.id ?? null,
+            boundProject?.working_folder ?? null,
+            boundProject?.ssh_connection_id ?? null,
+            id
+          )
+        } catch (err) {
+          console.error('[Channels] Failed to sync channel project binding:', err)
         }
       }
       return { success: true }
@@ -555,7 +573,8 @@ export function registerChannelHandlers(channelManager: ChannelManager): void {
       }
     ) => {
       const db = getDb()
-      const project = projectsDao.ensurePluginProject(args.pluginId, `Plugin ${args.pluginId}`)
+      const plugin = readPlugins().find((item) => item.id === args.pluginId)
+      const project = plugin?.projectId ? projectsDao.getProject(plugin.projectId) : undefined
       db.prepare(
         `INSERT INTO sessions (id, title, icon, mode, created_at, updated_at, project_id, working_folder, ssh_connection_id, pinned, plugin_id, external_chat_id)
          VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
@@ -565,9 +584,9 @@ export function registerChannelHandlers(channelManager: ChannelManager): void {
         args.mode,
         args.createdAt,
         args.updatedAt,
-        project.id,
-        project.working_folder,
-        project.ssh_connection_id,
+        project?.id ?? null,
+        project?.working_folder ?? null,
+        project?.ssh_connection_id ?? null,
         args.pluginId,
         args.externalChatId ?? null
       )

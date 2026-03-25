@@ -490,21 +490,22 @@ export const useChatStore = create<ChatStore>()(
       let nextSessionId: string | null = null
       set((state) => {
         state.activeProjectId = id
-        if (!id) return
+        if (!id) {
+          state.activeSessionId = null
+          return
+        }
         const currentSession = state.sessions.find((s) => s.id === state.activeSessionId)
         if (currentSession?.projectId === id) return
         const sessionsInProject = state.sessions
           .filter((s) => s.projectId === id)
           .sort((a, b) => b.updatedAt - a.updatedAt)
         nextSessionId = sessionsInProject[0]?.id ?? null
-        if (nextSessionId) {
-          state.activeSessionId = nextSessionId
-        }
+        state.activeSessionId = nextSessionId
       })
       if (nextSessionId) {
         void get().loadRecentSessionMessages(nextSessionId)
-        useUIStore.getState().syncSessionScopedState(nextSessionId)
       }
+      useUIStore.getState().syncSessionScopedState(nextSessionId)
     },
 
     createProject: async (input) => {

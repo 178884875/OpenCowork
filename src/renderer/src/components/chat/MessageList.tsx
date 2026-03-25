@@ -3,14 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useChatStore } from '@renderer/stores/chat-store'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { MessageItem } from './MessageItem'
-import {
-  MessageSquare,
-  CircleHelp,
-  Briefcase,
-  Code2,
-  ArrowDown,
-  Loader2
-} from 'lucide-react'
+import { MessageSquare, CircleHelp, Briefcase, Code2, ArrowDown, Loader2 } from 'lucide-react'
 
 import type { ContentBlock, ToolResultContent, UnifiedMessage } from '@renderer/lib/api/types'
 import {
@@ -51,12 +44,14 @@ interface RenderableMessage {
   messageId: string
   messageIndex: number
   isLastUserMessage: boolean
+  isLastAssistantMessage: boolean
   toolResults?: Map<string, { content: ToolResultContent; isError?: boolean }>
 }
 
 interface RenderableMessageMeta {
   messageIndex: number
   isLastUserMessage: boolean
+  isLastAssistantMessage: boolean
   toolResults?: Map<string, { content: ToolResultContent; isError?: boolean }>
 }
 
@@ -100,6 +95,7 @@ function buildRenderableMessageMeta(
   streamingMessageId: string | null
 ): RenderableMetaBuildResult {
   let lastRealUserIndex = -1
+  let lastAssistantIndex = -1
   if (!streamingMessageId) {
     for (let i = messages.length - 1; i >= 0; i--) {
       if (isRealUserMessage(messages[i])) {
@@ -107,6 +103,14 @@ function buildRenderableMessageMeta(
         break
       }
     }
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (isToolResultOnlyUserMessage(message)) continue
+    if (message.role === 'assistant') {
+      lastAssistantIndex = i
+    }
+    break
   }
 
   const assistantToolResults = new Map<
@@ -146,6 +150,7 @@ function buildRenderableMessageMeta(
     result.push({
       messageIndex: i,
       isLastUserMessage: i === lastRealUserIndex,
+      isLastAssistantMessage: i === lastAssistantIndex,
       toolResults: assistantToolResults.get(i)
     })
   }
@@ -153,6 +158,7 @@ function buildRenderableMessageMeta(
 }
 
 export function MessageList({
+  onRetry,
   onEditUserMessage,
   onDeleteMessage
 }: MessageListProps): React.JSX.Element {
@@ -199,6 +205,7 @@ export function MessageList({
         messageId: message.id,
         messageIndex: item.messageIndex,
         isLastUserMessage: item.isLastUserMessage,
+        isLastAssistantMessage: item.isLastAssistantMessage,
         toolResults: item.toolResults
       })
     }
@@ -323,6 +330,34 @@ export function MessageList({
     scrollToBottomImmediate()
   }, [scrollToBottomImmediate])
 
+  const applySuggestedPrompt = React.useCallback((prompt: string) => {
+    const textarea = document.querySelector('textarea')
+    if (textarea instanceof window.HTMLTextAreaElement) {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      )?.set
+      nativeInputValueSetter?.call(textarea, prompt)
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea.focus()
+      return
+    }
+
+    const editor = document.querySelector('[role="textbox"][contenteditable="true"]')
+    if (editor instanceof HTMLDivElement) {
+      editor.replaceChildren(document.createTextNode(prompt))
+      editor.dispatchEvent(new Event('input', { bubbles: true }))
+      editor.focus()
+      const selection = window.getSelection()
+      if (!selection) return
+      const range = document.createRange()
+      range.selectNodeContents(editor)
+      range.collapse(false)
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }
+  }, [])
+
   if (!activeSessionLoaded && activeSessionMessageCount > 0) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground/70">
@@ -360,7 +395,8 @@ export function MessageList({
                 ? [
                     t('messageList.summarizeProject'),
                     t('messageList.findBugs'),
-                    t('messageList.addErrorHandling')
+                    t('messageList.addErrorHandling'),
+                    t('messageList.useCommitCommand')
                   ]
                 : [
                     t('messageList.reviewCodebase'),
@@ -371,7 +407,8 @@ export function MessageList({
                 ? [
                     t('messageList.addFeature'),
                     t('messageList.writeTestsExisting'),
-                    t('messageList.optimizePerformance')
+                    t('messageList.optimizePerformance'),
+                    t('messageList.useCommitCommand')
                   ]
                 : [
                     t('messageList.buildCli'),
@@ -383,16 +420,7 @@ export function MessageList({
               key={prompt}
               className="rounded-lg border bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground/60 hover:text-foreground hover:bg-muted/60 transition-colors"
               onClick={() => {
-                const textarea = document.querySelector('textarea')
-                if (textarea) {
-                  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                    window.HTMLTextAreaElement.prototype,
-                    'value'
-                  )?.set
-                  nativeInputValueSetter?.call(textarea, prompt)
-                  textarea.dispatchEvent(new Event('input', { bubbles: true }))
-                  textarea.focus()
-                }
+                applySuggestedPrompt(prompt)
               }}
             >
               {prompt}
@@ -477,7 +505,13 @@ export function MessageList({
             </div>
           )}
           {visibleRenderableMessages.map(
-            ({ messageId, messageIndex, isLastUserMessage, toolResults }) => {
+            ({
+              messageId,
+              messageIndex,
+              isLastUserMessage,
+              isLastAssistantMessage,
+              toolResults
+            }) => {
               return (
                 <MessageItem
                   key={messageId}
@@ -485,6 +519,8 @@ export function MessageList({
                   messageId={messageId}
                   isStreaming={messageId === streamingMessageId}
                   isLastUserMessage={isLastUserMessage}
+                  isLastAssistantMessage={isLastAssistantMessage}
+                  onRetryAssistantMessage={onRetry}
                   onEditUserMessage={onEditUserMessage}
                   onDeleteMessage={onDeleteMessage}
                   toolResults={toolResults}
@@ -492,7 +528,6 @@ export function MessageList({
               )
             }
           )}
-
         </div>
       </div>
 

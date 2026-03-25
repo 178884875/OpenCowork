@@ -82,13 +82,6 @@ export function RightPanelRail({
                     )}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent
-                  side="left"
-                  sideOffset={12}
-                  className="text-xs font-semibold bg-popover/90 backdrop-blur-md border-border/50"
-                >
-                  {t(`rightPanel.${tabDef.labelKey}`)}
-                </TooltipContent>
               </Tooltip>
             </div>
           )

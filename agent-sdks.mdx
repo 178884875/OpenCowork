@@ -1,0 +1,203 @@
+---
+title: 开源 Agents SDK 调研
+description: 按 Python、TypeScript、C#、Java 维度整理常用开源 Agent SDK。
+---
+
+# 开源 Agents SDK 调研 / Open Source Agents SDK Survey
+
+这份清单按“**现在就能上手**”为标准筛选，优先选择社区活跃、文档完整、工程化能力较强的开源项目。
+
+> 结论先说：**目前没有一个主流开源 SDK 能同时把 Python、TypeScript、C#、Java 四种语言都做得同样完整。**
+> 如果你要多语言统一选型，通常要在 `OpenAI Agents SDK`、`Semantic Kernel`、`Spring AI`、`LangGraph`、`Vercel AI SDK` 之间组合。
+
+## 快速结论 / Quick Picks
+
+| 语言 | 优先推荐 | 适合场景 |
+| --- | --- | --- |
+| Python | OpenAI Agents SDK / LangGraph / CrewAI | 多 Agent 编排、工具调用、长流程状态机 |
+| TypeScript | OpenAI Agents SDK / Vercel AI SDK / Mastra / Kode Agent SDK | Web 应用、流式 UI、前后端一体 Agent、长运行多 Agent 协作 |
+| C# | Semantic Kernel / Microsoft Agent Framework / BotSharp | 企业集成、.NET 生态、流程编排 |
+| Java | Spring AI / Semantic Kernel Java | Spring 体系、企业系统接入、Java 服务化部署 |
+
+## 多语言选型建议 / Cross-language Guidance
+
+### 1. 如果你要 Python + TypeScript 统一
+优先看：
+
+- `OpenAI Agents SDK`
+- `LangGraph`（Python 强，JS 生态也在推进）
+
+适合：一个后端 Agent 编排层 + 一个前端/Node 工具层。
+
+### 2. 如果你要 C# + Java + Python 的企业后端统一
+优先看：
+
+- `Semantic Kernel`
+- `Spring AI`（Java 主力）
+
+适合：已有 .NET / Java 存量系统，要把 AI 能力接进现有服务、插件、数据源、向量库。
+
+### 3. 如果你主要做 Web 产品和 Agent UI
+优先看：
+
+- `Vercel AI SDK`
+- `Mastra`
+- `OpenAI Agents SDK (TS)`
+
+适合：Next.js、React、Node.js、流式响应、结构化输出、前后端一体化开发。
+
+### Kode Agent SDK
+
+- **仓库**: `https://github.com/shareAI-lab/kode-agent-sdk`（GitHub ⭐ 242）
+- **特点**: TypeScript / Node.js 的 event-driven Agent runtime，强调 long-running workflow、enterprise-grade persistence、multi-agent collaboration。
+- **优点**: 对需要长时间运行、可恢复状态、多 Agent 协同的服务端场景更直接。
+- **适合**: 后台 Agent 服务、研究/协作型 Agent、需要持久化和事件驱动编排的 TS 项目。
+- **注意**: 社区认知度目前低于 OpenAI Agents SDK、Vercel AI SDK、Mastra，选型时更建议先验证生态成熟度和示例覆盖度。
+
+## Python 方向
+
+### OpenAI Agents SDK
+
+- **仓库**: `https://github.com/openai/openai-agents-python`（GitHub ⭐ 20,248）
+- **特点**: 轻量、抽象少，内置 `agents`、`tools`、`handoffs`、`guardrails`、`sessions`、`tracing`、`human-in-the-loop`。
+- **优点**: 上手快，原生面向 agent workflow，官方示例清晰；支持 MCP、工具调用和多 Agent 交接。
+- **适合**: 你想快速做一个“真 Agent”系统，而不是从聊天接口自己拼框架。
+- **注意**: 官方重点在 Python / TypeScript，两端体验最好；如果你的主栈是 Java / C#，它不能单独覆盖全部技术栈。
+
+### LangGraph
+
+- **仓库**: `https://github.com/langchain-ai/langgraph`（GitHub ⭐ 27,305）
+- **特点**: 用 graph/state machine 方式构建长期运行、可恢复、可插入人工审批的 agent 流程。
+- **优点**: 长流程、复杂状态、持久化恢复、人类介入都比较强；很适合“工作流型 agent”。
+- **适合**: 复杂编排、研究助手、代码代理、审批链、需要 durable execution 的系统。
+- **注意**: 偏底层 orchestration，学习成本高于轻量 SDK。
+
+### CrewAI
+
+- **仓库**: `https://github.com/crewAIInc/crewAI`（GitHub ⭐ 47,029）
+- **特点**: 强调角色分工式多 Agent 协作，围绕 crew / task 的组织方式很直观。
+- **优点**: 多角色协作表达自然，适合内容生产、分析、研究、流程自动化。
+- **适合**: 想快速验证多 Agent 分工模式，不想自己先建图和状态机。
+- **注意**: 更偏“多角色编排体验”，底层可控性通常不如 LangGraph。
+
+## TypeScript 方向
+
+### OpenAI Agents SDK (TS)
+
+- **仓库**: `https://github.com/openai/openai-agents-js`（GitHub ⭐ 2,514）
+- **特点**: 与 Python 版思路一致，支持 `agents`、`tools`、`handoffs`、`guardrails`、`sessions`、`tracing`、`voice agents`。
+- **优点**: 如果你前后端都用 TS，工程体验很顺；Node、Deno、Bun、Cloudflare Workers 适配都不错。
+- **适合**: Node Agent 服务、Web 工具代理、语音 Agent、浏览器外接工具链。
+- **注意**: 更适合“Agent runtime 层”，UI 层能力不如 Vercel AI SDK 那么强。
+
+### Vercel AI SDK
+
+- **仓库**: `https://github.com/vercel/ai`（GitHub ⭐ 22,947）
+- **特点**: TypeScript 优先，统一模型提供商接口，强项是流式 UI、结构化输出、前端集成和 agent 循环能力。
+- **优点**: 和 Next.js / React / Node 组合非常顺手，产品化速度快。
+- **适合**: 要做 AI 产品、聊天界面、工具调用 UI、Web Agent 应用。
+- **注意**: 它既能做 agent，但核心优势还是“AI app toolkit”，不是纯编排框架。
+
+### Mastra
+
+- **仓库**: `https://github.com/mastra-ai/mastra`（GitHub ⭐ 22,268）
+- **特点**: 现代 TypeScript 栈，覆盖 agent、workflow、RAG、eval、模型路由等完整能力。
+- **优点**: 从原型到生产链路比较完整，适合 TS 团队一套栈做全流程。
+- **适合**: 想在 TypeScript 里同时拿到 workflow + agent + eval + observability 能力。
+- **注意**: 生态仍在快速演进，团队需要接受框架迭代速度较快。
+
+## C# / .NET 方向
+
+### Semantic Kernel
+
+- **仓库**: `https://github.com/microsoft/semantic-kernel`（GitHub ⭐ 27,536）
+- **特点**: 微软主推的模型无关 SDK，支持 Python、.NET、Java；提供 plugins、memory、multi-agent、process framework、vector DB 集成。
+- **优点**: 企业集成能力强，跟 .NET 生态契合度高，适合把 AI 作为业务系统的一部分接进去。
+- **适合**: 企业应用、Copilot、业务流程自动化、需要稳健工程化能力的后端服务。
+- **注意**: 概念面较宽，第一次接触时会比轻量 Agent SDK 更重一些。
+
+### Microsoft Agent Framework
+
+- **仓库**: `https://github.com/microsoft/agent-framework`（GitHub ⭐ 8,159）
+- **特点**: 明确面向 AI agents 和 multi-agent workflow，支持 Python 与 .NET，提供 graph-based workflow、checkpointing、human-in-the-loop、DevUI。
+- **优点**: 对复杂 agent 工作流表达直接，图式编排和调试体验好。
+- **适合**: .NET 团队做生产级 Agent 编排，尤其适合需要流程图、检查点和人工审批的场景。
+- **注意**: 目前语言覆盖还是以 Python / .NET 为主，不是四语言统一解。
+
+### BotSharp
+
+- **仓库**: `https://github.com/SciSharp/BotSharp`（GitHub ⭐ 3,031）
+- **特点**: .NET 生态里的多 Agent / Bot 框架，适合把 Bot、Agent、插件体系接进现有服务。
+- **优点**: 对 C# 团队友好，扩展和自托管空间大。
+- **适合**: 你本来就主要使用 ASP.NET / .NET 服务体系。
+- **注意**: 国际社区声量不如 Semantic Kernel，选型时更建议先看项目活跃度和你团队的适配成本。
+
+## Java 方向
+
+### Spring AI
+
+- **仓库**: `https://github.com/spring-projects/spring-ai`（GitHub ⭐ 8,281）
+- **特点**: Spring 风格的 AI 应用框架，强调 provider portability、structured output、向量库和企业数据/API 接入。
+- **优点**: 对 Java / Spring 团队极友好，能顺滑融入现有 Spring Boot 服务。
+- **适合**: 企业 Java 服务、内部知识库、工具调用、RAG、工作流接入。
+- **注意**: 它是“AI engineering framework”多于“纯 Agent SDK”，但做 Java Agent 系统非常实用。
+
+### Semantic Kernel Java
+
+- **仓库**: `https://github.com/microsoft/semantic-kernel-java`（GitHub ⭐ 254）
+- **特点**: Semantic Kernel 的 Java 实现，适合想在 Java 中复用 SK 的 plugin / orchestration 思路。
+- **优点**: 如果你团队同时有 .NET / Python / Java，这条路线更容易统一概念模型。
+- **适合**: 跨语言企业团队，希望 Java 与 .NET / Python 方案尽量同构。
+- **注意**: Java 生态里它没有 Spring AI 那么“贴 Spring”，工程落地时通常要结合你的现有框架选。
+
+## 我给你的实际推荐 / Practical Recommendation
+
+### 方案 A：你要最快落地
+
+- Python: `OpenAI Agents SDK`
+- TypeScript: `OpenAI Agents SDK`、`Vercel AI SDK` 或 `Kode Agent SDK`
+- C#: `Semantic Kernel`
+- Java: `Spring AI`
+
+这是最稳的一组，学习资料和社区都相对充足。
+
+### 方案 B：你要复杂工作流与状态控制
+
+- Python: `LangGraph`
+- TypeScript: `Mastra`、`Kode Agent SDK` 或 `OpenAI Agents SDK`
+- C#: `Microsoft Agent Framework`
+- Java: `Spring AI`
+
+这组更偏工程编排与生产工作流。
+
+### 方案 C：你要企业统一治理
+
+- Python / C# / Java: `Semantic Kernel`
+- TypeScript: `Vercel AI SDK` 或 `OpenAI Agents SDK`
+
+这组适合后端多语言、前端 TS 的企业团队。
+
+## 不同团队怎么选 / Team-based Selection
+
+| 团队背景 | 更建议 |
+| --- | --- |
+| Python 为主 | OpenAI Agents SDK 或 LangGraph |
+| 全栈 TypeScript | OpenAI Agents SDK (TS) / Vercel AI SDK / Mastra / Kode Agent SDK |
+| .NET 企业团队 | Semantic Kernel 或 Microsoft Agent Framework |
+| Java + Spring 团队 | Spring AI |
+| 多语言企业后端 | Semantic Kernel + Spring AI + TS 前端 SDK 组合 |
+
+## 参考来源 / References
+
+- `https://github.com/openai/openai-agents-python`
+- `https://github.com/openai/openai-agents-js`
+- `https://github.com/microsoft/semantic-kernel`
+- `https://github.com/microsoft/semantic-kernel-java`
+- `https://github.com/microsoft/agent-framework`
+- `https://github.com/langchain-ai/langgraph`
+- `https://github.com/crewAIInc/crewAI`
+- `https://github.com/vercel/ai`
+- `https://github.com/mastra-ai/mastra`
+- `https://github.com/shareAI-lab/kode-agent-sdk`
+- `https://github.com/spring-projects/spring-ai`
+- `https://github.com/SciSharp/BotSharp`

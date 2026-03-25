@@ -55,7 +55,7 @@ import {
   serializeSystemCommand,
   type SystemCommandSnapshot
 } from '@renderer/lib/commands/system-command'
-import type { AgentLoopConfig } from '@renderer/lib/agent/types'
+import type { AgentEvent, AgentLoopConfig } from '@renderer/lib/agent/types'
 import { ApiStreamError } from '@renderer/lib/ipc/api-stream'
 import { compressMessages } from '@renderer/lib/agent/context-compression'
 import type { CompressionConfig } from '@renderer/lib/agent/context-compression'
@@ -105,6 +105,17 @@ const CLARIFY_ALLOWED_TOOLS = new Set([
 
 /** Per-session abort controllers — module-level so concurrent sessions don't overwrite each other */
 const sessionAbortControllers = new Map<string, AbortController>()
+
+function extractPluginChatId(externalChatId?: string): string | undefined {
+  if (!externalChatId) return undefined
+  const match = externalChatId.match(/^plugin:[^:]+:chat:(.+?)(?::message:.+)?$/)
+  if (!match?.[1]) return undefined
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return match[1]
+  }
+}
 
 type MessageSource = 'team' | 'queued'
 
@@ -868,6 +879,19 @@ function compactStreamingToolInput(input: Record<string, unknown>): Record<strin
   return compact
 }
 
+function shouldHandleAgentEventAfterAbort(event: AgentEvent): boolean {
+  switch (event.type) {
+    case 'tool_call_result':
+    case 'iteration_end':
+    case 'message_end':
+    case 'loop_end':
+    case 'error':
+      return true
+    default:
+      return false
+  }
+}
+
 function createSubAgentEventBuffer(sessionId: string): {
   handleEvent: (event: SubAgentEvent) => void
   dispose: () => void
@@ -1288,6 +1312,10 @@ export function useChatActions(): {
           unregisterPluginTools()
         }
 
+        const scopedActiveChannels = session?.projectId
+          ? activeChannels.filter((channel) => channel.projectId === session.projectId)
+          : []
+
         // Dynamic MCP tool registration based on active MCPs
         const activeMcps = useMcpStore.getState().getActiveMcps()
         const activeMcpTools = useMcpStore.getState().getActiveMcpTools()
@@ -1336,43 +1364,17 @@ export function useChatActions(): {
           )
         }
 
-        // Build channel info for system prompt — inject channel metadata + per-channel system prompts
+        // Build channel info for system prompt — only inject channels bound to the current project
         let userPrompt = settings.systemPrompt || ''
-        if (activeChannels.length > 0) {
-          const channelLines: string[] = ['\n## Active Channels']
-          for (const c of activeChannels) {
+        if (scopedActiveChannels.length > 0) {
+          const channelLines: string[] = ['\n## Project Channels']
+          for (const c of scopedActiveChannels) {
             channelLines.push(`- **${c.name}** (channel_id: \`${c.id}\`, type: ${c.type})`)
-            const desc = useChannelStore.getState().getDescriptor(c.type)
-            const toolNames = desc?.tools ?? []
-            if (toolNames.length > 0) {
-              const enabled = toolNames.filter((name) => c.tools?.[name] !== false)
-              const disabled = toolNames.filter((name) => c.tools?.[name] === false)
-              channelLines.push(
-                `  Enabled tools: ${enabled.length > 0 ? enabled.join(', ') : 'none'}`
-              )
-              if (disabled.length > 0) {
-                channelLines.push(`  Disabled tools: ${disabled.join(', ')}`)
-              }
-            }
           }
-          const hasFeishuChannel = activeChannels.some((c) => c.type === 'feishu-bot')
-          const hasWeixinChannel = activeChannels.some((c) => c.type === 'weixin-official')
-
           channelLines.push(
             '',
-            'Use plugin_id (set to channel_id) when calling Plugin* tools (PluginSendMessage, PluginReplyMessage, PluginGetGroupMessages, PluginListGroups, PluginSummarizeGroup, PluginGetCurrentChatMessages).',
-            'Always confirm with the user before sending messages on their behalf.',
-            '',
-            '### Generating & Delivering Files via Channels',
-            'When the user asks you to generate reports, documents, or any deliverable and wants it sent to a chat:',
-            '1. **Write the file** using the Write tool (e.g. `report.md`, `analysis.csv`, `summary.html`).',
-            hasFeishuChannel
-              ? '2. **Send the file** using FeishuSendFile (for Feishu chats), WeixinSendFile (for 官方微信 chats), or share key content via PluginSendMessage for other platforms.'
-              : hasWeixinChannel
-                ? '2. **Send the file** using WeixinSendFile (for 官方微信 chats), or share key content via PluginSendMessage for other platforms.'
-                : '2. **Share the content** via PluginSendMessage, or inform the user where the file was saved.',
-            '3. **Provide a brief summary** in your response so the user knows what was generated.',
-            'Prefer writing to a file + sending it over pasting long content (>30 lines) directly in chat messages.'
+            'Use plugin_id (set to channel_id) when calling Plugin* tools.',
+            'Always confirm with the user before sending messages on their behalf.'
           )
           const channelSection = channelLines.join('\n')
           userPrompt = userPrompt ? `${userPrompt}\n${channelSection}` : channelSection
@@ -1431,44 +1433,21 @@ export function useChatActions(): {
           const channelMeta = useChannelStore
             .getState()
             .channels.find((p) => p.id === session.pluginId)
-          const chatId = session.externalChatId.replace(/^plugin:[^:]+:chat:/, '')
-          const isFeishu = channelMeta?.type === 'feishu-bot'
-          const isWeixin = channelMeta?.type === 'weixin-official'
+          const chatId = extractPluginChatId(session.externalChatId)
           const channelDescriptor = channelMeta
             ? useChannelStore.getState().getDescriptor(channelMeta.type)
             : undefined
           const toolNames = channelDescriptor?.tools ?? []
           const enabledTools = toolNames.filter((name) => channelMeta?.tools?.[name] !== false)
-          const disabledTools = toolNames.filter((name) => channelMeta?.tools?.[name] === false)
           const senderLabel = session.pluginSenderName || session.pluginSenderId || 'unknown'
           const channelCtx = [
             `\n## Channel Auto-Reply Context`,
-            `This session is handling messages from channel **${channelMeta?.name ?? session.pluginId}** (channel_id: \`${session.pluginId}\`).`,
-            `Chat ID: \`${chatId}\``,
+            `Channel: ${channelMeta?.name ?? session.pluginId} (channel_id: \`${session.pluginId}\`)`,
+            chatId ? `Chat ID: \`${chatId}\`` : '',
             `Chat Type: ${session.pluginChatType ?? 'unknown'}`,
             `Sender: ${senderLabel} (id: ${session.pluginSenderId ?? 'unknown'})`,
-            `Enabled tools: ${enabledTools.length > 0 ? enabledTools.join(', ') : 'none'}`,
-            disabledTools.length > 0 ? `Disabled tools: ${disabledTools.join(', ')}` : '',
-            `Your response will be streamed directly to the user in real-time via the channel.`,
-            `Just respond naturally — the streaming pipeline handles delivery automatically.`,
-            `If you need to send an additional message, use PluginSendMessage with plugin_id="${session.pluginId}" and chat_id="${chatId}".`,
-            isFeishu
-              ? [
-                  `\n### Feishu Media Tools`,
-                  `You can send images and files to this chat:`,
-                  `- **FeishuSendImage**: Send an image file (screenshot, generated image, etc.)`,
-                  `- **FeishuSendFile**: Send a file (PDF, document, spreadsheet, etc.)`,
-                  `Both require plugin_id="${session.pluginId}" and chat_id="${chatId}".`
-                ].join('\n')
-              : isWeixin
-                ? [
-                    `\n### Weixin Media Tools`,
-                    `You can send images and files to this chat:`,
-                    `- **WeixinSendImage**: Send an image file (screenshot, generated image, etc.)`,
-                    `- **WeixinSendFile**: Send a file (PDF, document, spreadsheet, etc.)`,
-                    `Both require plugin_id="${session.pluginId}" and chat_id="${chatId}".`
-                  ].join('\n')
-                : ''
+            enabledTools.length > 0 ? `Available channel tools: ${enabledTools.join(', ')}` : '',
+            `Reply naturally. If you need channel tools, use plugin_id="${session.pluginId}"${chatId ? ` and chat_id="${chatId}"` : ''}.`
           ]
             .filter(Boolean)
             .join('\n')
@@ -1653,9 +1632,7 @@ export function useChatActions(): {
 
         // Extract channel context from session so tools like CronAdd can auto-inject routing
         const sessionChannelId = session?.pluginId
-        const sessionChannelChatId = session?.externalChatId
-          ? session.externalChatId.replace(/^plugin:[^:]+:chat:/, '')
-          : undefined
+        const sessionChannelChatId = extractPluginChatId(session?.externalChatId)
 
         // Tool input throttling state — defined before try block so finally can safely dispose
         const toolInputThrottle = new Map<
@@ -1852,7 +1829,9 @@ export function useChatActions(): {
           }
 
           for await (const event of loop) {
-            if (abortController.signal.aborted) break
+            if (abortController.signal.aborted && !shouldHandleAgentEventAfterAbort(event)) {
+              continue
+            }
 
             switch (event.type) {
               case 'thinking_delta':

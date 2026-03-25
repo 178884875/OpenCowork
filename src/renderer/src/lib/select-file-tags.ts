@@ -15,10 +15,13 @@ export interface SelectFileTagRange {
   end: number
   text: string
   raw: string
+  syntax: 'tag' | 'token'
 }
 
 const SELECT_FILE_TAG_RE = /<select-file>([\s\S]*?)<\/select-file>/gi
+const SELECT_FILE_TOKEN_RE = /@\{([^}\r\n]+)\}/g
 const SELECT_FILE_TAG_TEST_RE = /<select-file>[\s\S]*?<\/select-file>/i
+const SELECT_FILE_TOKEN_TEST_RE = /@\{[^}\r\n]+\}/
 
 function decodeTagText(value: string): string {
   return value.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
@@ -28,10 +31,67 @@ function encodeTagText(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+function normalizeFilePath(value: string): string {
+  return value.replace(/\\/g, '/').trim()
+}
+
+function collectSelectFileRanges(text: string): SelectFileTagRange[] {
+  if (!text) return []
+
+  const ranges: SelectFileTagRange[] = []
+
+  for (const match of text.matchAll(SELECT_FILE_TAG_RE)) {
+    const start = match.index ?? -1
+    const raw = match[0] ?? ''
+    if (start < 0 || !raw) continue
+    ranges.push({
+      start,
+      end: start + raw.length,
+      raw,
+      text: normalizeFilePath(decodeTagText(match[1] ?? '')),
+      syntax: 'tag'
+    })
+  }
+
+  for (const match of text.matchAll(SELECT_FILE_TOKEN_RE)) {
+    const start = match.index ?? -1
+    const raw = match[0] ?? ''
+    if (start < 0 || !raw) continue
+    ranges.push({
+      start,
+      end: start + raw.length,
+      raw,
+      text: normalizeFilePath(match[1] ?? ''),
+      syntax: 'token'
+    })
+  }
+
+  ranges.sort((left, right) => {
+    if (left.start !== right.start) return left.start - right.start
+    return left.end - right.end
+  })
+
+  const merged: SelectFileTagRange[] = []
+  for (const range of ranges) {
+    const previous = merged[merged.length - 1]
+    if (previous && range.start < previous.end) continue
+    if (!range.text) continue
+    merged.push(range)
+  }
+
+  return merged
+}
+
 export function createSelectFileTag(filePath: string): string {
-  const normalized = filePath.replace(/\\/g, '/').trim()
+  const normalized = normalizeFilePath(filePath)
   if (!normalized) return ''
   return `<select-file>${encodeTagText(normalized)}</select-file>`
+}
+
+export function createSelectFileToken(filePath: string): string {
+  const normalized = normalizeFilePath(filePath)
+  if (!normalized || normalized.includes('}')) return ''
+  return `@{${normalized}}`
 }
 
 export function parseSelectFileText(text: string): SelectFileTextSegment[] {
@@ -40,13 +100,9 @@ export function parseSelectFileText(text: string): SelectFileTextSegment[] {
   const segments: SelectFileTextSegment[] = []
   let lastIndex = 0
 
-  for (const match of text.matchAll(SELECT_FILE_TAG_RE)) {
-    const matchIndex = match.index ?? 0
-    const raw = match[0] ?? ''
-    const fileText = decodeTagText(match[1] ?? '').trim()
-
-    if (matchIndex > lastIndex) {
-      const plainText = text.slice(lastIndex, matchIndex)
+  for (const range of collectSelectFileRanges(text)) {
+    if (range.start > lastIndex) {
+      const plainText = text.slice(lastIndex, range.start)
       if (plainText) {
         segments.push({ type: 'text', text: plainText, raw: plainText })
       }
@@ -54,11 +110,11 @@ export function parseSelectFileText(text: string): SelectFileTextSegment[] {
 
     segments.push({
       type: 'file',
-      text: fileText,
-      raw
+      text: range.text,
+      raw: range.raw
     })
 
-    lastIndex = matchIndex + raw.length
+    lastIndex = range.end
   }
 
   if (lastIndex < text.length) {
@@ -72,25 +128,11 @@ export function parseSelectFileText(text: string): SelectFileTextSegment[] {
 }
 
 export function getSelectFileTagRanges(text: string): SelectFileTagRange[] {
-  if (!text) return []
-
-  const ranges: SelectFileTagRange[] = []
-  for (const match of text.matchAll(SELECT_FILE_TAG_RE)) {
-    const start = match.index ?? -1
-    const raw = match[0] ?? ''
-    if (start < 0 || !raw) continue
-    ranges.push({
-      start,
-      end: start + raw.length,
-      raw,
-      text: decodeTagText(match[1] ?? '').trim()
-    })
-  }
-  return ranges
+  return collectSelectFileRanges(text)
 }
 
 export function hasSelectFileTag(text: string): boolean {
-  return SELECT_FILE_TAG_TEST_RE.test(text)
+  return SELECT_FILE_TAG_TEST_RE.test(text) || SELECT_FILE_TOKEN_TEST_RE.test(text)
 }
 
 export function selectFileTextToPlainText(text: string): string {
@@ -99,9 +141,27 @@ export function selectFileTextToPlainText(text: string): string {
   return segments.map((segment) => segment.text).join('')
 }
 
+export function normalizeSelectFileText(text: string): string {
+  if (!text) return ''
+  const segments = parseSelectFileText(text)
+  if (segments.length === 0) return text
+  return segments
+    .map((segment) => (segment.type === 'file' ? createSelectFileToken(segment.text) : segment.raw))
+    .join('')
+}
+
+export function serializeSelectFileText(text: string): string {
+  if (!text) return ''
+  const segments = parseSelectFileText(text)
+  if (segments.length === 0) return text
+  return segments
+    .map((segment) => (segment.type === 'file' ? createSelectFileTag(segment.text) : segment.raw))
+    .join('')
+}
+
 export function findSelectFileTagAt(text: string, cursor: number): SelectFileTagRange | null {
   const safeCursor = Math.max(0, Math.min(cursor, text.length))
-  for (const range of getSelectFileTagRanges(text)) {
+  for (const range of collectSelectFileRanges(text)) {
     if (safeCursor > range.start && safeCursor < range.end) {
       return range
     }
@@ -114,13 +174,16 @@ export function getSelectFileMentionQuery(
   cursor: number
 ): SelectFileMentionQuery | null {
   const safeCursor = Math.max(0, Math.min(cursor, text.length))
+  if (findSelectFileTagAt(text, safeCursor)) return null
+
   let mentionStart = -1
 
   for (let index = safeCursor - 1; index >= 0; index -= 1) {
     const char = text[index]
     if (/\s/.test(char)) break
-    if (char === '<' || char === '>') return null
+    if (char === '}' || char === '<' || char === '>') return null
     if (char === '@') {
+      if (text[index + 1] === '{') return null
       mentionStart = index
       break
     }

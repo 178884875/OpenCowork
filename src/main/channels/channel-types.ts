@@ -54,6 +54,8 @@ export interface ChannelInstance {
   builtin?: boolean
   config: Record<string, string>
   createdAt: number
+  /** Bound project ID (null = unbound) */
+  projectId?: string | null
   /** Per-tool enablement flags (missing = default enabled) */
   tools?: Record<string, boolean>
   /** Provider ID for this plugin's auto-reply agent (null = use global active provider) */

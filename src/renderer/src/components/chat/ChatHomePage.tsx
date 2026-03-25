@@ -10,7 +10,8 @@ import {
   Pencil,
   ChevronDown,
   Plus,
-  BookOpen
+  BookOpen,
+  PanelLeftOpen
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@renderer/components/ui/button'
@@ -100,6 +101,8 @@ export function ChatHomePage(): React.JSX.Element {
   const { t: tLayout } = useTranslation('layout')
   const mode = useUIStore((s) => s.mode)
   const setMode = useUIStore((s) => s.setMode)
+  const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen)
+  const toggleLeftSidebar = useUIStore((s) => s.toggleLeftSidebar)
   const activeProjectId = useChatStore((s) => s.activeProjectId)
   const activeSessionId = useChatStore((s) => s.activeSessionId)
   const projects = useChatStore((s) => s.projects)
@@ -336,7 +339,17 @@ export function ChatHomePage(): React.JSX.Element {
   }, [conversationGuideSeen, sessions.length])
 
   return (
-    <div className="flex flex-1 flex-col overflow-auto bg-gradient-to-b from-background via-background to-muted/20">
+    <div className="relative flex flex-1 flex-col overflow-auto bg-gradient-to-b from-background via-background to-muted/20">
+      {!leftSidebarOpen && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute left-4 top-4 z-10 size-8 rounded-lg border border-border/60 bg-background/80 backdrop-blur-sm"
+          onClick={toggleLeftSidebar}
+        >
+          <PanelLeftOpen className="size-4" />
+        </Button>
+      )}
       <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-8">
         <div className="mb-5 flex justify-center">
           <div
@@ -601,72 +614,71 @@ export function ChatHomePage(): React.JSX.Element {
           </Dialog>
         )}
 
-        {/* Project selector (only for cowork/code modes) */}
-        {mode !== 'chat' && (
-          <div className="mx-auto mb-4 w-full max-w-3xl flex justify-center">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8 gap-2 text-xs">
-                  <FolderOpen className="size-3.5" />
-                  <span className="max-w-[200px] truncate">
-                    {activeProject?.name ??
-                      t('input.selectProject', { defaultValue: 'Select Project' })}
-                  </span>
-                  <ChevronDown className="size-3.5 opacity-50" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="center" className="w-[280px]">
-                {projects
-                  .filter((p) => !p.pluginId)
-                  .map((project) => (
-                    <DropdownMenuItem
-                      key={project.id}
-                      onClick={() => setActiveProject(project.id)}
-                      className="flex items-center gap-2"
+        <div className="mt-auto">
+          <div className="mx-auto w-full max-w-4xl">
+            {mode !== 'chat' && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 px-1">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 rounded-full border-border/60 bg-background/50 px-3 text-[12px]"
                     >
                       <FolderOpen className="size-3.5" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs font-medium truncate">{project.name}</div>
-                        {project.workingFolder && (
-                          <div className="text-[10px] text-muted-foreground truncate">
-                            {project.workingFolder}
+                      <span className="max-w-[220px] truncate">
+                        {activeProject?.name ??
+                          t('input.selectProject', { defaultValue: 'Select Project' })}
+                      </span>
+                      <ChevronDown className="size-3.5 opacity-50" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-[320px]">
+                    {projects
+                      .filter((project) => !project.pluginId)
+                      .map((project) => (
+                        <DropdownMenuItem
+                          key={project.id}
+                          onClick={() => setActiveProject(project.id)}
+                          className="flex items-center gap-2"
+                        >
+                          <FolderOpen className="size-3.5" />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-medium">{project.name}</div>
+                            {project.workingFolder && (
+                              <div className="truncate text-[10px] text-muted-foreground">
+                                {project.workingFolder}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                      {activeProject?.id === project.id && (
-                        <div className="size-1.5 rounded-full bg-primary" />
-                      )}
+                          {activeProject?.id === project.id && (
+                            <div className="size-1.5 rounded-full bg-primary" />
+                          )}
+                        </DropdownMenuItem>
+                      ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => void handleCreateNewProject()}
+                      className="flex items-center gap-2 text-primary"
+                    >
+                      <Plus className="size-3.5" />
+                      <span className="text-xs">
+                        {t('input.newProject', { defaultValue: 'New Project' })}
+                      </span>
                     </DropdownMenuItem>
-                  ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => void handleCreateNewProject()}
-                  className="flex items-center gap-2 text-primary"
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-full border-border/60 bg-background/50 px-3 text-[12px]"
+                  onClick={handleOpenFolderDialog}
                 >
-                  <Plus className="size-3.5" />
-                  <span className="text-xs">
-                    {t('input.newProject', { defaultValue: 'New Project' })}
-                  </span>
-                </DropdownMenuItem>
-                {activeProject && (
-                  <DropdownMenuItem
-                    onClick={handleOpenFolderDialog}
-                    className="flex items-center gap-2"
-                  >
-                    <Pencil className="size-3.5" />
-                    <span className="text-xs">
-                      {t('input.changeFolder', { defaultValue: 'Change Folder' })}
-                    </span>
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        )}
-
-        <div className="mt-auto">
-          {/* Input area */}
-          <div className="mx-auto w-full max-w-3xl">
+                  <Pencil className="size-3.5" />
+                  {t('input.changeFolder', { defaultValue: 'Change Folder' })}
+                </Button>
+              </div>
+            )}
             <InputArea
               onSend={handleSend}
               onSelectFolder={mode !== 'chat' ? handleOpenFolderDialog : undefined}

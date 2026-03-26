@@ -22,7 +22,7 @@ import { initAppPluginStore, useAppPluginStore } from './stores/app-plugin-store
 import { useChatStore } from './stores/chat-store'
 import { usePlanStore } from './stores/plan-store'
 import { useSshStore } from './stores/ssh-store'
-import { registerAllTools, updateWebSearchToolRegistration, updateWikiToolRegistration } from './lib/tools'
+import { registerAllTools, updateWebSearchToolRegistration } from './lib/tools'
 import { updateAppPluginToolRegistration } from './lib/app-plugin'
 import { registerAllProviders } from './lib/api'
 import { registerAllViewers } from './lib/preview/register-viewers'
@@ -34,7 +34,6 @@ import i18n from './locales'
 import { cronEvents } from './lib/tools/cron-events'
 import { useCronStore } from './stores/cron-store'
 import { ipcClient } from './lib/ipc/ipc-client'
-import { IPC } from './lib/ipc/channels'
 import { runCronAgent } from './lib/tools/cron-agent-runner'
 import { useChatStore as _useChatStore } from './stores/chat-store'
 import { nanoid } from 'nanoid'
@@ -227,36 +226,6 @@ function App(): React.JSX.Element {
   useEffect(() => {
     void useCronStore.getState().loadJobs()
     void useCronStore.getState().loadRuns()
-  }, [])
-
-  useEffect(() => {
-    const syncWikiToolState = async (): Promise<void> => {
-      const store = useChatStore.getState()
-      const activeProjectId = store.activeProjectId
-      if (!activeProjectId) {
-        updateWikiToolRegistration(false)
-        return
-      }
-      const state = (await ipcClient.invoke(IPC.DB_WIKI_GET_PROJECT_STATE, activeProjectId)) as {
-        wiki_search_enabled?: number
-      } | null
-      updateWikiToolRegistration(state?.wiki_search_enabled === 1)
-    }
-
-    void syncWikiToolState()
-    const handler = (): void => {
-      void syncWikiToolState()
-    }
-    window.addEventListener('opencowork:wiki-search-changed', handler)
-    const unsubscribe = useChatStore.subscribe((next, prev) => {
-      if (next.activeProjectId !== prev.activeProjectId) {
-        void syncWikiToolState()
-      }
-    })
-    return () => {
-      window.removeEventListener('opencowork:wiki-search-changed', handler)
-      unsubscribe()
-    }
   }, [])
 
   // Forward cron:fired IPC events to the renderer-side event bus

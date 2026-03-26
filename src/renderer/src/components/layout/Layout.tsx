@@ -38,7 +38,6 @@ import { SettingsDialog } from '@renderer/components/settings/SettingsDialog'
 import { ChatHomePage } from '@renderer/components/chat/ChatHomePage'
 import { ProjectHomePage } from '@renderer/components/chat/ProjectHomePage'
 import { ProjectArchivePage } from '@renderer/components/chat/ProjectArchivePage'
-import { ProjectWikiPage } from '@renderer/components/chat/ProjectWikiPage'
 import { KeyboardShortcutsDialog } from '@renderer/components/settings/KeyboardShortcutsDialog'
 import { PermissionDialog } from '@renderer/components/cowork/PermissionDialog'
 import { ConversationGuideDialog } from '@renderer/components/chat/ConversationGuideDialog'
@@ -918,13 +917,6 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
                     className="flex flex-1 min-w-0 flex-col overflow-hidden"
                   >
                     <ProjectArchivePage />
-                  </PageTransition>
-                ) : chatView === 'wiki' ? (
-                  <PageTransition
-                    key="project-wiki"
-                    className="flex flex-1 min-w-0 flex-col overflow-hidden"
-                  >
-                    <ProjectWikiPage />
                   </PageTransition>
                 ) : (
                   <PageTransition

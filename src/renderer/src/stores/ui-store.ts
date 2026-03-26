@@ -16,7 +16,7 @@ export type NavItem =
   | 'ssh'
   | 'tasks'
 
-export type ChatView = 'home' | 'project' | 'archive' | 'channels' | 'wiki' | 'session'
+export type ChatView = 'home' | 'project' | 'archive' | 'channels' | 'session'
 
 export type RightPanelTab =
   | 'steps'
@@ -265,7 +265,6 @@ interface UIStore {
   navigateToProject: () => void
   navigateToArchive: () => void
   navigateToChannels: () => void
-  navigateToWiki: () => void
   navigateToSession: () => void
 }
 
@@ -737,17 +736,6 @@ export const useUIStore = create<UIStore>((set, get) => ({
     set({
       activeNavItem: 'chat',
       chatView: 'channels',
-      settingsPageOpen: false,
-      skillsPageOpen: false,
-      resourcesPageOpen: false,
-      translatePageOpen: false,
-      sshPageOpen: false,
-      tasksPageOpen: false
-    }),
-  navigateToWiki: () =>
-    set({
-      activeNavItem: 'chat',
-      chatView: 'wiki',
       settingsPageOpen: false,
       skillsPageOpen: false,
       resourcesPageOpen: false,

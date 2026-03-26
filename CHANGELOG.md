@@ -3,6 +3,26 @@
 All notable changes to **OpenCowork** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com).
 
+## [0.7.2] - 2026-03-26
+
+### Added
+
+- Added a reusable project working folder selector that supports both local desktop folders and SSH targets from chat home, project home, and the workspace sidebar.
+- Added persisted SubAgent history snapshots so detail views can continue to show transcript and report context after execution completes.
+
+### Changed
+
+- Improved the SubAgents experience with richer detail rendering, transcript-specific tool presentation, grouped history display, and clearer report status feedback.
+- Updated the docs homepage release badge from `v0.7.1` to `v0.7.2`.
+
+### Fixed
+
+- Fixed usage analytics model and provider resolution by carrying request debug metadata through usage recording and falling back to session context when needed.
+
+### Refactored
+
+- Removed the legacy renderer wiki navigation route and obsolete wiki-related UI state wiring.
+
 ## [0.7.1] - 2026-03-26
 
 ### Added

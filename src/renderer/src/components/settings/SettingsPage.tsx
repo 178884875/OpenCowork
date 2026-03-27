@@ -54,6 +54,7 @@ import { AppPluginPanel } from './AppPluginPanel'
 import { McpPanel } from './McpPanel'
 import { WebSearchPanel } from './WebSearchPanel'
 import { SkillsMarketPanel } from './SkillsMarketPanel'
+import { AnalyticsOverview } from './AnalyticsOverview'
 import { ModelIcon, ProviderIcon } from './provider-icons'
 import { IPC } from '@renderer/lib/ipc/channels'
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
@@ -68,7 +69,9 @@ import {
   getUsageByProvider,
   getUsageDaily,
   getUsageOverview,
-  listUsageEvents
+  getUsageTimeline,
+  listUsageEvents,
+  type UsageTimelineBucket
 } from '@renderer/lib/usage-analytics'
 
 const DEFAULT_GLOBAL_MEMORY_TEMPLATES = {
@@ -1351,7 +1354,7 @@ function MemoryPanel(): React.JSX.Element {
 
 function AnalyticsPanel(): React.JSX.Element {
   const { t, i18n } = useTranslation('settings')
-  const [rangeDays, setRangeDays] = useState<7 | 30 | 90>(30)
+  const [rangeDays, setRangeDays] = useState<1 | 7 | 30>(7)
   const [loading, setLoading] = useState(true)
   const [selectedProviderId, setSelectedProviderId] = useState<string>('__all__')
   const [selectedModelId, setSelectedModelId] = useState<string>('__all__')
@@ -1359,6 +1362,7 @@ function AnalyticsPanel(): React.JSX.Element {
   const [overview, setOverview] = useState<Awaited<ReturnType<typeof getUsageOverview>> | null>(
     null
   )
+  const [timeline, setTimeline] = useState<Record<string, unknown>[]>([])
   const [daily, setDaily] = useState<Record<string, unknown>[]>([])
   const [models, setModels] = useState<Record<string, unknown>[]>([])
   const [providers, setProviders] = useState<Record<string, unknown>[]>([])
@@ -1384,12 +1388,22 @@ function AnalyticsPanel(): React.JSX.Element {
     []
   )
   const sourceOptions = ['chat', 'agent', 'cron', 'plugin', 'draw', 'translate', 'team']
+  const timelineBucket: UsageTimelineBucket = rangeDays === 1 ? 'hour' : 'day'
 
   const query = useMemo(() => {
     const to = Date.now()
-    const from = to - rangeDays * 24 * 60 * 60 * 1000
+    const fromDate = new Date(to)
+
+    if (rangeDays === 1) {
+      fromDate.setMinutes(0, 0, 0)
+      fromDate.setHours(fromDate.getHours() - 23)
+    } else {
+      fromDate.setHours(0, 0, 0, 0)
+      fromDate.setDate(fromDate.getDate() - (rangeDays - 1))
+    }
+
     return {
-      from,
+      from: fromDate.getTime(),
       to,
       limit: 50,
       offset: 0,
@@ -1404,17 +1418,18 @@ function AnalyticsPanel(): React.JSX.Element {
     const run = async (): Promise<void> => {
       setLoading(true)
       try {
-        const [nextOverview, nextDaily, nextModels, nextProviders, nextDetails] = await Promise.all(
-          [
+        const [nextOverview, nextTimeline, nextDaily, nextModels, nextProviders, nextDetails] =
+          await Promise.all([
             getUsageOverview(query),
+            getUsageTimeline(query, timelineBucket),
             getUsageDaily(query),
             getUsageByModel(query),
             getUsageByProvider(query),
             listUsageEvents(query)
-          ]
-        )
+          ])
         if (cancelled) return
         setOverview(nextOverview)
+        setTimeline(nextTimeline)
         setDaily(nextDaily)
         setModels(nextModels)
         setProviders(nextProviders)
@@ -1427,7 +1442,7 @@ function AnalyticsPanel(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [query])
+  }, [query, timelineBucket])
 
   const tokenLocale = i18n.language?.startsWith('zh') ? 'zh-CN' : 'en-US'
   const inputTokenLabel = t('analytics.billableInputTokens', {
@@ -1472,106 +1487,6 @@ function AnalyticsPanel(): React.JSX.Element {
     const number = typeof value === 'number' ? value : Number(value ?? 0)
     return Number.isFinite(number) && number > 0 ? `${Math.round(number)} ms` : '-'
   }
-
-  const buildLinePoints = (rows: Record<string, unknown>[], key: string): string => {
-    if (rows.length === 0) return ''
-    const values = rows.map((row) => Number(row[key] ?? 0))
-    const max = Math.max(...values, 1)
-    return rows
-      .map((row, index) => {
-        const x = rows.length === 1 ? 0 : (index / (rows.length - 1)) * 100
-        const y = 100 - (Number(row[key] ?? 0) / max) * 100
-        return `${x},${y}`
-      })
-      .join(' ')
-  }
-
-  const renderLineChart = (
-    title: string,
-    rows: Record<string, unknown>[],
-    dataKey: string
-  ): React.JSX.Element => {
-    if (rows.length === 0) {
-      return (
-        <section className="space-y-3 rounded-xl border border-border/60 bg-background/60 p-4">
-          <h3 className="text-sm font-semibold">{title}</h3>
-          <p className="text-xs text-muted-foreground">{t('analytics.empty')}</p>
-        </section>
-      )
-    }
-
-    const latestRow = rows[0]
-    const latestValue =
-      dataKey === 'total_cost_usd'
-        ? `$${fmtMoney(latestRow[dataKey])}`
-        : renderTokenValue(latestRow[dataKey], true)
-
-    if (rows.length === 1) {
-      return (
-        <section className="space-y-3 rounded-xl border border-border/60 bg-background/60 p-4">
-          <h3 className="text-sm font-semibold">{title}</h3>
-          <div className="flex h-40 flex-col items-center justify-center rounded-lg border border-dashed border-border/40 bg-muted/20 text-center">
-            <div className="text-xs text-muted-foreground">{String(latestRow.day ?? '-')}</div>
-            <div className="mt-3 text-2xl font-semibold">{latestValue}</div>
-            <div className="mt-2 text-xs text-muted-foreground">{t('analytics.requests')} 1</div>
-          </div>
-        </section>
-      )
-    }
-
-    return (
-      <section className="space-y-3 rounded-xl border border-border/60 bg-background/60 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold">{title}</h3>
-          <div className="text-right text-xs text-muted-foreground">
-            <div>{String(latestRow.day ?? '-')}</div>
-            <div className="mt-1 font-medium text-foreground">{latestValue}</div>
-          </div>
-        </div>
-        <svg viewBox="0 0 100 100" className="h-40 w-full overflow-visible rounded-lg bg-muted/20">
-          <polyline
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            className="text-primary"
-            points={buildLinePoints([...rows].reverse(), dataKey)}
-          />
-        </svg>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {[...rows].slice(0, 4).map((row, index) => (
-            <div
-              key={`${title}-${index}`}
-              className="rounded-lg border border-border/40 px-3 py-2 text-xs"
-            >
-              <div className="text-muted-foreground">{String(row.day ?? '-')}</div>
-              <div className="mt-1 font-medium">
-                {dataKey === 'total_cost_usd'
-                  ? `$${fmtMoney(row[dataKey])}`
-                  : renderTokenValue(row[dataKey], true)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-    )
-  }
-
-  const cards = [
-    { label: t('analytics.requests'), value: fmtInt(overview?.request_count) },
-    { label: inputTokenLabel, value: renderTokenValue(overview?.input_tokens, true) },
-    { label: t('analytics.outputTokens'), value: renderTokenValue(overview?.output_tokens, true) },
-    {
-      label: t('analytics.cacheCreationTokens'),
-      value: renderTokenValue(overview?.cache_creation_tokens, true)
-    },
-    {
-      label: t('analytics.cacheReadTokens'),
-      value: renderTokenValue(overview?.cache_read_tokens, true)
-    },
-    { label: t('analytics.costUsd'), value: `$${fmtMoney(overview?.total_cost_usd)}` },
-    { label: t('analytics.avgTtft'), value: fmtMs(overview?.avg_ttft_ms) },
-    { label: t('analytics.avgTotal'), value: fmtMs(overview?.avg_total_ms) }
-  ]
 
   const renderSimpleTable = (
     title: string,
@@ -1623,7 +1538,7 @@ function AnalyticsPanel(): React.JSX.Element {
           <p className="text-sm text-muted-foreground">{t('analytics.subtitle')}</p>
         </div>
         <div className="flex gap-2">
-          {([7, 30, 90] as const).map((days) => (
+          {([1, 7, 30] as const).map((days) => (
             <Button
               key={days}
               size="sm"
@@ -1631,17 +1546,17 @@ function AnalyticsPanel(): React.JSX.Element {
               className="h-8 text-xs"
               onClick={() => setRangeDays(days)}
             >
-              {days === 7
-                ? t('analytics.range7d')
-                : days === 30
-                  ? t('analytics.range30d')
-                  : t('analytics.range90d')}
+              {days === 1
+                ? t('analytics.range24h')
+                : days === 7
+                  ? t('analytics.range7d')
+                  : t('analytics.range30d')}
             </Button>
           ))}
         </div>
       </div>
 
-      <section className="grid gap-3 rounded-xl border border-border/60 bg-background/60 p-4 md:grid-cols-3 xl:grid-cols-4">
+      <section className="grid gap-3 rounded-2xl border border-border/50 bg-muted/10 p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] md:grid-cols-3 xl:grid-cols-3">
         <div className="space-y-2">
           <div className="text-xs text-muted-foreground">{t('analytics.provider')}</div>
           <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
@@ -1699,22 +1614,16 @@ function AnalyticsPanel(): React.JSX.Element {
         </div>
       ) : (
         <>
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {cards.map((card) => (
-              <div
-                key={card.label}
-                className="rounded-xl border border-border/60 bg-background/60 p-4"
-              >
-                <div className="text-xs text-muted-foreground">{card.label}</div>
-                <div className="mt-2 text-lg font-semibold">{card.value}</div>
-              </div>
-            ))}
-          </section>
-
-          <section className="grid gap-4 lg:grid-cols-2">
-            {renderLineChart(t('analytics.chartCost'), daily, 'total_cost_usd')}
-            {renderLineChart(t('analytics.chartTokens'), daily, 'output_tokens')}
-          </section>
+          <AnalyticsOverview
+            overview={overview}
+            timeline={timeline}
+            rangeDays={rangeDays}
+            bucket={timelineBucket}
+            from={query.from}
+            to={query.to}
+            tokenLocale={tokenLocale}
+            inputTokenLabel={inputTokenLabel}
+          />
 
           {renderSimpleTable(t('analytics.daily'), daily, [
             { key: 'day', label: t('analytics.time') },
@@ -2811,8 +2720,14 @@ export function SettingsPage(): React.JSX.Element {
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto" key="scroll-panel">
-              <div className="mx-auto max-w-2xl px-8 pb-16 pt-10">
-                <FadeIn key={effectiveSettingsTab} duration={0.25}>
+              <div
+                className={
+                  effectiveSettingsTab === 'analytics'
+                    ? 'w-full max-w-none px-6 pb-16 pt-10'
+                    : 'mx-auto max-w-2xl px-8 pb-16 pt-10'
+                }
+              >
+                <FadeIn key={effectiveSettingsTab} duration={0.25} className="w-full">
                   <ActivePanel />
                 </FadeIn>
               </div>

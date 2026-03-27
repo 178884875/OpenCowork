@@ -62,6 +62,7 @@ export const IPC = {
   USAGE_EVENTS_ADD: 'usage-events:add',
   USAGE_EVENTS_OVERVIEW: 'usage-events:overview',
   USAGE_EVENTS_DAILY: 'usage-events:daily',
+  USAGE_EVENTS_TIMELINE: 'usage-events:timeline',
   USAGE_EVENTS_BY_MODEL: 'usage-events:by-model',
   USAGE_EVENTS_BY_PROVIDER: 'usage-events:by-provider',
   USAGE_EVENTS_LIST: 'usage-events:list',

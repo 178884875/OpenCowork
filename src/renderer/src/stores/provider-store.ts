@@ -11,6 +11,7 @@ import type {
 } from '../lib/api/types'
 import { builtinProviderPresets } from './providers'
 import type { BuiltinProviderPreset } from './providers'
+import { resolveCopilotApiBaseUrl, resolveCopilotModelId } from '../lib/auth/copilot'
 import { configStorage } from '../lib/ipc/config-storage'
 import { useSettingsStore } from './settings-store'
 
@@ -42,7 +43,7 @@ function createProviderFromPreset(preset: BuiltinProviderPreset): AIProvider {
     ...(preset.channelConfig ? { channelConfig: { ...preset.channelConfig } } : {}),
     ...(preset.requestOverrides ? { requestOverrides: { ...preset.requestOverrides } } : {}),
     ...(preset.instructionsPrompt ? { instructionsPrompt: preset.instructionsPrompt } : {}),
-    ...(preset.ui ? { ui: { ...preset.ui } } : {}),
+    ...(preset.ui ? { ui: { ...preset.ui } } : {})
   }
 }
 
@@ -578,8 +579,12 @@ export const useProviderStore = create<ProviderStore>()(
           )
         }
 
-        const normalizedBaseUrl = provider.baseUrl
-          ? normalizeProviderBaseUrl(provider.baseUrl, requestType)
+        const resolvedBaseUrl =
+          provider.builtinId === 'copilot-oauth'
+            ? resolveCopilotApiBaseUrl(provider, provider.oauth)
+            : provider.baseUrl
+        const normalizedBaseUrl = resolvedBaseUrl
+          ? normalizeProviderBaseUrl(resolvedBaseUrl, requestType)
           : undefined
         const requestOverrides = buildRequestOverrides(
           provider.requestOverrides,
@@ -659,7 +664,9 @@ export const useProviderStore = create<ProviderStore>()(
       getProviderConfigById: (providerId, modelId) => {
         const provider = get().providers.find((p) => p.id === providerId)
         if (!provider) return null
-        const model = provider.models.find((m) => m.id === modelId)
+        const resolvedModelId =
+          provider.builtinId === 'copilot-oauth' ? resolveCopilotModelId(modelId) : modelId
+        const model = provider.models.find((m) => m.id === resolvedModelId)
 
         // Image models should respect explicit protocol overrides (e.g. Gemini).
         // Fall back to OpenAI Images only when an image model has no explicit type.
@@ -669,27 +676,31 @@ export const useProviderStore = create<ProviderStore>()(
           console.log(
             '[Provider Store] Image model without explicit type in getProviderConfigById, routing to openai-images provider',
             {
-              modelId,
+              modelId: resolvedModelId,
               providerType: provider.type,
               finalType: requestType
             }
           )
         }
 
-        const normalizedBaseUrl = provider.baseUrl
-          ? normalizeProviderBaseUrl(provider.baseUrl, requestType)
+        const resolvedBaseUrl =
+          provider.builtinId === 'copilot-oauth'
+            ? resolveCopilotApiBaseUrl(provider, provider.oauth)
+            : provider.baseUrl
+        const normalizedBaseUrl = resolvedBaseUrl
+          ? normalizeProviderBaseUrl(resolvedBaseUrl, requestType)
           : undefined
         const requestOverrides = buildRequestOverrides(
           provider.requestOverrides,
           model?.requestOverrides,
-          model?.id ?? modelId
+          model?.id ?? resolvedModelId
         )
         const serviceTier = resolveServiceTier(model, provider.builtinId)
         return {
           type: requestType,
           apiKey: provider.apiKey,
           baseUrl: normalizedBaseUrl,
-          model: modelId,
+          model: resolvedModelId,
           providerId: provider.id,
           providerBuiltinId: provider.builtinId,
           computerUseEnabled: isModelComputerUseEnabled(model, requestType),
@@ -737,8 +748,12 @@ export const useProviderStore = create<ProviderStore>()(
           )
         }
 
-        const normalizedBaseUrl = provider.baseUrl
-          ? normalizeProviderBaseUrl(provider.baseUrl, requestType)
+        const resolvedBaseUrl =
+          provider.builtinId === 'copilot-oauth'
+            ? resolveCopilotApiBaseUrl(provider, provider.oauth)
+            : provider.baseUrl
+        const normalizedBaseUrl = resolvedBaseUrl
+          ? normalizeProviderBaseUrl(resolvedBaseUrl, requestType)
           : undefined
         const requestOverrides = buildRequestOverrides(
           provider.requestOverrides,
@@ -848,7 +863,7 @@ function ensureBuiltinPresets(): void {
       if (!existing.authMode) {
         patch.authMode = preset.authMode ?? 'apiKey'
       }
-      if (preset.builtinId === 'codex-oauth') {
+      if (preset.builtinId === 'codex-oauth' || preset.builtinId === 'copilot-oauth') {
         const trimmedBaseUrl = existing.baseUrl.trim().replace(/\/+$/, '')
         if (
           !trimmedBaseUrl ||
@@ -890,6 +905,40 @@ function ensureBuiltinPresets(): void {
             merged.scope = preset.oauthConfig.scope
             changed = true
           }
+          if (merged.flowType === undefined && preset.oauthConfig.flowType !== undefined) {
+            merged.flowType = preset.oauthConfig.flowType
+            changed = true
+          }
+          if (!merged.host && preset.oauthConfig.host) {
+            merged.host = preset.oauthConfig.host
+            changed = true
+          }
+          if (!merged.apiHost && preset.oauthConfig.apiHost) {
+            merged.apiHost = preset.oauthConfig.apiHost
+            changed = true
+          }
+          if (!merged.deviceCodeUrl && preset.oauthConfig.deviceCodeUrl) {
+            merged.deviceCodeUrl = preset.oauthConfig.deviceCodeUrl
+            changed = true
+          }
+          if (!merged.tokenExchangeUrl && preset.oauthConfig.tokenExchangeUrl) {
+            merged.tokenExchangeUrl = preset.oauthConfig.tokenExchangeUrl
+            changed = true
+          }
+          if (
+            merged.deviceCodeRequestMode === undefined &&
+            preset.oauthConfig.deviceCodeRequestMode !== undefined
+          ) {
+            merged.deviceCodeRequestMode = preset.oauthConfig.deviceCodeRequestMode
+            changed = true
+          }
+          if (
+            merged.useSystemProxy === undefined &&
+            preset.oauthConfig.useSystemProxy !== undefined
+          ) {
+            merged.useSystemProxy = preset.oauthConfig.useSystemProxy
+            changed = true
+          }
           if (!merged.redirectPath && preset.oauthConfig.redirectPath) {
             merged.redirectPath = preset.oauthConfig.redirectPath
             changed = true
@@ -901,6 +950,89 @@ function ensureBuiltinPresets(): void {
           if (merged.usePkce === undefined && preset.oauthConfig.usePkce !== undefined) {
             merged.usePkce = preset.oauthConfig.usePkce
             changed = true
+          }
+          if (merged.flowType === undefined && preset.oauthConfig.flowType !== undefined) {
+            merged.flowType = preset.oauthConfig.flowType
+            changed = true
+          }
+          if (!merged.host && preset.oauthConfig.host) {
+            merged.host = preset.oauthConfig.host
+            changed = true
+          }
+          if (!merged.apiHost && preset.oauthConfig.apiHost) {
+            merged.apiHost = preset.oauthConfig.apiHost
+            changed = true
+          }
+          if (!merged.deviceCodeUrl && preset.oauthConfig.deviceCodeUrl) {
+            merged.deviceCodeUrl = preset.oauthConfig.deviceCodeUrl
+            changed = true
+          }
+          if (!merged.tokenExchangeUrl && preset.oauthConfig.tokenExchangeUrl) {
+            merged.tokenExchangeUrl = preset.oauthConfig.tokenExchangeUrl
+            changed = true
+          }
+          if (
+            merged.deviceCodeRequestMode === undefined &&
+            preset.oauthConfig.deviceCodeRequestMode !== undefined
+          ) {
+            merged.deviceCodeRequestMode = preset.oauthConfig.deviceCodeRequestMode
+            changed = true
+          }
+          if (!merged.tokenRequestHeaders && preset.oauthConfig.tokenRequestHeaders) {
+            merged.tokenRequestHeaders = { ...preset.oauthConfig.tokenRequestHeaders }
+            changed = true
+          }
+          if (!merged.refreshRequestHeaders && preset.oauthConfig.refreshRequestHeaders) {
+            merged.refreshRequestHeaders = { ...preset.oauthConfig.refreshRequestHeaders }
+            changed = true
+          }
+          if (!merged.deviceCodeRequestHeaders && preset.oauthConfig.deviceCodeRequestHeaders) {
+            merged.deviceCodeRequestHeaders = { ...preset.oauthConfig.deviceCodeRequestHeaders }
+            changed = true
+          }
+
+          if (preset.oauthConfig.tokenRequestHeaders) {
+            if (!merged.tokenRequestHeaders) {
+              merged.tokenRequestHeaders = { ...preset.oauthConfig.tokenRequestHeaders }
+              changed = true
+            } else {
+              for (const [key, value] of Object.entries(preset.oauthConfig.tokenRequestHeaders)) {
+                if (!merged.tokenRequestHeaders[key]) {
+                  merged.tokenRequestHeaders[key] = value
+                  changed = true
+                }
+              }
+            }
+          }
+
+          if (preset.oauthConfig.refreshRequestHeaders) {
+            if (!merged.refreshRequestHeaders) {
+              merged.refreshRequestHeaders = { ...preset.oauthConfig.refreshRequestHeaders }
+              changed = true
+            } else {
+              for (const [key, value] of Object.entries(preset.oauthConfig.refreshRequestHeaders)) {
+                if (!merged.refreshRequestHeaders[key]) {
+                  merged.refreshRequestHeaders[key] = value
+                  changed = true
+                }
+              }
+            }
+          }
+
+          if (preset.oauthConfig.deviceCodeRequestHeaders) {
+            if (!merged.deviceCodeRequestHeaders) {
+              merged.deviceCodeRequestHeaders = { ...preset.oauthConfig.deviceCodeRequestHeaders }
+              changed = true
+            } else {
+              for (const [key, value] of Object.entries(
+                preset.oauthConfig.deviceCodeRequestHeaders
+              )) {
+                if (!merged.deviceCodeRequestHeaders[key]) {
+                  merged.deviceCodeRequestHeaders[key] = value
+                  changed = true
+                }
+              }
+            }
           }
 
           if (preset.oauthConfig.extraParams) {
@@ -934,6 +1066,21 @@ function ensureBuiltinPresets(): void {
           patch.requestOverrides = { ...preset.requestOverrides }
         } else if (!existing.requestOverrides) {
           patch.requestOverrides = { ...preset.requestOverrides }
+        } else if (preset.builtinId === 'copilot-oauth') {
+          const merged = { ...(existing.requestOverrides ?? {}) }
+          let changed = false
+          if (preset.requestOverrides.headers) {
+            merged.headers = { ...(merged.headers ?? {}) }
+            for (const [key, value] of Object.entries(preset.requestOverrides.headers)) {
+              if (!merged.headers[key]) {
+                merged.headers[key] = value
+                changed = true
+              }
+            }
+          }
+          if (changed) {
+            patch.requestOverrides = merged
+          }
         }
       }
       if (preset.ui) {

@@ -203,7 +203,7 @@ export function ProjectArchivePage(): React.JSX.Element {
 
   const projectScopedChannels = useMemo(() => {
     if (!activeProjectId) return channels.filter((channel) => !channel.projectId)
-    return channels.filter((channel) => !channel.projectId || channel.projectId === activeProjectId)
+    return channels.filter((channel) => channel.projectId === activeProjectId)
   }, [activeProjectId, channels])
 
   const enabledChannelCount = projectScopedChannels.filter((channel) => channel.enabled).length

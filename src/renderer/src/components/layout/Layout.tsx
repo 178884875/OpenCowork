@@ -9,17 +9,13 @@ import {
   ImageDown,
   Loader2,
   PanelLeftOpen,
-  FolderOpen,
-  Monitor,
-  Server,
-  Pencil
+  ExternalLink
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from 'next-themes'
 import { confirm } from '@renderer/components/ui/confirm-dialog'
 import { Button } from '@renderer/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@renderer/components/ui/dialog'
-import { Input } from '@renderer/components/ui/input'
 import {
   Tooltip,
   TooltipContent,
@@ -39,6 +35,7 @@ import { SettingsDialog } from '@renderer/components/settings/SettingsDialog'
 import { ChatHomePage } from '@renderer/components/chat/ChatHomePage'
 import { ProjectHomePage } from '@renderer/components/chat/ProjectHomePage'
 import { ProjectArchivePage } from '@renderer/components/chat/ProjectArchivePage'
+import { WorkingFolderSelectorDialog } from '@renderer/components/chat/WorkingFolderSelectorDialog'
 import { KeyboardShortcutsDialog } from '@renderer/components/settings/KeyboardShortcutsDialog'
 import { PermissionDialog } from '@renderer/components/cowork/PermissionDialog'
 import { ConversationGuideDialog } from '@renderer/components/chat/ConversationGuideDialog'
@@ -46,7 +43,6 @@ import { CommandPalette } from './CommandPalette'
 import { ErrorBoundary } from '@renderer/components/error-boundary'
 import { useUIStore, type AppMode } from '@renderer/stores/ui-store'
 import { useChatStore, type SessionMode } from '@renderer/stores/chat-store'
-import { useSshStore } from '@renderer/stores/ssh-store'
 import { useAgentStore } from '@renderer/stores/agent-store'
 import { useSettingsStore } from '@renderer/stores/settings-store'
 import { useChatActions } from '@renderer/hooks/use-chat-actions'
@@ -90,25 +86,6 @@ const MODE_SWITCH_ACTIVE_TEXT_CLASS: Record<SelectableMode, string> = {
   code: 'text-foreground',
   acp: 'text-foreground'
 }
-
-const DEFAULT_SSH_WORKDIR = ''
-
-interface DesktopDirectoryOption {
-  name: string
-  path: string
-  isDesktop: boolean
-}
-
-interface DesktopDirectorySuccessResult {
-  desktopPath: string
-  directories: DesktopDirectoryOption[]
-}
-
-interface DesktopDirectoryErrorResult {
-  error: string
-}
-
-type DesktopDirectoryResult = DesktopDirectorySuccessResult | DesktopDirectoryErrorResult
 
 const SettingsPage = lazy(async () => {
   const mod = await import('@renderer/components/settings/SettingsPage')
@@ -167,7 +144,6 @@ interface LayoutProps {
 export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.JSX.Element {
   const { t } = useTranslation('layout')
   const { t: tCommon } = useTranslation('common')
-  const { t: tChat } = useTranslation('chat')
   const mode = useUIStore((s) => s.mode)
   const setMode = useUIStore((s) => s.setMode)
   const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen)
@@ -195,7 +171,8 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
       }
     })
   )
-  const { activeSessionTitle, activeSessionMode, activeWorkingFolder } = activeSessionView
+  const { activeProjectId, activeSessionTitle, activeSessionMode, activeWorkingFolder } =
+    activeSessionView
   const activeSessionId = useChatStore((s) => s.activeSessionId)
   const updateSessionMode = useChatStore((s) => s.updateSessionMode)
   const streamingMessageId = useChatStore((s) => s.streamingMessageId)
@@ -206,18 +183,18 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
   const initBackgroundProcessTracking = useAgentStore((s) => s.initBackgroundProcessTracking)
 
   const { resolvedTheme, setTheme: ntSetTheme } = useTheme()
-  const { sendMessage, stopStreaming, retryLastMessage, editAndResend, deleteMessage } =
-    useChatActions()
+  const {
+    sendMessage,
+    stopStreaming,
+    continueLastToolExecution,
+    retryLastMessage,
+    editAndResend,
+    deleteMessage
+  } = useChatActions()
 
   const [copiedAll, setCopiedAll] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
-  const [desktopDirectories, setDesktopDirectories] = useState<DesktopDirectoryOption[]>([])
-  const [desktopDirectoriesLoading, setDesktopDirectoriesLoading] = useState(false)
-  const sshConnections = useSshStore((s) => s.connections)
-  const sshLoaded = useSshStore((s) => s._loaded)
-  const [sshDirInputs, setSshDirInputs] = useState<Record<string, string>>({})
-  const [sshDirEditingId, setSshDirEditingId] = useState<string | null>(null)
 
   const runningSubAgentNamesSig = useAgentStore((s) => s.runningSubAgentNamesSig)
   const runningSubAgentCount = runningSubAgentNamesSig
@@ -226,34 +203,6 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
   const runningSubAgentLabel = runningSubAgentNamesSig
     ? runningSubAgentNamesSig.split('\u0000').join(', ')
     : ''
-
-  const loadDesktopDirectories = useCallback(async (): Promise<void> => {
-    if (mode === 'chat') return
-
-    setDesktopDirectoriesLoading(true)
-    try {
-      const result = (await ipcClient.invoke(
-        'fs:list-desktop-directories'
-      )) as DesktopDirectoryResult
-      if ('error' in result || !Array.isArray(result.directories)) {
-        setDesktopDirectories([])
-        return
-      }
-
-      const seen = new Set<string>()
-      const deduped = result.directories.filter((directory) => {
-        const key = directory.path.toLowerCase()
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-      setDesktopDirectories(deduped)
-    } catch {
-      setDesktopDirectories([])
-    } finally {
-      setDesktopDirectoriesLoading(false)
-    }
-  }, [mode])
 
   const handleModeChange = useCallback(
     (nextMode: AppMode): void => {
@@ -270,19 +219,10 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
   }, [initBackgroundProcessTracking])
 
   useEffect(() => {
-    if (!folderDialogOpen) {
-      setSshDirEditingId(null)
-    }
-  }, [folderDialogOpen])
-
-  useEffect(() => {
     if (mode === 'chat') {
-      setDesktopDirectories([])
       setFolderDialogOpen(false)
-      return
     }
-    void loadDesktopDirectories()
-  }, [mode, loadDesktopDirectories])
+  }, [mode])
 
   // Update window title (show pending approvals + streaming state + SubAgent)
   useEffect(() => {
@@ -637,6 +577,7 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
   ])
 
   const resolveActiveProjectId = async (): Promise<string | null> => {
+    if (activeProjectId) return activeProjectId
     const chatStore = useChatStore.getState()
     if (chatStore.activeProjectId) return chatStore.activeProjectId
     const ensured = await chatStore.ensureDefaultProject()
@@ -654,43 +595,11 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
 
   const handleOpenFolderDialog = (): void => {
     setFolderDialogOpen(true)
-    void loadDesktopDirectories()
-    if (!sshLoaded) void useSshStore.getState().loadAll()
   }
 
-  const handleSelectDesktopFolder = (folderPath: string): void => {
-    void updateActiveProjectDirectory({
-      workingFolder: folderPath,
-      sshConnectionId: null
-    })
-    setFolderDialogOpen(false)
-  }
-
-  const handleSelectOtherFolder = async (): Promise<void> => {
-    const result = (await ipcClient.invoke('fs:select-folder')) as {
-      canceled?: boolean
-      path?: string
-    }
-    if (result.canceled || !result.path) {
-      return
-    }
-    await updateActiveProjectDirectory({
-      workingFolder: result.path,
-      sshConnectionId: null
-    })
-    setFolderDialogOpen(false)
-  }
-
-  const handleSelectSshFolder = (connId: string): void => {
-    const conn = sshConnections.find((c) => c.id === connId)
-    if (!conn) return
-    const dir = sshDirInputs[connId]?.trim() || conn.defaultDirectory || DEFAULT_SSH_WORKDIR
-    void updateActiveProjectDirectory({
-      workingFolder: dir,
-      sshConnectionId: connId
-    })
-    setSshDirEditingId(null)
-    setFolderDialogOpen(false)
+  const handleOpenWorkingFolder = async (): Promise<void> => {
+    if (!activeWorkingFolder) return
+    await ipcClient.invoke(IPC.SHELL_OPEN_PATH, activeWorkingFolder)
   }
 
   const handleCopyAll = (): void => {
@@ -776,7 +685,6 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
     }
   }
 
-  const normalizedWorkingFolder = activeWorkingFolder?.toLowerCase()
   const chatSurfaceActive =
     !tasksPageOpen &&
     !resourcesPageOpen &&
@@ -1072,7 +980,31 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
                               ))}
                             </div>
                             <div className="flex-1" />
-                            <div className="flex items-center gap-0.5 rounded-lg border bg-background/80 backdrop-blur-sm shadow-sm px-0.5 py-0.5">
+                            <div className="flex items-center gap-0.5 rounded-lg border bg-background/80 px-0.5 py-0.5 shadow-sm backdrop-blur-sm">
+                              {mode !== 'chat' && activeWorkingFolder && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      className="group/btn flex h-6 items-center gap-1 rounded-md px-1.5 text-muted-foreground transition-all duration-200 hover:bg-muted/60 hover:text-foreground"
+                                      onClick={() => void handleOpenWorkingFolder()}
+                                    >
+                                      <ExternalLink className="size-3.5 shrink-0" />
+                                      <span
+                                        className="max-w-0 overflow-hidden pl-0 text-[10px] whitespace-nowrap opacity-0 group-hover/btn:max-w-[140px] group-hover/btn:pl-1 group-hover/btn:opacity-100"
+                                        style={{
+                                          transition:
+                                            'max-width 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 160ms ease, padding 180ms ease'
+                                        }}
+                                      >
+                                        {t('layout.openFolder', { defaultValue: 'Open folder' })}
+                                      </span>
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {t('layout.openFolder', { defaultValue: 'Open folder' })}
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <button
@@ -1139,233 +1071,37 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
                           </div>
                           <MessageList
                             onRetry={retryLastMessage}
+                            onContinue={continueLastToolExecution}
                             onEditUserMessage={editAndResend}
                             onDeleteMessage={deleteMessage}
                           />
                           <InputArea
                             onSend={sendMessage}
                             onStop={stopStreaming}
-                            onSelectFolder={
-                              mode !== 'chat' && !activeSessionView.activeProjectId
-                                ? handleOpenFolderDialog
-                                : undefined
-                            }
+                            onSelectFolder={mode !== 'chat' ? handleOpenFolderDialog : undefined}
                             workingFolder={activeWorkingFolder}
                             hideWorkingFolderIndicator
                             isStreaming={isStreaming}
                           />
                           {mode !== 'chat' && (
-                            <Dialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen}>
-                              <DialogContent className="p-4 sm:max-w-2xl">
-                                <DialogHeader>
-                                  <DialogTitle className="text-sm">
-                                    {tChat('input.desktopFolders', {
-                                      defaultValue: 'Desktop folders'
-                                    })}
-                                  </DialogTitle>
-                                </DialogHeader>
-
-                                <div className="-mt-1 rounded-xl border bg-background/60 p-3">
-                                  <div className="mb-2 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
-                                    <p className="text-[10px] text-muted-foreground/70">
-                                      {tChat('input.currentWorkingFolder', {
-                                        defaultValue: 'Current working folder'
-                                      })}
-                                    </p>
-                                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                                      <FolderOpen className="size-3 shrink-0" />
-                                      <span className="truncate">
-                                        {activeWorkingFolder ??
-                                          tChat('input.noWorkingFolderSelected', {
-                                            defaultValue: 'No folder selected'
-                                          })}
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  <div className="mb-2 flex items-center justify-end">
-                                    <button
-                                      className="text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
-                                      onClick={() => void loadDesktopDirectories()}
-                                    >
-                                      {t('layout.refresh', { defaultValue: 'Refresh' })}
-                                    </button>
-                                  </div>
-
-                                  <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto pr-1">
-                                    {desktopDirectoriesLoading ? (
-                                      <span className="text-[11px] text-muted-foreground/60">
-                                        {tChat('input.loadingFolders', {
-                                          defaultValue: 'Loading folders...'
-                                        })}
-                                      </span>
-                                    ) : desktopDirectories.length > 0 ? (
-                                      desktopDirectories.map((directory) => {
-                                        const selected =
-                                          directory.path.toLowerCase() === normalizedWorkingFolder
-                                        return (
-                                          <button
-                                            key={directory.path}
-                                            className={cn(
-                                              'inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors',
-                                              selected
-                                                ? 'border-primary/60 bg-primary/10 text-primary'
-                                                : 'border-border/70 bg-muted/20 text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                                            )}
-                                            onClick={() =>
-                                              handleSelectDesktopFolder(directory.path)
-                                            }
-                                            title={directory.path}
-                                          >
-                                            <FolderOpen className="size-3 shrink-0" />
-                                            <span className="max-w-[260px] truncate">
-                                              {directory.name}
-                                            </span>
-                                          </button>
-                                        )
-                                      })
-                                    ) : (
-                                      <span className="text-[11px] text-muted-foreground/60">
-                                        {tChat('input.noDesktopFolders', {
-                                          defaultValue: 'No folders found on Desktop'
-                                        })}
-                                      </span>
-                                    )}
-
-                                    <button
-                                      className="inline-flex items-center gap-1 rounded-md border border-dashed px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-                                      onClick={() => void handleSelectOtherFolder()}
-                                    >
-                                      <FolderOpen className="size-3 shrink-0" />
-                                      {tChat('input.selectOtherFolder', {
-                                        defaultValue: 'Select other folder'
-                                      })}
-                                    </button>
-                                  </div>
-
-                                  {/* SSH Connections */}
-                                  <div className="mt-3 border-t pt-3">
-                                    <p className="mb-2 flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground/70">
-                                      <Monitor className="size-3" />
-                                      {tChat('input.sshConnections', {
-                                        defaultValue: 'SSH Connections'
-                                      })}
-                                    </p>
-                                    {sshConnections.length > 0 ? (
-                                      <div className="space-y-1.5">
-                                        {sshConnections.map((conn) => {
-                                          const isSelected =
-                                            activeSessionView.activeSessionSshConnectionId ===
-                                            conn.id
-                                          const dirValue =
-                                            sshDirInputs[conn.id] ??
-                                            conn.defaultDirectory ??
-                                            DEFAULT_SSH_WORKDIR
-                                          const displayDir = dirValue.trim() || DEFAULT_SSH_WORKDIR
-                                          const isEditingDir = sshDirEditingId === conn.id
-                                          return (
-                                            <div
-                                              key={conn.id}
-                                              className={cn(
-                                                'flex items-center gap-2 rounded-md border px-2 py-1.5 transition-colors',
-                                                isSelected
-                                                  ? 'border-primary/60 bg-primary/10'
-                                                  : 'border-border/70 bg-muted/20 hover:bg-muted/50'
-                                              )}
-                                            >
-                                              <Server className="size-3 shrink-0 text-muted-foreground/60" />
-                                              <div className="flex-1 min-w-0">
-                                                <div className="text-[11px] font-medium truncate">
-                                                  {conn.name}
-                                                </div>
-                                                <div className="text-[9px] text-muted-foreground/50 truncate">
-                                                  {conn.username}@{conn.host}:{conn.port}
-                                                </div>
-                                              </div>
-                                              <div className="flex items-center gap-1.5">
-                                                <button
-                                                  className={cn(
-                                                    'flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-all duration-200',
-                                                    isEditingDir
-                                                      ? 'max-w-0 opacity-0 -translate-x-1 pointer-events-none'
-                                                      : 'max-w-[180px] bg-background/40 hover:bg-muted/40'
-                                                  )}
-                                                  onClick={() => setSshDirEditingId(conn.id)}
-                                                  title={displayDir}
-                                                >
-                                                  <FolderOpen className="size-3 shrink-0" />
-                                                  <span className="truncate">{displayDir}</span>
-                                                </button>
-                                                <div
-                                                  className={cn(
-                                                    'overflow-hidden transition-all duration-200',
-                                                    isEditingDir
-                                                      ? 'max-w-[200px] opacity-100'
-                                                      : 'max-w-0 opacity-0 pointer-events-none'
-                                                  )}
-                                                >
-                                                  <Input
-                                                    value={dirValue}
-                                                    onChange={(e) =>
-                                                      setSshDirInputs((prev) => ({
-                                                        ...prev,
-                                                        [conn.id]: e.target.value
-                                                      }))
-                                                    }
-                                                    onKeyDown={(e) => {
-                                                      if (e.key === 'Enter')
-                                                        handleSelectSshFolder(conn.id)
-                                                      if (e.key === 'Escape')
-                                                        setSshDirEditingId(null)
-                                                    }}
-                                                    placeholder={tChat(
-                                                      'input.sshDirectoryPlaceholder',
-                                                      {
-                                                        defaultValue: '/home/user/project'
-                                                      }
-                                                    )}
-                                                    className="h-6 w-40 text-[10px] bg-background/60"
-                                                  />
-                                                </div>
-                                                <button
-                                                  className={cn(
-                                                    'shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors',
-                                                    isEditingDir
-                                                      ? 'border-primary/50 text-primary'
-                                                      : 'border-border/70 hover:text-foreground hover:bg-muted/50'
-                                                  )}
-                                                  onClick={() =>
-                                                    setSshDirEditingId(
-                                                      isEditingDir ? null : conn.id
-                                                    )
-                                                  }
-                                                >
-                                                  <Pencil className="size-3" />
-                                                </button>
-                                                <button
-                                                  className="shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 transition-colors"
-                                                  onClick={() => handleSelectSshFolder(conn.id)}
-                                                >
-                                                  {tChat('input.sshSelect', {
-                                                    defaultValue: 'Select'
-                                                  })}
-                                                </button>
-                                              </div>
-                                            </div>
-                                          )
-                                        })}
-                                      </div>
-                                    ) : (
-                                      <span className="text-[11px] text-muted-foreground/60">
-                                        {tChat('input.noSshConnections', {
-                                          defaultValue: 'No SSH connections configured'
-                                        })}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              </DialogContent>
-                            </Dialog>
+                            <WorkingFolderSelectorDialog
+                              open={folderDialogOpen}
+                              onOpenChange={setFolderDialogOpen}
+                              workingFolder={activeWorkingFolder}
+                              sshConnectionId={activeSessionView.activeSessionSshConnectionId}
+                              onSelectLocalFolder={(folderPath) =>
+                                updateActiveProjectDirectory({
+                                  workingFolder: folderPath,
+                                  sshConnectionId: null
+                                })
+                              }
+                              onSelectSshFolder={(folderPath, connectionId) =>
+                                updateActiveProjectDirectory({
+                                  workingFolder: folderPath,
+                                  sshConnectionId: connectionId
+                                })
+                              }
+                            />
                           )}
                         </div>
 

@@ -7,6 +7,8 @@ import type {
   ContentBlock
 } from './types'
 import { ipcStreamRequest, maskHeaders } from '../ipc/api-stream'
+import { useProviderStore } from '@renderer/stores/provider-store'
+import { ensureProviderAuthReady } from '@renderer/lib/auth/provider-auth'
 import { getGlobalPromptCacheKey, registerProvider } from './provider'
 
 function resolveHeaderTemplate(value: string, config: ProviderConfig): string {
@@ -67,21 +69,46 @@ class OpenAIChatProvider implements APIProvider {
     config: ProviderConfig,
     signal?: AbortSignal
   ): AsyncIterable<StreamEvent> {
+    let runtimeConfig = config
+    if (config.providerId) {
+      const ready = await ensureProviderAuthReady(config.providerId)
+      if (!ready) {
+        yield {
+          type: 'error',
+          error: { type: 'auth_error', message: 'Provider authentication is not ready' }
+        }
+        return
+      }
+      const latest = useProviderStore
+        .getState()
+        .providers.find((item) => item.id === config.providerId)
+      if (latest) {
+        runtimeConfig = {
+          ...config,
+          apiKey: latest.apiKey || config.apiKey,
+          baseUrl: latest.baseUrl || config.baseUrl,
+          userAgent: latest.userAgent ?? config.userAgent
+        }
+      }
+    }
+
     const requestStartedAt = Date.now()
     let firstTokenAt: number | null = null
     let outputTokens = 0
-    const baseUrl = (config.baseUrl || 'https://api.openai.com/v1').trim().replace(/\/+$/, '')
+    const baseUrl = (runtimeConfig.baseUrl || 'https://api.openai.com/v1')
+      .trim()
+      .replace(/\/+$/, '')
     const isOpenAI = /^https?:\/\/api\.openai\.com/i.test(baseUrl)
-    const isGoogleCompatible = isGoogleOpenAICompatible(config)
+    const isGoogleCompatible = isGoogleOpenAICompatible(runtimeConfig)
 
     const body: Record<string, unknown> = {
-      model: config.model,
-      messages: this.formatMessages(messages, config.systemPrompt, config),
+      model: runtimeConfig.model,
+      messages: this.formatMessages(messages, runtimeConfig.systemPrompt, runtimeConfig),
       stream: true,
       stream_options: { include_usage: true }
     }
 
-    if (config.enablePromptCache !== false) {
+    if (runtimeConfig.enablePromptCache !== false) {
       body.prompt_cache_key = getGlobalPromptCacheKey()
     }
 
@@ -89,43 +116,42 @@ class OpenAIChatProvider implements APIProvider {
       body.tools = this.formatTools(tools)
       body.tool_choice = 'auto'
     }
-    if (config.temperature !== undefined) body.temperature = config.temperature
-    if (config.serviceTier) body.service_tier = config.serviceTier
-    if (config.maxTokens) {
+    if (runtimeConfig.temperature !== undefined) body.temperature = runtimeConfig.temperature
+    if (runtimeConfig.serviceTier) body.service_tier = runtimeConfig.serviceTier
+    if (runtimeConfig.maxTokens) {
       // OpenAI o-series reasoning models use max_completion_tokens instead of max_tokens
-      const isReasoningModel = /^(o[1-9]|o\d+-mini)/.test(config.model)
+      const isReasoningModel = /^(o[1-9]|o\d+-mini)/.test(runtimeConfig.model)
       if (isReasoningModel) {
-        body.max_completion_tokens = config.maxTokens
+        body.max_completion_tokens = runtimeConfig.maxTokens
       } else {
-        body.max_tokens = config.maxTokens
+        body.max_tokens = runtimeConfig.maxTokens
       }
     }
 
     // Merge thinking/reasoning params when enabled; explicit disable params when off
-    if (config.thinkingEnabled && config.thinkingConfig) {
-      Object.assign(body, config.thinkingConfig.bodyParams)
-      // Override reasoning_effort with user-selected level when model supports multiple levels
-      if (config.thinkingConfig.reasoningEffortLevels && config.reasoningEffort) {
-        body.reasoning_effort = config.reasoningEffort
+    if (runtimeConfig.thinkingEnabled && runtimeConfig.thinkingConfig) {
+      Object.assign(body, runtimeConfig.thinkingConfig.bodyParams)
+      if (runtimeConfig.thinkingConfig.reasoningEffortLevels && runtimeConfig.reasoningEffort) {
+        body.reasoning_effort = runtimeConfig.reasoningEffort
       }
-      if (config.thinkingConfig.forceTemperature !== undefined) {
-        body.temperature = config.thinkingConfig.forceTemperature
+      if (runtimeConfig.thinkingConfig.forceTemperature !== undefined) {
+        body.temperature = runtimeConfig.thinkingConfig.forceTemperature
       }
-    } else if (!config.thinkingEnabled && config.thinkingConfig?.disabledBodyParams) {
-      Object.assign(body, config.thinkingConfig.disabledBodyParams)
+    } else if (!runtimeConfig.thinkingEnabled && runtimeConfig.thinkingConfig?.disabledBodyParams) {
+      Object.assign(body, runtimeConfig.thinkingConfig.disabledBodyParams)
     }
 
-    applyBodyOverrides(body, config)
+    applyBodyOverrides(body, runtimeConfig)
 
     const url = `${baseUrl}/chat/completions`
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`
+      Authorization: `Bearer ${runtimeConfig.apiKey}`
     }
-    if (config.userAgent) headers['User-Agent'] = config.userAgent
-    if (config.serviceTier) headers.service_tier = config.serviceTier
-    applyHeaderOverrides(headers, config)
+    if (runtimeConfig.userAgent) headers['User-Agent'] = runtimeConfig.userAgent
+    if (runtimeConfig.serviceTier) headers.service_tier = runtimeConfig.serviceTier
+    applyHeaderOverrides(headers, runtimeConfig)
 
     const bodyStr = JSON.stringify(body)
 
@@ -178,9 +204,9 @@ class OpenAIChatProvider implements APIProvider {
         headers,
         body: bodyStr,
         signal: streamAbortController.signal,
-        useSystemProxy: config.useSystemProxy,
-        providerId: config.providerId,
-        providerBuiltinId: config.providerBuiltinId
+        useSystemProxy: runtimeConfig.useSystemProxy,
+        providerId: runtimeConfig.providerId,
+        providerBuiltinId: runtimeConfig.providerBuiltinId
       })) {
         clearCompatTerminalTimer()
         if (!sse.data || sse.data === '[DONE]') break
@@ -444,12 +470,13 @@ class OpenAIChatProvider implements APIProvider {
   ): unknown[] {
     const formatted: unknown[] = []
     const isGoogleCompatible = config ? isGoogleOpenAICompatible(config) : false
+    const normalizedMessages = this.normalizeMessagesForOpenAI(messages)
 
     if (systemPrompt) {
       formatted.push({ role: 'system', content: systemPrompt })
     }
 
-    for (const m of messages) {
+    for (const m of normalizedMessages) {
       if (m.role === 'system') continue
 
       if (typeof m.content === 'string') {
@@ -563,6 +590,67 @@ class OpenAIChatProvider implements APIProvider {
     }
 
     return formatted
+  }
+
+  private normalizeMessagesForOpenAI(messages: UnifiedMessage[]): UnifiedMessage[] {
+    const normalized: UnifiedMessage[] = []
+    const validToolUseIds = new Set<string>()
+
+    for (let index = 0; index < messages.length; index += 1) {
+      const message = messages[index]
+      if (message.role === 'system' || typeof message.content === 'string') {
+        normalized.push(message)
+        continue
+      }
+
+      const blocks = message.content as ContentBlock[]
+      const toolUseIds = blocks
+        .filter(
+          (block): block is Extract<ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use'
+        )
+        .map((block) => block.id)
+
+      let nextBlocks = blocks
+
+      if (toolUseIds.length > 0) {
+        const nextMessage = messages[index + 1]
+        const hasImmediateToolResultMessage =
+          nextMessage?.role === 'user' &&
+          Array.isArray(nextMessage.content) &&
+          toolUseIds.every((toolUseId) =>
+            (nextMessage.content as ContentBlock[]).some(
+              (block) => block.type === 'tool_result' && block.toolUseId === toolUseId
+            )
+          )
+
+        if (hasImmediateToolResultMessage) {
+          for (const toolUseId of toolUseIds) validToolUseIds.add(toolUseId)
+        } else {
+          nextBlocks = nextBlocks.map((block) => {
+            if (block.type !== 'tool_use' || !toolUseIds.includes(block.id)) return block
+            return {
+              type: 'text' as const,
+              text: `[Previous tool call omitted for OpenAI replay] ${block.name} ${JSON.stringify(block.input).slice(0, 200)}`
+            }
+          })
+        }
+      }
+
+      const sanitizedBlocks = nextBlocks.map((block) => {
+        if (block.type !== 'tool_result') return block
+        if (validToolUseIds.has(block.toolUseId)) return block
+        const content =
+          typeof block.content === 'string' ? block.content : JSON.stringify(block.content)
+        return {
+          type: 'text' as const,
+          text: `[Previous tool result omitted for OpenAI replay] ${content.slice(0, 300)}`
+        }
+      })
+
+      normalized.push({ ...message, content: sanitizedBlocks })
+    }
+
+    return normalized
   }
 
   formatTools(tools: ToolDefinition[]): unknown[] {

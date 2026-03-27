@@ -235,6 +235,8 @@ export type ProviderType =
 export type ResponseSummary = 'auto' | 'concise' | 'detailed'
 
 export type AuthMode = 'apiKey' | 'oauth' | 'channel'
+export type OAuthFlowType = 'authorization_code' | 'device_code'
+export type OAuthRequestMode = 'form' | 'json'
 
 export interface OAuthConfig {
   authorizeUrl: string
@@ -242,14 +244,25 @@ export interface OAuthConfig {
   clientId: string
   clientIdLocked?: boolean
   scope?: string
+  flowType?: OAuthFlowType
+  /** Base GitHub / OAuth host, used to derive endpoints when individual URLs are not overridden */
+  host?: string
+  /** API host used for token exchange endpoints (e.g. https://api.github.com or GHE api/v3) */
+  apiHost?: string
+  /** Device code endpoint for OAuth device flow */
+  deviceCodeUrl?: string
+  /** Copilot / provider-specific token exchange endpoint used after OAuth login */
+  tokenExchangeUrl?: string
   /** Use system proxy for OAuth token exchanges */
   useSystemProxy?: boolean
   includeScopeInTokenRequest?: boolean
-  tokenRequestMode?: 'form' | 'json'
+  tokenRequestMode?: OAuthRequestMode
   tokenRequestHeaders?: Record<string, string>
-  refreshRequestMode?: 'form' | 'json'
+  refreshRequestMode?: OAuthRequestMode
   refreshRequestHeaders?: Record<string, string>
   refreshScope?: string
+  deviceCodeRequestMode?: OAuthRequestMode
+  deviceCodeRequestHeaders?: Record<string, string>
   redirectPath?: string
   redirectPort?: number
   extraParams?: Record<string, string>
@@ -263,6 +276,15 @@ export interface OAuthToken {
   scope?: string
   tokenType?: string
   accountId?: string
+  idToken?: string
+  copilotAccessToken?: string
+  copilotTokenType?: string
+  copilotExpiresAt?: number
+  copilotRefreshAt?: number
+  copilotApiUrl?: string
+  copilotChatEnabled?: boolean
+  copilotSku?: string
+  copilotTelemetry?: string
 }
 
 export interface ChannelConfig {
@@ -310,6 +332,10 @@ export interface AIModelConfig {
   cacheCreationPrice?: number
   /** Price per million tokens for cache hit/read (USD) */
   cacheHitPrice?: number
+  /** GitHub Copilot premium request multiplier */
+  premiumRequestMultiplier?: number
+  /** Plans that commonly expose this model in Copilot */
+  availablePlans?: string[]
   /** Whether the model supports image/vision input */
   supportsVision?: boolean
   /** Whether the model supports function/tool calling */

@@ -39,6 +39,8 @@ export interface UsageAnalyticsGroupRow {
   [key: string]: unknown
 }
 
+export type UsageTimelineBucket = 'hour' | 'day'
+
 function toNullableNumber(value: number | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
@@ -246,6 +248,16 @@ export function getUsageOverview(query: UsageAnalyticsQuery): Promise<UsageAnaly
 
 export function getUsageDaily(query: UsageAnalyticsQuery): Promise<UsageAnalyticsGroupRow[]> {
   return ipcClient.invoke(IPC.USAGE_EVENTS_DAILY, query) as Promise<UsageAnalyticsGroupRow[]>
+}
+
+export function getUsageTimeline(
+  query: UsageAnalyticsQuery,
+  bucket: UsageTimelineBucket
+): Promise<UsageAnalyticsGroupRow[]> {
+  return ipcClient.invoke(IPC.USAGE_EVENTS_TIMELINE, {
+    query,
+    bucket
+  }) as Promise<UsageAnalyticsGroupRow[]>
 }
 
 export function getUsageByModel(query: UsageAnalyticsQuery): Promise<UsageAnalyticsGroupRow[]> {

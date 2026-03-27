@@ -57,6 +57,7 @@ interface PluginAutoReplyTask {
 }
 
 const PLUGIN_STREAM_DELTA_FLUSH_MS = 66
+const PLUGIN_PROCESSING_ACK_MESSAGE = '已收到消息，正在处理，请稍候。'
 
 function buildPluginMessageSessionKey(pluginId: string, chatId: string): string {
   return `plugin:${pluginId}:chat:${encodeURIComponent(chatId)}`
@@ -103,6 +104,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
 
   const shouldReplyToIncomingMessage =
     pluginType === 'qq-bot' && task.chatType === 'group' && Boolean(task.messageId)
+  const shouldUseStreamingReply = supportsStreaming && features.streamingReply
 
   const sendChannelNotice = async (message: string): Promise<void> => {
     try {
@@ -116,6 +118,17 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
     } catch (err) {
       console.error('[PluginAutoReply] Failed to send notice:', err)
     }
+  }
+
+  let immediateAckSent = false
+  const sendImmediateAck = async (): Promise<void> => {
+    if (immediateAckSent) return
+    immediateAckSent = true
+    await sendChannelNotice(PLUGIN_PROCESSING_ACK_MESSAGE)
+  }
+
+  if (!shouldUseStreamingReply) {
+    await sendImmediateAck()
   }
 
   // ── Provider config (with per-channel model override) ──
@@ -213,17 +226,21 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
 
   // ── Start CardKit streaming card (only if streamingReply feature enabled) ──
   let streamingActive = false
-  if (supportsStreaming && features.streamingReply) {
+  if (shouldUseStreamingReply) {
     try {
       const res = (await ipcClient.invoke('plugin:stream:start', {
         pluginId,
         chatId,
-        initialContent: ' Thinking...',
+        initialContent: PLUGIN_PROCESSING_ACK_MESSAGE,
         messageId: task.messageId
       })) as { ok: boolean }
       streamingActive = !!res?.ok
+      if (!streamingActive) {
+        await sendImmediateAck()
+      }
     } catch (err) {
       console.warn('[PluginAutoReply] Failed to start streaming card:', err)
+      await sendImmediateAck()
     }
   }
 
@@ -404,7 +421,10 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
   const canReusePromptSnapshot =
     !!cachedPromptSnapshot &&
     cachedPromptSnapshot.mode === 'cowork' &&
-    cachedPromptSnapshot.planMode === false
+    cachedPromptSnapshot.planMode === false &&
+    cachedPromptSnapshot.workingFolder === session.workingFolder &&
+    cachedPromptSnapshot.projectId === session.projectId &&
+    cachedPromptSnapshot.sshConnectionId === session.sshConnectionId
 
   let effectiveToolDefs = allToolDefs
   let systemPrompt = cachedPromptSnapshot?.systemPrompt ?? ''
@@ -465,7 +485,10 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
       mode: 'cowork',
       planMode: false,
       systemPrompt,
-      toolDefs: allToolDefs
+      toolDefs: allToolDefs,
+      projectId: session.projectId,
+      workingFolder: session.workingFolder,
+      sshConnectionId: session.sshConnectionId
     })
   } else {
     effectiveToolDefs = cachedPromptSnapshot.toolDefs.slice()

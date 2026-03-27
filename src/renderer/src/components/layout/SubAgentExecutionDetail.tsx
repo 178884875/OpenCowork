@@ -155,20 +155,20 @@ export function SubAgentExecutionDetail({
     <div
       className={cn('flex h-full min-h-0 flex-col', embedded ? 'bg-transparent' : 'bg-background')}
     >
-      <div className="border-b border-border/60 px-5 py-4">
+      <div className="border-b border-border/60 px-4 py-3">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex size-10 items-center justify-center rounded-2xl border border-border/60 bg-muted/25 text-foreground/80">
+          <div className="mt-0.5 flex size-8 items-center justify-center rounded-xl border border-border/60 bg-muted/25 text-foreground/80">
             {icon}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="min-w-0 truncate text-lg font-semibold text-foreground/95">
+              <h2 className="min-w-0 truncate text-base font-semibold text-foreground/95">
                 {displayName}
               </h2>
               <Badge
                 variant={isFailed ? 'destructive' : 'secondary'}
                 className={cn(
-                  'h-6 rounded-full border border-border/60 bg-background/70 px-2.5 text-[11px] font-medium text-foreground/75',
+                  'h-5 rounded-full border border-border/60 bg-background/70 px-2 text-[10px] font-medium text-foreground/75',
                   agent.isRunning && 'border-cyan-500/30 bg-cyan-500/10 text-cyan-100',
                   isFailed && 'border-destructive/40 bg-destructive/10 text-destructive'
                 )}
@@ -181,11 +181,11 @@ export function SubAgentExecutionDetail({
               </Badge>
             </div>
             {agent.description ? (
-              <p className="mt-1 line-clamp-2 whitespace-pre-wrap break-words text-sm text-muted-foreground/80">
+              <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap break-words text-[12px] text-muted-foreground/80">
                 {agent.description}
               </p>
             ) : null}
-            <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground/70">
+            <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground/70">
               <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/70 px-2.5 py-1">
                 <Clock3 className="size-3.5" />
                 {elapsed}
@@ -210,7 +210,7 @@ export function SubAgentExecutionDetail({
             <Button
               variant="ghost"
               size="icon"
-              className="size-9 rounded-full text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+              className="size-8 rounded-full text-muted-foreground hover:bg-muted/60 hover:text-foreground"
               onClick={onClose}
             >
               <X className="size-4" />
@@ -219,14 +219,14 @@ export function SubAgentExecutionDetail({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-        <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-5">
-          <section className="rounded-2xl border border-border/60 bg-background/70 p-5">
-            <div className="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground/65">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-3">
+          <section className="rounded-xl border border-border/60 bg-background/70 p-3.5">
+            <div className="mb-3 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/65">
               <Bot className="size-3.5" />
               <span>{t('subAgentsPanel.executionInfo', { defaultValue: '执行信息' })}</span>
             </div>
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div>
                 <div className="mb-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/55">
                   {t('subAgentsPanel.description', { defaultValue: '描述' })}
@@ -239,11 +239,11 @@ export function SubAgentExecutionDetail({
                 <div className="mb-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/55">
                   {t('subAgentsPanel.promptLabel', { defaultValue: 'Prompt' })}
                 </div>
-                <div className="rounded-xl border border-border/60 bg-muted/15 px-4 py-3 font-mono text-sm leading-6 text-foreground/88 whitespace-pre-wrap break-words">
+                <div className="rounded-lg border border-border/60 bg-muted/15 px-3 py-2.5 font-mono text-[12px] leading-5 text-foreground/88 whitespace-pre-wrap break-words">
                   {agent.prompt || '—'}
                 </div>
               </div>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-3">
                 <div>
                   <div className="mb-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/55">
                     {t('subAgentsPanel.startedAt', { defaultValue: '开始' })}
@@ -272,8 +272,8 @@ export function SubAgentExecutionDetail({
             </div>
           </section>
 
-          <section className="rounded-2xl border border-border/60 bg-background/70 p-5">
-            <div className="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground/65">
+          <section className="rounded-xl border border-border/60 bg-background/70 p-3.5">
+            <div className="mb-3 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/65">
               <ScrollText className="size-3.5" />
               <span>{t('subAgentsPanel.execution', { defaultValue: '执行过程' })}</span>
               {agent.isRunning ? <Loader2 className="size-3 animate-spin" /> : null}
@@ -286,8 +286,8 @@ export function SubAgentExecutionDetail({
             </div>
           </section>
 
-          <section className="rounded-2xl border border-border/60 bg-background/70 p-5">
-            <div className="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground/65">
+          <section className="rounded-xl border border-border/60 bg-background/70 p-3.5">
+            <div className="mb-3 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/65">
               <MessageSquareText className="size-3.5" />
               <span>{t('subAgentsPanel.report', { defaultValue: '最终结果' })}</span>
             </div>

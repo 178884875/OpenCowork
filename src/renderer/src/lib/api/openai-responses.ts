@@ -16,6 +16,8 @@ import {
   DESKTOP_WAIT_TOOL_NAME
 } from '../app-plugin/types'
 import { ipcStreamRequest, maskHeaders } from '../ipc/api-stream'
+import { useProviderStore } from '@renderer/stores/provider-store'
+import { ensureProviderAuthReady } from '@renderer/lib/auth/provider-auth'
 import { loadPrompt } from '../prompts/prompt-loader'
 import { getGlobalPromptCacheKey, registerProvider } from './provider'
 
@@ -68,44 +70,73 @@ class OpenAIResponsesProvider implements APIProvider {
     config: ProviderConfig,
     signal?: AbortSignal
   ): AsyncIterable<StreamEvent> {
+    let runtimeConfig = config
+    if (config.providerId) {
+      const ready = await ensureProviderAuthReady(config.providerId)
+      if (!ready) {
+        yield {
+          type: 'error',
+          error: { type: 'auth_error', message: 'Provider authentication is not ready' }
+        }
+        return
+      }
+      const latest = useProviderStore
+        .getState()
+        .providers.find((item) => item.id === config.providerId)
+      if (latest) {
+        runtimeConfig = {
+          ...config,
+          apiKey: latest.apiKey || config.apiKey,
+          baseUrl: latest.baseUrl || config.baseUrl,
+          userAgent: latest.userAgent ?? config.userAgent
+        }
+      }
+    }
+
     const requestStartedAt = Date.now()
     let firstTokenAt: number | null = null
     let outputTokens = 0
-    const baseUrl = (config.baseUrl || 'https://api.openai.com/v1').trim().replace(/\/+$/, '')
-    const fullInput = this.formatMessages(messages, config.systemPrompt, !!config.thinkingEnabled)
+    const baseUrl = (runtimeConfig.baseUrl || 'https://api.openai.com/v1')
+      .trim()
+      .replace(/\/+$/, '')
+    const fullInput = this.formatMessages(
+      messages,
+      runtimeConfig.systemPrompt,
+      !!runtimeConfig.thinkingEnabled
+    )
 
     const body: Record<string, unknown> = {
-      model: config.model,
+      model: runtimeConfig.model,
       input: fullInput,
       stream: true
     }
 
-    if (config.enablePromptCache !== false) {
+    if (runtimeConfig.enablePromptCache !== false) {
       body.prompt_cache_key = getGlobalPromptCacheKey()
     }
 
-    const formattedTools = this.buildToolsPayload(tools, config)
+    const formattedTools = this.buildToolsPayload(tools, runtimeConfig)
     if (formattedTools.length > 0) {
       body.tools = formattedTools
     }
-    if (config.temperature !== undefined) body.temperature = config.temperature
-    if (config.serviceTier) body.service_tier = config.serviceTier
-    if (config.maxTokens) body.max_output_tokens = config.maxTokens
+    if (runtimeConfig.temperature !== undefined) body.temperature = runtimeConfig.temperature
+    if (runtimeConfig.serviceTier) body.service_tier = runtimeConfig.serviceTier
+    if (runtimeConfig.maxTokens) body.max_output_tokens = runtimeConfig.maxTokens
 
-    if (config.thinkingEnabled && config.thinkingConfig) {
-      Object.assign(body, config.thinkingConfig.bodyParams)
+    if (runtimeConfig.thinkingEnabled && runtimeConfig.thinkingConfig) {
+      Object.assign(body, runtimeConfig.thinkingConfig.bodyParams)
 
       const reasoning =
         typeof body.reasoning === 'object' && body.reasoning !== null
           ? { ...(body.reasoning as Record<string, unknown>) }
           : {}
 
-      if (config.thinkingConfig.reasoningEffortLevels && config.reasoningEffort) {
-        reasoning.effort = config.reasoningEffort
+      if (runtimeConfig.thinkingConfig.reasoningEffortLevels && runtimeConfig.reasoningEffort) {
+        reasoning.effort = runtimeConfig.reasoningEffort
       }
 
       if (body.model !== 'gpt-5.3-codex-spark') {
-        reasoning.summary = config.responseSummary ?? 'auto'
+        reasoning.summary = runtimeConfig.responseSummary ?? 'auto'
       }
       if (Object.keys(reasoning).length > 0) {
         body.reasoning = reasoning
@@ -119,25 +150,25 @@ class OpenAIResponsesProvider implements APIProvider {
       }
       body.include = include
 
-      if (config.thinkingConfig.forceTemperature !== undefined) {
-        body.temperature = config.thinkingConfig.forceTemperature
+      if (runtimeConfig.thinkingConfig.forceTemperature !== undefined) {
+        body.temperature = runtimeConfig.thinkingConfig.forceTemperature
       }
-    } else if (!config.thinkingEnabled && config.thinkingConfig?.disabledBodyParams) {
-      Object.assign(body, config.thinkingConfig.disabledBodyParams)
+    } else if (!runtimeConfig.thinkingEnabled && runtimeConfig.thinkingConfig?.disabledBodyParams) {
+      Object.assign(body, runtimeConfig.thinkingConfig.disabledBodyParams)
     }
 
-    const overridesBody = config.requestOverrides?.body
+    const overridesBody = runtimeConfig.requestOverrides?.body
     const hasInstructionsOverride =
       !!overridesBody && Object.prototype.hasOwnProperty.call(overridesBody, 'instructions')
 
-    if (!hasInstructionsOverride && config.instructionsPrompt) {
-      const instructions = await loadPrompt(config.instructionsPrompt)
+    if (!hasInstructionsOverride && runtimeConfig.instructionsPrompt) {
+      const instructions = await loadPrompt(runtimeConfig.instructionsPrompt)
       if (!instructions) {
         yield {
           type: 'error',
           error: {
             type: 'config_error',
-            message: `Instructions prompt "${config.instructionsPrompt}" not found`
+            message: `Instructions prompt "${runtimeConfig.instructionsPrompt}" not found`
           }
         }
         return
@@ -145,21 +176,21 @@ class OpenAIResponsesProvider implements APIProvider {
       body.instructions = instructions
     }
 
-    applyBodyOverrides(body, config)
+    applyBodyOverrides(body, runtimeConfig)
 
     const url = `${baseUrl}/responses`
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`
+      Authorization: `Bearer ${runtimeConfig.apiKey}`
     }
-    if (config.userAgent) headers['User-Agent'] = config.userAgent
-    if (config.serviceTier) headers.service_tier = config.serviceTier
-    applyHeaderOverrides(headers, config)
+    if (runtimeConfig.userAgent) headers['User-Agent'] = runtimeConfig.userAgent
+    if (runtimeConfig.serviceTier) headers.service_tier = runtimeConfig.serviceTier
+    applyHeaderOverrides(headers, runtimeConfig)
 
     const httpBodyStr = JSON.stringify(body)
 
-    console.log(`[OpenAI Responses] model=${config.model}`)
+    console.log(`[OpenAI Responses] model=${runtimeConfig.model}`)
 
     yield {
       type: 'request_debug',
@@ -216,9 +247,9 @@ class OpenAIResponsesProvider implements APIProvider {
         headers,
         body: requestBody,
         signal,
-        useSystemProxy: config.useSystemProxy,
-        providerId: config.providerId,
-        providerBuiltinId: config.providerBuiltinId
+        useSystemProxy: runtimeConfig.useSystemProxy,
+        providerId: runtimeConfig.providerId,
+        providerBuiltinId: runtimeConfig.providerBuiltinId
       })) {
         if (!sse.data || sse.data === '[DONE]') continue
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -415,12 +446,13 @@ class OpenAIResponsesProvider implements APIProvider {
     includeEncryptedReasoning = false
   ): unknown[] {
     const input: unknown[] = []
+    const normalizedMessages = this.normalizeMessagesForOpenAI(messages)
 
     if (systemPrompt) {
       input.push({ type: 'message', role: 'developer', content: systemPrompt })
     }
 
-    for (const m of messages) {
+    for (const m of normalizedMessages) {
       if (m.role === 'system') continue
 
       if (typeof m.content === 'string') {
@@ -483,7 +515,7 @@ class OpenAIResponsesProvider implements APIProvider {
             })
             break
           case 'tool_result': {
-            if (this.isComputerUseToolResultBlock(block, messages, m.id)) {
+            if (this.isComputerUseToolResultBlock(block, normalizedMessages, m.id)) {
               break
             }
             let output: string
@@ -509,6 +541,70 @@ class OpenAIResponsesProvider implements APIProvider {
     }
 
     return input
+  }
+
+  private normalizeMessagesForOpenAI(messages: UnifiedMessage[]): UnifiedMessage[] {
+    const normalized: UnifiedMessage[] = []
+    const validToolUseIds = new Set<string>()
+
+    for (let index = 0; index < messages.length; index += 1) {
+      const message = messages[index]
+      if (message.role === 'system' || typeof message.content === 'string') {
+        normalized.push(message)
+        continue
+      }
+
+      const blocks = message.content as ContentBlock[]
+      const toolUseIds = blocks
+        .filter(
+          (block): block is Extract<ContentBlock, { type: 'tool_use' }> =>
+            block.type === 'tool_use' &&
+            block.extraContent?.openaiResponses?.computerUse?.kind !== 'computer_use'
+        )
+        .map((block) => block.id)
+
+      let nextBlocks = blocks
+
+      if (toolUseIds.length > 0) {
+        const nextMessage = messages[index + 1]
+        const hasImmediateToolResultMessage =
+          nextMessage?.role === 'user' &&
+          Array.isArray(nextMessage.content) &&
+          toolUseIds.every((toolUseId) =>
+            (nextMessage.content as ContentBlock[]).some(
+              (block) => block.type === 'tool_result' && block.toolUseId === toolUseId
+            )
+          )
+
+        if (hasImmediateToolResultMessage) {
+          for (const toolUseId of toolUseIds) validToolUseIds.add(toolUseId)
+        } else {
+          nextBlocks = nextBlocks.map((block) => {
+            if (block.type !== 'tool_use' || !toolUseIds.includes(block.id)) return block
+            return {
+              type: 'text' as const,
+              text: `[Previous tool call omitted for OpenAI replay] ${block.name} ${JSON.stringify(block.input).slice(0, 200)}`
+            }
+          })
+        }
+      }
+
+      const sanitizedBlocks = nextBlocks.map((block) => {
+        if (block.type !== 'tool_result') return block
+        if (validToolUseIds.has(block.toolUseId)) return block
+        if (this.isComputerUseToolResultBlock(block, messages, message.id)) return block
+        const content =
+          typeof block.content === 'string' ? block.content : JSON.stringify(block.content)
+        return {
+          type: 'text' as const,
+          text: `[Previous tool result omitted for OpenAI replay] ${content.slice(0, 300)}`
+        }
+      })
+
+      normalized.push({ ...message, content: sanitizedBlocks })
+    }
+
+    return normalized
   }
 
   formatTools(tools: ToolDefinition[]): unknown[] {

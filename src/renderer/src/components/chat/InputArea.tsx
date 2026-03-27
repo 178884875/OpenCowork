@@ -1666,7 +1666,11 @@ export function InputArea({
       <div className={isHomeComposer ? 'mx-auto max-w-4xl' : 'mx-auto max-w-3xl'}>
         <div
           ref={containerRef}
-          className={`relative overflow-hidden rounded-lg border bg-background shadow-lg transition-shadow focus-within:shadow-xl focus-within:ring-1 focus-within:ring-ring/20 flex flex-col ${dragging ? 'ring-2 ring-primary/50' : ''}`}
+          className={cn(
+            'relative rounded-lg border bg-background shadow-lg transition-shadow focus-within:shadow-xl focus-within:ring-1 focus-within:ring-ring/20 flex flex-col',
+            fileMenuOpen || slashMenuOpen ? 'overflow-visible' : 'overflow-hidden',
+            dragging && 'ring-2 ring-primary/50'
+          )}
           style={
             inputHeight !== null
               ? { height: inputHeight }
@@ -1679,7 +1683,7 @@ export function InputArea({
           )}
           {/* Queued message list */}
           {queuedMessages.length > 0 && (
-            <div className="px-3 pt-3 pb-1">
+            <div className="shrink-0 px-3 pt-3 pb-1">
               <div className="overflow-hidden rounded-xl border border-border/60 bg-muted/20 shadow-sm">
                 <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                   <button
@@ -1918,7 +1922,7 @@ export function InputArea({
 
           {/* Skill tag */}
           {selectedSkill && (
-            <div className="px-3 pt-3 pb-0">
+            <div className="shrink-0 px-3 pt-3 pb-0">
               <span className="inline-flex items-center gap-1.5 rounded-md bg-violet-500/10 border border-violet-500/20 px-2.5 py-1 text-xs font-medium text-violet-600 dark:text-violet-400">
                 <Sparkles className="size-3" />
                 {selectedSkill}
@@ -1935,7 +1939,10 @@ export function InputArea({
 
           {/* Image preview strip */}
           {attachedImages.length > 0 && (
-            <div ref={imagePreviewRef} className="flex gap-2 px-3 pt-3 pb-1 overflow-x-auto">
+            <div
+              ref={imagePreviewRef}
+              className="shrink-0 flex gap-2 overflow-x-auto px-3 pt-3 pb-1"
+            >
               {attachedImages.map((img) => (
                 <div key={img.id} className="relative group/img shrink-0">
                   <img
@@ -1957,7 +1964,7 @@ export function InputArea({
 
           {/* Optimizing indicator - only show spinner, hide text */}
           {isOptimizing && (
-            <div className="px-3 pt-3 pb-1">
+            <div className="shrink-0 px-3 pt-3 pb-1">
               <div className="rounded-md border border-blue-500/30 bg-blue-500/5 px-3 py-2">
                 <div className="flex items-center gap-2">
                   <Spinner className="size-3.5 text-blue-600 dark:text-blue-400" />
@@ -2078,7 +2085,7 @@ export function InputArea({
                 </span>
               </div>
             )}
-            <div className="relative flex-1 min-h-0 overflow-hidden">
+            <div className="relative flex-1 min-h-0 overflow-visible">
               {shouldAutoAcceptRecommendation &&
                 autoAcceptCountdown !== null &&
                 suggestionText &&
@@ -2275,7 +2282,7 @@ export function InputArea({
           <div
             ref={bottomToolbarRef}
             className={cn(
-              'relative z-20 mt-1 flex items-center justify-between gap-2 px-2 pb-2',
+              'relative z-20 mt-1 shrink-0 flex items-center justify-between gap-2 px-2 pb-2',
               isHomeComposer && 'border-t border-border/50 px-4 pb-3.5 pt-2.5'
             )}
           >

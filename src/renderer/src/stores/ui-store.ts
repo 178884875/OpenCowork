@@ -275,24 +275,52 @@ interface UIStore {
 export const useUIStore = create<UIStore>((set, get) => ({
   mode: 'cowork',
 
-  setMode: (mode) => set({ mode, rightPanelOpen: mode === 'cowork' }),
+  setMode: (mode) =>
+    set((state) => ({
+      mode,
+      rightPanelOpen: mode === 'cowork',
+      leftSidebarOpen: mode === 'cowork' ? false : state.leftSidebarOpen
+    })),
 
   activeNavItem: 'chat',
-  setActiveNavItem: (item) => set({ activeNavItem: item, leftSidebarOpen: true }),
+  setActiveNavItem: (item) =>
+    set({ activeNavItem: item, leftSidebarOpen: true, rightPanelOpen: false }),
 
   leftSidebarOpen: true,
   leftSidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
 
-  toggleLeftSidebar: () => set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
+  toggleLeftSidebar: () =>
+    set((state) => {
+      const nextOpen = !state.leftSidebarOpen
+      return {
+        leftSidebarOpen: nextOpen,
+        rightPanelOpen: nextOpen ? false : state.rightPanelOpen
+      }
+    }),
 
-  setLeftSidebarOpen: (open) => set({ leftSidebarOpen: open }),
+  setLeftSidebarOpen: (open) =>
+    set((state) => ({
+      leftSidebarOpen: open,
+      rightPanelOpen: open ? false : state.rightPanelOpen
+    })),
   setLeftSidebarWidth: (width) => set({ leftSidebarWidth: clampLeftSidebarWidth(width) }),
 
   rightPanelOpen: false,
 
-  toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
+  toggleRightPanel: () =>
+    set((state) => {
+      const nextOpen = !state.rightPanelOpen
+      return {
+        rightPanelOpen: nextOpen,
+        leftSidebarOpen: nextOpen ? false : state.leftSidebarOpen
+      }
+    }),
 
-  setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
+  setRightPanelOpen: (open) =>
+    set((state) => ({
+      rightPanelOpen: open,
+      leftSidebarOpen: open ? false : state.leftSidebarOpen
+    })),
 
   rightPanelTab: 'steps',
 
@@ -440,7 +468,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
       detailPanelOpen: true,
       detailPanelContent: content,
       rightPanelTab: 'preview',
-      rightPanelOpen: true
+      rightPanelOpen: true,
+      leftSidebarOpen: false
     }),
 
   closeDetailPanel: () => set({ detailPanelOpen: false, detailPanelContent: null }),
@@ -601,7 +630,12 @@ export const useUIStore = create<UIStore>((set, get) => ({
         return {
           previewPanelOpen: false,
           previewPanelState: null,
-          rightPanelTab: state.detailPanelOpen ? 'preview' : 'steps'
+          rightPanelTab:
+            state.rightPanelTab === 'preview'
+              ? state.detailPanelOpen
+                ? 'preview'
+                : 'steps'
+              : state.rightPanelTab
         }
       }
 
@@ -616,7 +650,12 @@ export const useUIStore = create<UIStore>((set, get) => ({
         previewPanelsBySession: nextPreviewPanelsBySession,
         previewPanelOpen: false,
         previewPanelState: null,
-        rightPanelTab: state.detailPanelOpen ? 'preview' : 'steps'
+        rightPanelTab:
+          state.rightPanelTab === 'preview'
+            ? state.detailPanelOpen
+              ? 'preview'
+              : 'steps'
+            : state.rightPanelTab
       }
     }),
   setPreviewViewMode: (mode, sessionId) =>
@@ -672,6 +711,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
       rightPanelTab: 'subagents',
       rightPanelSection: 'collaboration',
       rightPanelOpen: true,
+      leftSidebarOpen: false,
       detailPanelOpen: false,
       detailPanelContent: null,
       subAgentExecutionDetailOpen: false,
@@ -702,7 +742,12 @@ export const useUIStore = create<UIStore>((set, get) => ({
     set((state) => {
       const targetSessionId = resolveScopedSessionId(sessionId, state.activeScopedSessionId)
       if (!targetSessionId) {
-        return { planMode: true, rightPanelTab: 'plan', rightPanelOpen: true }
+        return {
+          planMode: true,
+          rightPanelTab: 'plan',
+          rightPanelOpen: true,
+          leftSidebarOpen: false
+        }
       }
 
       const nextPlanModesBySession = { ...state.planModesBySession, [targetSessionId]: true }
@@ -714,7 +759,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
         planModesBySession: nextPlanModesBySession,
         planMode: true,
         rightPanelTab: 'plan',
-        rightPanelOpen: true
+        rightPanelOpen: true,
+        leftSidebarOpen: false
       }
     }),
 

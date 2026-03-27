@@ -197,10 +197,10 @@ export function SubAgentsPanel(): React.JSX.Element {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-background/30">
-      <div className="border-b border-border/60 px-4 py-3">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-background/30">
+      <div className="border-b border-border/60 px-3 py-2.5">
         <div className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-2xl border border-border/60 bg-muted/25 text-foreground/80">
+          <div className="flex size-8 items-center justify-center rounded-xl border border-border/60 bg-muted/25 text-foreground/80">
             <Bot className="size-4" />
           </div>
           <div className="min-w-0 flex-1">
@@ -229,7 +229,7 @@ export function SubAgentsPanel(): React.JSX.Element {
           </Button>
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {(
             [
               ['all', t('subAgentsPanel.filterAll', { defaultValue: '全部' })],
@@ -245,7 +245,7 @@ export function SubAgentsPanel(): React.JSX.Element {
                 type="button"
                 onClick={() => setFilter(value)}
                 className={cn(
-                  'rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors',
+                  'rounded-full border px-2.5 py-1 text-[10px] font-medium transition-colors',
                   active
                     ? 'border-foreground/15 bg-foreground/8 text-foreground'
                     : 'border-border/60 bg-background/55 text-muted-foreground hover:text-foreground'
@@ -258,7 +258,7 @@ export function SubAgentsPanel(): React.JSX.Element {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2.5">
         {runningAgents.length > 0 ? (
           <section className="mb-4">
             <div className="mb-2 flex items-center gap-2 px-1 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground/60">
@@ -360,15 +360,15 @@ function SubAgentRunCard({
     <div
       data-subagent-card={agent.toolUseId}
       className={cn(
-        'overflow-hidden rounded-2xl border bg-background/70 transition-colors',
+        'overflow-hidden rounded-xl border bg-background/70 transition-colors',
         highlighted
           ? 'border-foreground/15 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]'
           : 'border-border/60 hover:border-border'
       )}
     >
-      <button type="button" onClick={onToggle} className="w-full px-4 py-4 text-left">
+      <button type="button" onClick={onToggle} className="w-full px-3 py-3 text-left">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex size-10 items-center justify-center rounded-2xl border border-border/60 bg-muted/25 text-foreground/80">
+          <div className="mt-0.5 flex size-8 items-center justify-center rounded-xl border border-border/60 bg-muted/25 text-foreground/80">
             {icon}
           </div>
           <div className="min-w-0 flex-1">
@@ -379,7 +379,7 @@ function SubAgentRunCard({
               <Badge
                 variant={isFailed ? 'destructive' : 'secondary'}
                 className={cn(
-                  'h-5 rounded-full border border-border/60 bg-background/70 px-2 text-[10px] font-medium text-foreground/70',
+                  'h-4.5 rounded-full border border-border/60 bg-background/70 px-1.5 text-[9px] font-medium text-foreground/70',
                   agent.isRunning && 'border-cyan-500/30 bg-cyan-500/10 text-cyan-100',
                   isFailed && 'border-destructive/40 bg-destructive/10 text-destructive'
                 )}
@@ -399,7 +399,7 @@ function SubAgentRunCard({
             ) : null}
 
             {previewText ? (
-              <div className="mt-3 rounded-2xl border border-border/60 bg-muted/20 px-3 py-3">
+              <div className="mt-2 rounded-xl border border-border/60 bg-muted/20 px-2.5 py-2">
                 <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55">
                   <Sparkles className="size-3" />
                   <span>
@@ -408,7 +408,7 @@ function SubAgentRunCard({
                       : t('subAgentsPanel.summary', { defaultValue: '结果摘要' })}
                   </span>
                 </div>
-                <p className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground/88 line-clamp-5">
+                <p className="whitespace-pre-wrap break-words text-[12px] leading-5 text-foreground/88 line-clamp-4">
                   {previewText}
                 </p>
               </div>
@@ -422,7 +422,7 @@ function SubAgentRunCard({
               </div>
             )}
 
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/65">
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground/65">
               <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/70 px-2.5 py-1">
                 <Clock3 className="size-3" />
                 {elapsed}
@@ -451,7 +451,7 @@ function SubAgentRunCard({
       </button>
 
       {expanded ? (
-        <div className="border-t border-border/60 px-4 py-4">
+        <div className="border-t border-border/60 px-3 py-3">
           <div className="grid gap-4">
             <div className="min-w-0 space-y-4">
               <section>
@@ -476,7 +476,7 @@ function SubAgentRunCard({
               </section>
             </div>
 
-            <aside className="space-y-4 rounded-2xl border border-border/60 bg-muted/15 p-4">
+            <aside className="space-y-3 rounded-xl border border-border/60 bg-muted/15 p-3">
               <section>
                 <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55">
                   描述

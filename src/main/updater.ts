@@ -18,6 +18,14 @@ const notifiedAvailableVersions = new Set<string>()
 let checkForUpdatesPromise: Promise<unknown> | null = null
 let downloadUpdatePromise: Promise<unknown> | null = null
 let macUpdaterUnsupportedReason: string | null | undefined
+let lastReportedUpdaterError: { message: string; at: number } | null = null
+
+interface UpdaterLogger {
+  info?: (...args: unknown[]) => void
+  warn?: (...args: unknown[]) => void
+  error?: (...args: unknown[]) => void
+  debug?: (...args: unknown[]) => void
+}
 
 function isAutoUpdateEnabled(): boolean {
   const settings = readSettings()
@@ -121,6 +129,46 @@ function formatReleaseNotesText(releaseNotes: string): string {
   return /<[^>]+>/.test(trimmed) ? htmlToMarkdown(trimmed) : trimmed
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isTransientUpdateError(error: unknown): boolean {
+  return /\b(ERR_TIMED_OUT|ETIMEDOUT|ERR_CONNECTION_RESET|ERR_CONNECTION_REFUSED|ERR_CONNECTION_CLOSED|ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED|ENOTFOUND|ECONNRESET|ECONNREFUSED|EAI_AGAIN)\b/i.test(
+    getErrorMessage(error)
+  )
+}
+
+function shouldReportUpdaterError(message: string): boolean {
+  const now = Date.now()
+
+  if (
+    lastReportedUpdaterError &&
+    lastReportedUpdaterError.message === message &&
+    now - lastReportedUpdaterError.at < 5000
+  ) {
+    return false
+  }
+
+  lastReportedUpdaterError = { message, at: now }
+  return true
+}
+
+function configureAutoUpdaterLogger(): void {
+  ;(autoUpdater as typeof autoUpdater & { logger?: UpdaterLogger }).logger = {
+    info: (...args: unknown[]) => console.log(...args),
+    warn: (...args: unknown[]) => console.warn(...args),
+    error: (...args: unknown[]) => {
+      if (args.some((arg) => isTransientUpdateError(arg))) {
+        return
+      }
+
+      console.error(...args)
+    },
+    debug: (...args: unknown[]) => console.debug(...args)
+  }
+}
+
 function getMacAppBundlePath(): string | null {
   if (process.platform !== 'darwin') {
     return null
@@ -193,7 +241,15 @@ function getReleaseNotesText(releaseNotes: unknown): string {
 }
 
 function formatErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = getErrorMessage(error)
+
+  if (/\b(ERR_TIMED_OUT|ETIMEDOUT)\b/i.test(message)) {
+    return 'Update request timed out. Check your network and try again later.'
+  }
+
+  if (isTransientUpdateError(error)) {
+    return 'Unable to reach the update server. Check your network and try again later.'
+  }
 
   if (
     /code signature/i.test(message) &&
@@ -392,7 +448,9 @@ export function setupAutoUpdater(options: AutoUpdateOptions): void {
       return { success: true, available, currentVersion, latestVersion, skipped: false }
     } catch (error) {
       const message = formatErrorMessage(error)
-      console.error('[Updater] Check failed:', error)
+      if (shouldReportUpdaterError(message)) {
+        console.error('[Updater] Check failed:', error)
+      }
       return { success: false, error: message }
     }
   })
@@ -410,7 +468,9 @@ export function setupAutoUpdater(options: AutoUpdateOptions): void {
       return { success: true }
     } catch (error) {
       const message = formatErrorMessage(error)
-      console.error('[Updater] Download failed:', error)
+      if (shouldReportUpdaterError(message)) {
+        console.error('[Updater] Download failed:', error)
+      }
       return { success: false, error: message }
     }
   })
@@ -435,6 +495,8 @@ export function setupAutoUpdater(options: AutoUpdateOptions): void {
     return
   }
 
+  configureAutoUpdaterLogger()
+
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
   autoUpdater.allowPrerelease = false
@@ -452,7 +514,16 @@ export function setupAutoUpdater(options: AutoUpdateOptions): void {
     }
 
     void downloadUpdateSafely().catch((error) => {
+      if (isTransientUpdateError(error)) {
+        clearWindowProgress(options.getMainWindow)
+        return
+      }
+
       const message = formatErrorMessage(error)
+      if (!shouldReportUpdaterError(message)) {
+        return
+      }
+
       console.error('[Updater] Auto download failed:', error)
       writeCrashLog('updater_auto_download_failed', { message, error })
     })
@@ -472,9 +543,14 @@ export function setupAutoUpdater(options: AutoUpdateOptions): void {
 
   autoUpdater.on('error', (error) => {
     const message = formatErrorMessage(error)
+    clearWindowProgress(options.getMainWindow)
+
+    if (isTransientUpdateError(error) || !shouldReportUpdaterError(message)) {
+      return
+    }
+
     console.error('[Updater] Auto update failed:', error)
     writeCrashLog('updater_error', { message, error })
-    clearWindowProgress(options.getMainWindow)
 
     const win = getValidWindow(options.getMainWindow)
     if (win) {
@@ -489,7 +565,15 @@ export function setupAutoUpdater(options: AutoUpdateOptions): void {
 
   // Check for updates immediately on startup
   void checkForUpdatesSafely().catch((error) => {
+    if (isTransientUpdateError(error)) {
+      return
+    }
+
     const message = formatErrorMessage(error)
+    if (!shouldReportUpdaterError(message)) {
+      return
+    }
+
     console.error('[Updater] checkForUpdates failed:', error)
     writeCrashLog('updater_check_failed', { message, error })
   })

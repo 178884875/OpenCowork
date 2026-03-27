@@ -280,38 +280,58 @@ export function registerChannelHandlers(channelManager: ChannelManager): void {
   // List persisted plugin instances (auto-provisions built-in plugins)
   ipcMain.handle('plugin:list', () => {
     const plugins = readPlugins()
+    const projects = projectsDao.listProjects().filter((project) => !project.plugin_id)
     let changed = false
 
-    // Auto-provision built-in plugins that don't exist yet
-    for (const descriptor of CHANNEL_PROVIDERS) {
-      const existing = plugins.find((p) => p.type === descriptor.type)
-      if (!existing) {
-        const config: Record<string, string> = {}
-        for (const field of descriptor.configSchema) {
-          config[field.key] =
-            descriptor.type === 'weixin-official' && field.key === 'baseUrl'
-              ? DEFAULT_WEIXIN_BASE_URL
-              : ''
-        }
-        plugins.push({
-          id: nanoid(),
-          type: descriptor.type,
-          name: descriptor.displayName,
-          enabled: false,
-          builtin: true,
-          config,
-          createdAt: Date.now(),
-          tools: buildToolsMap(descriptor)
-        })
-        changed = true
-      } else {
-        if (!existing.builtin) {
-          existing.builtin = true
+    // Migrate legacy unbound built-ins to the first normal project when there is only one.
+    if (projects.length === 1) {
+      for (const descriptor of CHANNEL_PROVIDERS) {
+        const legacyUnbound = plugins.find((p) => p.type === descriptor.type && !p.projectId)
+        const hasBoundInstance = plugins.some(
+          (p) => p.type === descriptor.type && p.projectId === projects[0].id
+        )
+        if (legacyUnbound && !hasBoundInstance) {
+          legacyUnbound.projectId = projects[0].id
           changed = true
         }
-        if (existing.name !== descriptor.displayName) {
-          existing.name = descriptor.displayName
+      }
+    }
+
+    // Auto-provision one built-in channel instance per normal project and provider type.
+    for (const project of projects) {
+      for (const descriptor of CHANNEL_PROVIDERS) {
+        const existing = plugins.find(
+          (p) => p.type === descriptor.type && p.projectId === project.id
+        )
+        if (!existing) {
+          const config: Record<string, string> = {}
+          for (const field of descriptor.configSchema) {
+            config[field.key] =
+              descriptor.type === 'weixin-official' && field.key === 'baseUrl'
+                ? DEFAULT_WEIXIN_BASE_URL
+                : ''
+          }
+          plugins.push({
+            id: nanoid(),
+            type: descriptor.type,
+            name: descriptor.displayName,
+            enabled: false,
+            builtin: true,
+            config,
+            createdAt: Date.now(),
+            projectId: project.id,
+            tools: buildToolsMap(descriptor)
+          })
           changed = true
+        } else {
+          if (!existing.builtin) {
+            existing.builtin = true
+            changed = true
+          }
+          if (existing.name !== descriptor.displayName) {
+            existing.name = descriptor.displayName
+            changed = true
+          }
         }
       }
     }

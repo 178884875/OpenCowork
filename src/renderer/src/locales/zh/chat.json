@@ -360,7 +360,7 @@
     "startConversation": "开始对话",
     "startConversationDesc": "随意提问 — 纯对话，无工具。",
     "startClarify": "开始澄清需求",
-    "startClarifyDesc": "先把目标、约束、风险和遗漏问清楚，再进入规划。只读模式，不会修改文件或执行命令。",
+    "startClarifyDesc": "先把目标、约束、风险和遗漏问清楚，再进入规划。默认偏向追问和澄清，但权限与编程模式一致。",
     "startCowork": "开始协作会话",
     "startCoworkDesc": "选择工作目录，然后让助手帮你处理项目。",
     "startCoding": "开始编程",
@@ -462,6 +462,8 @@
     "ttft": "首 token",
     "tps": "TPS",
     "regenerateReference": "重新生成参考",
+    "continueToolExecution": "继续执行",
+    "continueToolExecutionHint": "检测到上次停在工具执行，点击后会在这条消息里继续，不会新增 AI 消息",
     "imageError": {
       "titleTimeout": "图片生成超时",
       "descTimeout": "请求已超过 10 分钟。建议简化提示词、降低复杂度后重试。",

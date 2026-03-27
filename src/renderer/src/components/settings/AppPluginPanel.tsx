@@ -12,6 +12,7 @@ import {
 import { Separator } from '@renderer/components/ui/separator'
 import { ProviderIcon, ModelIcon } from './provider-icons'
 import { useProviderStore } from '@renderer/stores/provider-store'
+import { useChatStore } from '@renderer/stores/chat-store'
 import { useAppPluginStore } from '@renderer/stores/app-plugin-store'
 import {
   APP_PLUGIN_DESCRIPTORS,
@@ -66,7 +67,8 @@ function getPluginState(options: {
 export function AppPluginPanel(): React.JSX.Element {
   const { t } = useTranslation('settings')
   const [selectedPluginId, setSelectedPluginId] = useState<AppPluginId>(IMAGE_PLUGIN_ID)
-  const plugins = useAppPluginStore((state) => state.plugins)
+  const activeProjectId = useChatStore((state) => state.activeProjectId)
+  const pluginList = useAppPluginStore((state) => state.getEnabledPlugins(activeProjectId))
   const updatePlugin = useAppPluginStore((state) => state.updatePlugin)
   const togglePluginEnabled = useAppPluginStore((state) => state.togglePluginEnabled)
   const providers = useProviderStore((state) => state.providers)
@@ -86,7 +88,7 @@ export function AppPluginPanel(): React.JSX.Element {
   )
 
   const visibleDescriptors = useMemo(() => APP_PLUGIN_DESCRIPTORS.filter((d) => !d.hidden), [])
-  const selectedPlugin = plugins.find((plugin) => plugin.id === selectedPluginId) ?? null
+  const selectedPlugin = useAppPluginStore((state) => state.getPlugin(selectedPluginId, activeProjectId))
   const selectedDescriptor =
     visibleDescriptors.find((descriptor) => descriptor.id === selectedPluginId) ??
     visibleDescriptors[0] ??
@@ -127,7 +129,7 @@ export function AppPluginPanel(): React.JSX.Element {
         </div>
         <div className="space-y-2">
           {visibleDescriptors.map((descriptor) => {
-            const plugin = plugins.find((item) => item.id === descriptor.id)
+            const plugin = pluginList.find((item) => item.id === descriptor.id) ?? null
             const selected = descriptor.id === selectedPluginId
             return (
               <button

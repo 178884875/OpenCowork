@@ -250,6 +250,19 @@ export function registerDbHandlers(): void {
     return usageEventsDao.getUsageDaily(query)
   })
 
+  ipcMain.handle(
+    'usage-events:timeline',
+    (
+      _event,
+      args: {
+        query: usageEventsDao.UsageEventsQuery
+        bucket: usageEventsDao.UsageTimelineBucket
+      }
+    ) => {
+      return usageEventsDao.getUsageTimeline(args.query, args.bucket)
+    }
+  )
+
   ipcMain.handle('usage-events:by-model', (_event, query) => {
     return usageEventsDao.getUsageByModel(query)
   })

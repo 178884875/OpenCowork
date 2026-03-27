@@ -61,6 +61,8 @@ export interface UsageEventsQuery {
   offset?: number
 }
 
+export type UsageTimelineBucket = 'hour' | 'day'
+
 export function addUsageEvent(
   event: Omit<UsageEventRow, 'created_at'> & { created_at?: number }
 ): void {
@@ -181,6 +183,35 @@ export function getUsageDaily(query: UsageEventsQuery): Record<string, unknown>[
       ${clause}
       GROUP BY day
       ORDER BY day DESC`
+    )
+    .all(...params) as Record<string, unknown>[]
+}
+
+export function getUsageTimeline(
+  query: UsageEventsQuery,
+  bucket: UsageTimelineBucket
+): Record<string, unknown>[] {
+  const db = getDb()
+  const { clause, params } = buildWhere(query)
+  const bucketLabelExpr =
+    bucket === 'hour'
+      ? "strftime('%Y-%m-%d %H:00', created_at / 1000, 'unixepoch', 'localtime')"
+      : "strftime('%Y-%m-%d', created_at / 1000, 'unixepoch', 'localtime')"
+
+  return db
+    .prepare(
+      `SELECT
+        ${bucketLabelExpr} AS bucket_label,
+        COUNT(*) AS request_count,
+        COALESCE(SUM(${EFFECTIVE_INPUT_TOKENS_EXPR}), 0) AS input_tokens,
+        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+        COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd
+      FROM usage_events
+      ${clause}
+      GROUP BY bucket_label
+      ORDER BY bucket_label DESC`
     )
     .all(...params) as Record<string, unknown>[]
 }

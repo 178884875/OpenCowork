@@ -3,6 +3,20 @@
 All notable changes to **OpenCowork** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com).
 
+## [0.7.3] - 2026-03-27
+
+### Changed
+
+- Improved chat composer and settings layouts with better input height calculation, file editor spacing, provider organization, and clearer SubAgent error presentation.
+- Synced the Bun lockfile so virtualization-related dependencies stay aligned with the declared package set.
+- Updated the docs homepage release badge from `v0.7.2` to `v0.7.3`.
+
+### Fixed
+
+- Prevented IPC broadcasts from failing when renderer windows or frames are already disposed by centralizing safe window send helpers.
+- Recovered Weixin message polling after remote session timeouts by resetting the polling cursor and retry cadence automatically.
+- Kept embedded SubAgent execution details in a single-column layout for more stable rendering.
+
 ## [0.7.2] - 2026-03-26
 
 ### Added

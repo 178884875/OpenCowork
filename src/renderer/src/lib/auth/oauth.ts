@@ -11,6 +11,20 @@ interface OAuthCallbackPayload {
   errorDescription?: string | null
 }
 
+export interface OAuthDeviceCodeInfo {
+  deviceCode: string
+  userCode: string
+  verificationUri: string
+  verificationUriComplete?: string
+  expiresAt?: number
+  intervalSeconds?: number
+}
+
+export interface StartOAuthFlowOptions {
+  signal?: AbortSignal
+  onDeviceCode?: (info: OAuthDeviceCodeInfo) => void
+}
+
 function base64UrlEncode(bytes: Uint8Array): string {
   let str = ''
   for (let i = 0; i < bytes.length; i++) {
@@ -68,6 +82,7 @@ function normalizeTokenResponse(raw: Record<string, unknown>): OAuthToken {
   const refreshToken = raw.refresh_token ? String(raw.refresh_token) : undefined
   const scope = raw.scope ? String(raw.scope) : undefined
   const tokenType = raw.token_type ? String(raw.token_type) : undefined
+  const idToken = raw.id_token ? String(raw.id_token) : undefined
 
   const expiresIn = raw.expires_in ? Number(raw.expires_in) : undefined
   const expiresAt = Number.isFinite(expiresIn)
@@ -84,7 +99,8 @@ function normalizeTokenResponse(raw: Record<string, unknown>): OAuthToken {
     expiresAt,
     scope,
     tokenType,
-    accountId
+    accountId,
+    ...(idToken ? { idToken } : {})
   }
 }
 
@@ -97,7 +113,44 @@ function buildTokenHeaders(
     headers['Content-Type'] =
       mode === 'json' ? 'application/json' : 'application/x-www-form-urlencoded'
   }
+  if (!headers.Accept) {
+    headers.Accept = 'application/json'
+  }
   return headers
+}
+
+async function requestOAuthJson(args: {
+  url: string
+  body: string
+  headers: Record<string, string>
+  useSystemProxy?: boolean
+}): Promise<{ statusCode?: number; data: Record<string, unknown>; rawBody: string }> {
+  const result = (await ipcClient.invoke('api:request', {
+    url: args.url,
+    method: 'POST',
+    headers: args.headers,
+    body: args.body,
+    useSystemProxy: args.useSystemProxy
+  })) as { statusCode?: number; error?: string; body?: string }
+
+  if (result?.error) {
+    throw new Error(result.error)
+  }
+  if (!result?.body) {
+    throw new Error('Empty token response')
+  }
+
+  let data: Record<string, unknown>
+  try {
+    data = JSON.parse(result.body) as Record<string, unknown>
+  } catch {
+    if (result.statusCode && result.statusCode >= 400) {
+      throw new Error(`HTTP ${result.statusCode}: ${result.body.slice(0, 200)}`)
+    }
+    throw new Error('Invalid JSON token response')
+  }
+
+  return { statusCode: result.statusCode, data, rawBody: result.body }
 }
 
 async function sendTokenRequest(
@@ -105,25 +158,17 @@ async function sendTokenRequest(
   body: string,
   headers: Record<string, string>
 ): Promise<OAuthToken> {
-  const result = (await ipcClient.invoke('api:request', {
+  const { statusCode, data, rawBody } = await requestOAuthJson({
     url: config.tokenUrl,
-    method: 'POST',
-    headers,
     body,
+    headers,
     useSystemProxy: config.useSystemProxy
-  })) as { statusCode?: number; error?: string; body?: string }
+  })
 
-  if (result?.error) {
-    throw new Error(result.error)
-  }
-  if (!result || !result.body) {
-    throw new Error('Empty token response')
-  }
-  if (result.statusCode && result.statusCode >= 400) {
-    throw new Error(`HTTP ${result.statusCode}: ${result.body.slice(0, 200)}`)
+  if (statusCode && statusCode >= 400) {
+    throw new Error(`HTTP ${statusCode}: ${rawBody.slice(0, 200)}`)
   }
 
-  const data = JSON.parse(result.body) as Record<string, unknown>
   const token = normalizeTokenResponse(data)
   if (!token.accessToken) {
     throw new Error('Missing access_token in response')
@@ -136,6 +181,129 @@ async function exchangeToken(config: OAuthConfig, body: URLSearchParams): Promis
   const headers = buildTokenHeaders(mode, config.tokenRequestHeaders)
   const bodyStr = mode === 'json' ? JSON.stringify(Object.fromEntries(body)) : body.toString()
   return sendTokenRequest(config, bodyStr, headers)
+}
+
+async function requestDeviceCode(config: OAuthConfig): Promise<OAuthDeviceCodeInfo> {
+  if (!config.deviceCodeUrl || !config.clientId) {
+    throw new Error('OAuth device flow config missing deviceCodeUrl/clientId')
+  }
+
+  const mode = config.deviceCodeRequestMode ?? 'form'
+  const headers = buildTokenHeaders(mode, config.deviceCodeRequestHeaders)
+  const body = new URLSearchParams()
+  body.set('client_id', config.clientId)
+  if (config.scope) {
+    body.set('scope', config.scope)
+  }
+
+  const { statusCode, data, rawBody } = await requestOAuthJson({
+    url: config.deviceCodeUrl,
+    body: mode === 'json' ? JSON.stringify(Object.fromEntries(body)) : body.toString(),
+    headers,
+    useSystemProxy: config.useSystemProxy
+  })
+
+  if (statusCode && statusCode >= 400) {
+    throw new Error(`HTTP ${statusCode}: ${rawBody.slice(0, 200)}`)
+  }
+
+  const deviceCode = typeof data.device_code === 'string' ? data.device_code.trim() : ''
+  const userCode = typeof data.user_code === 'string' ? data.user_code.trim() : ''
+  const verificationUri =
+    typeof data.verification_uri === 'string' ? data.verification_uri.trim() : ''
+  const verificationUriComplete =
+    typeof data.verification_uri_complete === 'string'
+      ? data.verification_uri_complete.trim()
+      : undefined
+  const expiresIn = typeof data.expires_in === 'number' ? data.expires_in : Number(data.expires_in)
+  const intervalSeconds =
+    typeof data.interval === 'number' ? data.interval : Number(data.interval ?? 5)
+
+  if (!deviceCode || !userCode || !verificationUri) {
+    throw new Error('Device authorization response missing required fields')
+  }
+
+  return {
+    deviceCode,
+    userCode,
+    verificationUri,
+    ...(verificationUriComplete ? { verificationUriComplete } : {}),
+    ...(Number.isFinite(expiresIn) ? { expiresAt: Date.now() + expiresIn * 1000 } : {}),
+    ...(Number.isFinite(intervalSeconds) ? { intervalSeconds } : {})
+  }
+}
+
+async function pollDeviceToken(
+  config: OAuthConfig,
+  device: OAuthDeviceCodeInfo,
+  signal?: AbortSignal
+): Promise<OAuthToken> {
+  const mode = config.tokenRequestMode ?? 'form'
+  let intervalSeconds = Math.max(1, device.intervalSeconds ?? 5)
+
+  while (true) {
+    if (signal?.aborted) {
+      throw createAbortError()
+    }
+    if (device.expiresAt && Date.now() >= device.expiresAt) {
+      throw new Error('Device code expired')
+    }
+
+    const body = new URLSearchParams()
+    body.set('grant_type', 'urn:ietf:params:oauth:grant-type:device_code')
+    body.set('client_id', config.clientId)
+    body.set('device_code', device.deviceCode)
+
+    const headers = buildTokenHeaders(mode, config.tokenRequestHeaders)
+    const requestBody = mode === 'json' ? JSON.stringify(Object.fromEntries(body)) : body.toString()
+
+    const { statusCode, data, rawBody } = await requestOAuthJson({
+      url: config.tokenUrl,
+      body: requestBody,
+      headers,
+      useSystemProxy: config.useSystemProxy
+    })
+
+    const token = normalizeTokenResponse(data)
+    if (token.accessToken) {
+      return token
+    }
+
+    const errorCode = typeof data.error === 'string' ? data.error : ''
+    if (errorCode === 'authorization_pending') {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, intervalSeconds * 1000)
+        if (signal) {
+          const onAbort = (): void => {
+            clearTimeout(timer)
+            signal.removeEventListener('abort', onAbort)
+            reject(createAbortError())
+          }
+          signal.addEventListener('abort', onAbort, { once: true })
+        }
+      })
+      continue
+    }
+    if (errorCode === 'slow_down') {
+      intervalSeconds += 5
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, intervalSeconds * 1000)
+        if (signal) {
+          const onAbort = (): void => {
+            clearTimeout(timer)
+            signal.removeEventListener('abort', onAbort)
+            reject(createAbortError())
+          }
+          signal.addEventListener('abort', onAbort, { once: true })
+        }
+      })
+      continue
+    }
+    if (statusCode && statusCode >= 400) {
+      throw new Error(`HTTP ${statusCode}: ${rawBody.slice(0, 200)}`)
+    }
+    throw new Error(errorCode || 'Device authorization failed')
+  }
 }
 
 function waitForCallback(
@@ -192,13 +360,34 @@ function createAbortError(): Error {
 
 export async function startOAuthFlow(
   config: OAuthConfig,
-  signal?: AbortSignal
+  signalOrOptions?: AbortSignal | StartOAuthFlowOptions
 ): Promise<OAuthToken> {
-  if (!config.authorizeUrl || !config.tokenUrl || !config.clientId) {
-    throw new Error('OAuth config missing authorizeUrl/tokenUrl/clientId')
+  const options =
+    signalOrOptions && 'aborted' in signalOrOptions
+      ? { signal: signalOrOptions }
+      : (signalOrOptions ?? {})
+  const signal = options.signal
+  const flowType = config.flowType ?? 'authorization_code'
+
+  if (!config.tokenUrl || !config.clientId) {
+    throw new Error('OAuth config missing tokenUrl/clientId')
   }
   if (signal?.aborted) {
     throw createAbortError()
+  }
+
+  if (flowType === 'device_code') {
+    const device = await requestDeviceCode(config)
+    options.onDeviceCode?.(device)
+    const openUrl = device.verificationUriComplete || device.verificationUri
+    if (openUrl) {
+      await ipcClient.invoke('shell:openExternal', openUrl)
+    }
+    return pollDeviceToken(config, device, signal)
+  }
+
+  if (!config.authorizeUrl) {
+    throw new Error('OAuth config missing authorizeUrl for authorization code flow')
   }
 
   const requestId = nanoid()

@@ -78,7 +78,7 @@ export function resolvePromptEnvironmentContext(options: {
  */
 const CLARIFY_CORE_PROMPT = `You are a relentless product architect and technical strategist. Your sole purpose right now is to extract every detail, assumption, and blind spot from my head before we build anything.
 
-Before asking questions, first understand the project in the user's working directory as deeply as possible using read-only inspection. Start with the target file or feature area, then trace adjacent call sites, related state/configuration, and similar implementations. If useful, also gather historical and design-intent clues, but treat that as an important recommendation rather than a hard prerequisite.
+Before asking questions, first understand the project in the user's working directory as deeply as possible using direct inspection and, when useful, hands-on verification. Start with the target file or feature area, then trace adjacent call sites, related state/configuration, and similar implementations. If useful, also gather historical and design-intent clues, but treat that as an important recommendation rather than a hard prerequisite.
 
 Do not ask generic questions. First collect enough concrete evidence about the current implementation, constraints, existing patterns, and surrounding context so your questions are specific and high-value.
 
@@ -100,11 +100,11 @@ Your job:
 
 Get granular. Get uncomfortable. If my answers raise new questions, pull on that thread.
 
-You may and should gather background context with read-only inspection, relevant Skills, WebSearch, and non-mutating Bash commands when that helps you ask better questions. If a listed Skill is relevant for collecting domain context, use it first. In Clarify mode, Bash is explicitly allowed for safe reconnaissance and background research such as inspecting dependencies, scripts, workspace structure, configuration entry points, and git history.
+You may and should gather background context with project inspection, relevant Skills, WebSearch, Bash, and other Code-mode tools when that helps you ask better questions. If a listed Skill is relevant for collecting domain context, use it first. In Clarify mode, tool permissions should match Code mode: use edits, commands, and other actions when they materially reduce ambiguity or directly serve the user's request.
 
 Do not offer recommendations before you have collected sufficient project and background context. Recommendations must be well-considered, evidence-based, and satisfy a high standard of completeness and responsibility. Each recommendation should account for its basis, applicability, impact scope, and tradeoffs rather than sounding like a quick opinion.
 
-Only after we have both reached clarity, when you've run out of unknowns to surface, should you stop questioning. At that point, call EnterPlanMode proactively instead of merely recommending it. Once Plan Mode is active, continue by producing the full implementation plan there, then follow the normal Plan Mode flow with SavePlan and ExitPlanMode. Do not drift into direct implementation.
+Only after we have both reached clarity, when you've run out of unknowns to surface, should you stop questioning. At that point, call EnterPlanMode proactively if planning is the next step instead of merely recommending it. Once Plan Mode is active, continue by producing the full implementation plan there, then follow the normal Plan Mode flow with SavePlan and ExitPlanMode. If the user explicitly wants direct execution instead, continue with the normal implementation workflow.
 
 Start by understanding the project context first, stating the known facts you found, and only then ask what I want to build if that remains necessary.`
 
@@ -268,14 +268,14 @@ export function buildSystemPrompt(options: {
   if (mode === 'clarify') {
     parts.push(
       `\n## Mode: Clarify`,
-      `This is a read-only mode focused on discovery and requirement clarification before planning or implementation.`,
-      `Do not use mutating tools such as Edit, Write, or any other tool that changes files, schedules jobs, starts long-running processes, installs packages, or performs side effects.`,
+      `This mode focuses on discovery and requirement clarification before planning, but its permissions should match Code mode when deeper verification or direct execution is needed.`,
+      `You may use the same file and terminal tools available in Code mode. Do not artificially restrict yourself; choose the least invasive action that meaningfully reduces ambiguity or advances the user's request.`,
       `Before asking the user questions, first inspect the target file or feature area, then trace adjacent call sites, related state/configuration, and similar implementations so the questions are specific, evidence-based, and useful. Historical and design-intent clues are recommended when relevant, but are not always mandatory.`,
-      `Before questioning, briefly present the concrete facts you have already learned from the project. If you cannot state concrete facts yet, continue read-only investigation instead of asking generic questions.`,
-      `Use AskUserQuestion aggressively to keep probing until ambiguity is exhausted, but only after gathering sufficient project and background context. You may gather background context with read-only inspection tools, the Skill tool, WebSearch, and Bash for non-mutating information-gathering commands. Prefer project evidence first and use external knowledge to fill gaps.`,
-      `In Clarify mode, Bash is allowed for safe reconnaissance only: inspect files, environment, dependencies, scripts, git history, workspace structure, configuration entry points, or other context. Do not use Bash to edit files, run builds, start servers, or make persistent changes. Use relevant Skills when they help collect domain-specific background information.`,
+      `Before questioning, briefly present the concrete facts you have already learned from the project. If you cannot state concrete facts yet, continue investigating instead of asking generic questions.`,
+      `Use AskUserQuestion aggressively to keep probing until ambiguity is exhausted, but only after gathering sufficient project and background context. You may gather background context with inspection tools, the Skill tool, WebSearch, Bash, and file/code tools when needed. Prefer project evidence first and use external knowledge to fill gaps.`,
+      `In Clarify mode, Bash is available with the same permissions as Code mode. Use it responsibly for inspection, verification, or implementation when appropriate. Use relevant Skills when they help collect domain-specific background information.`,
       `Do not give recommendations prematurely. Every recommendation must be careful, responsible, complete enough for high-quality requirements, and must not be simplified, shallow, or perfunctory. Recommendations should reflect their evidence, applicability, impact scope, and tradeoffs.`,
-      `When ambiguity is exhausted, call EnterPlanMode proactively and continue the task in Plan Mode by drafting the full plan there. Do not stop at recommending Plan Mode or drift into implementation.`,
+      `When ambiguity is exhausted, call EnterPlanMode proactively if planning is the next logical step. If the user explicitly wants immediate execution instead, continue without artificial permission limits.`,
       CLARIFY_CORE_PROMPT
     )
   } else if (mode === 'cowork') {
@@ -469,15 +469,6 @@ export function buildSystemPrompt(options: {
         )
       }
     }
-
-    // ── Workflows ──
-    parts.push(
-      `\n<workflows>`,
-      `Workflows live in .open-cowork/workflows/*.md and use YAML frontmatter with a \`description\`.`,
-      `If a workflow is relevant or the user uses a slash command, read it first.`,
-      `If asked to create one, write a new file in .open-cowork/workflows/ with clear, step-by-step instructions.`,
-      `</workflows>`
-    )
 
     const globalHomePath = memorySnapshot?.globalHomePath?.trim()
     const globalPathLabel = globalHomePath ? `\`${globalHomePath}\`` : 'path unavailable'

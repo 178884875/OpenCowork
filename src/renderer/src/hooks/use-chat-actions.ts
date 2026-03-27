@@ -11,6 +11,11 @@ import { useSshStore } from '@renderer/stores/ssh-store'
 import { runAgentLoop } from '@renderer/lib/agent/agent-loop'
 import { toolRegistry } from '@renderer/lib/agent/tool-registry'
 import {
+  decodeStructuredToolResult,
+  encodeToolError,
+  isStructuredToolErrorText
+} from '@renderer/lib/tools/tool-result-format'
+import {
   buildSystemPrompt,
   resolvePromptEnvironmentContext
 } from '@renderer/lib/agent/system-prompt'
@@ -23,6 +28,7 @@ import { useTeamStore } from '@renderer/stores/team-store'
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
 import { IPC } from '@renderer/lib/ipc/channels'
 import { clearPendingQuestions } from '@renderer/lib/tools/ask-user-tool'
+import type { ToolContext } from '@renderer/lib/tools/tool-types'
 
 import { PLAN_MODE_ALLOWED_TOOLS } from '@renderer/lib/tools/plan-tool'
 import { usePlanStore } from '@renderer/stores/plan-store'
@@ -35,7 +41,8 @@ import type {
   RequestDebugInfo,
   ContentBlock,
   RequestTiming,
-  AIModelConfig
+  AIModelConfig,
+  ToolResultContent
 } from '@renderer/lib/api/types'
 import { setLastDebugInfo, setRequestTraceInfo } from '@renderer/lib/debug-store'
 import {
@@ -86,26 +93,8 @@ import {
   resolveDesktopControlMode
 } from '@renderer/lib/app-plugin/desktop-routing'
 import { extractLatestUserInput, selectAutoModel } from '@renderer/lib/api/auto-model-selector'
+import { getTailToolExecutionState } from '@renderer/components/chat/transcript-utils'
 import type { AutoModelSelectionStatus } from '@renderer/stores/ui-store'
-
-const CLARIFY_ALLOWED_TOOLS = new Set([
-  'AskUserQuestion',
-  'Read',
-  'LS',
-  'Glob',
-  'Grep',
-  'Skill',
-  'Bash',
-  'WebSearch',
-  'OpenPreview',
-  'EnterPlanMode',
-  'SavePlan',
-  'ExitPlanMode',
-  'TaskCreate',
-  'TaskGet',
-  'TaskUpdate',
-  'TaskList'
-])
 
 /** Per-session abort controllers — module-level so concurrent sessions don't overwrite each other */
 const sessionAbortControllers = new Map<string, AbortController>()
@@ -121,7 +110,7 @@ function extractPluginChatId(externalChatId?: string): string | undefined {
   }
 }
 
-type MessageSource = 'team' | 'queued'
+type MessageSource = 'team' | 'queued' | 'continue'
 
 interface QueuedSessionMessage {
   id: string
@@ -577,6 +566,39 @@ function buildDeletedMessages(
   return [...messages.slice(0, targetIndex), ...messages.slice(deleteEnd)]
 }
 
+function extractToolErrorMessage(output: UnifiedMessage['content'] | string): string | undefined {
+  if (typeof output !== 'string' || !isStructuredToolErrorText(output)) return undefined
+  const parsed = decodeStructuredToolResult(output)
+  if (!parsed || Array.isArray(parsed)) return undefined
+  return typeof parsed.error === 'string' ? parsed.error : undefined
+}
+
+function getStoredToolCallResult(
+  sessionId: string,
+  toolUseId: string
+): { content: ToolResultContent; isError: boolean; error?: string } | null {
+  const agentState = useAgentStore.getState()
+  const sessionCache = agentState.sessionToolCallsCache[sessionId]
+  const candidates = [
+    ...agentState.pendingToolCalls,
+    ...agentState.executedToolCalls,
+    ...(sessionCache?.pending ?? []),
+    ...(sessionCache?.executed ?? [])
+  ]
+
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const toolCall = candidates[index]
+    if (toolCall.id !== toolUseId || toolCall.output === undefined) continue
+    return {
+      content: toolCall.output,
+      isError: toolCall.status === 'error',
+      error: toolCall.error
+    }
+  }
+
+  return null
+}
+
 // ── Team lead auto-trigger: teammate messages → new agent turn ──
 
 /** Module-level ref to the latest sendMessage function from the hook */
@@ -1001,9 +1023,11 @@ export function useChatActions(): {
     images?: ImageAttachment[],
     source?: MessageSource,
     targetSessionId?: string,
-    commandOverride?: SystemCommandSnapshot | null
+    commandOverride?: SystemCommandSnapshot | null,
+    reuseAssistantMessageId?: string
   ) => Promise<void>
   stopStreaming: () => void
+  continueLastToolExecution: () => Promise<void>
   retryLastMessage: () => Promise<void>
   editAndResend: (messageId: string, draft: EditableUserMessageDraft) => Promise<void>
   deleteMessage: (messageId: string) => Promise<void>
@@ -1015,7 +1039,8 @@ export function useChatActions(): {
       images?: ImageAttachment[],
       source?: MessageSource,
       targetSessionId?: string,
-      commandOverride?: SystemCommandSnapshot | null
+      commandOverride?: SystemCommandSnapshot | null,
+      reuseAssistantMessageId?: string
     ): Promise<void> => {
       // Reset auto-trigger counter and unpause when user manually sends a message
       if (source !== 'team') {
@@ -1051,6 +1076,15 @@ export function useChatActions(): {
         sessionId = chatStore.createSession(uiStore.mode)
       }
       await chatStore.loadSessionMessages(sessionId)
+
+      const existingAssistantMessage =
+        source === 'continue' && reuseAssistantMessageId
+          ? chatStore
+              .getSessionMessages(sessionId)
+              .find(
+                (message) => message.id === reuseAssistantMessageId && message.role === 'assistant'
+              )
+          : undefined
 
       const resolvedCommand = await resolveUserCommand(text, commandOverride)
       if ('error' in resolvedCommand) {
@@ -1099,7 +1133,12 @@ export function useChatActions(): {
       const hasPendingQueue = hasPendingSessionMessages(sessionId)
       const isQueueDispatchPaused = isPendingSessionDispatchPaused(sessionId)
 
-      if (isQueueDispatchPaused && hasPendingQueue && source !== 'queued') {
+      if (
+        source !== 'continue' &&
+        isQueueDispatchPaused &&
+        hasPendingQueue &&
+        source !== 'queued'
+      ) {
         enqueuePendingSessionMessage(sessionId, {
           text: resolvedCommand.command ? resolvedCommand.userText : text,
           images,
@@ -1113,11 +1152,17 @@ export function useChatActions(): {
         return
       }
 
-      if (isQueueDispatchPaused && source === undefined && !hasPendingQueue) {
+      if (
+        source !== 'continue' &&
+        isQueueDispatchPaused &&
+        source === undefined &&
+        !hasPendingQueue
+      ) {
         setPendingSessionDispatchPaused(sessionId, false)
       }
 
-      const shouldQueue = hasActiveRun || (statusIsRunning && source !== 'queued')
+      const shouldQueue =
+        source !== 'continue' && (hasActiveRun || (statusIsRunning && source !== 'queued'))
 
       if (shouldQueue) {
         enqueuePendingSessionMessage(sessionId, {
@@ -1135,12 +1180,16 @@ export function useChatActions(): {
         !resolvedSession?.providerId &&
         !resolvedSession?.pluginId &&
         settings.mainModelSelectionMode === 'auto'
+      const latestUserInput =
+        source === 'continue'
+          ? extractLatestUserInput(useChatStore.getState().getSessionMessages(sessionId))
+          : resolvedCommand.userText || text
       if (shouldShowAutoRouting) {
         useUIStore.getState().setAutoModelRoutingState(sessionId, 'routing')
       }
       const providerResolution = await resolveMainRequestProvider({
         sessionId,
-        latestUserInput: resolvedCommand.userText || text,
+        latestUserInput,
         allowTools: resolvedSessionMode !== 'chat'
       })
       const baseProviderConfig = buildProviderConfigWithRuntimeSettings(
@@ -1194,7 +1243,9 @@ export function useChatActions(): {
 
       // After a manual abort, stale errored/orphaned tool blocks can remain at tail
       // and break the next request. Clean them before appending new user input.
-      chatStore.sanitizeToolErrorsForResend(sessionId)
+      if (source !== 'continue') {
+        chatStore.sanitizeToolErrorsForResend(sessionId)
+      }
 
       // Strip old system-reminder blocks from previous messages to prevent accumulation
       chatStore.stripOldSystemReminders(sessionId)
@@ -1205,49 +1256,52 @@ export function useChatActions(): {
       const sessionMode = sessionSnapshot?.mode ?? uiStore.mode
 
       // Add user message (multi-modal when images attached)
-      let userContent: string | ContentBlock[]
       const isQueuedInsertion = source === 'queued'
-      const textBlocks: Array<Extract<ContentBlock, { type: 'text' }>> = []
-      const hasImages = Boolean(images && images.length > 0)
-      const textForUserBlock =
-        resolvedCommand.userText ||
-        (isQueuedInsertion && hasImages && !resolvedCommand.command ? QUEUED_IMAGE_ONLY_TEXT : '')
+      const shouldAppendUserMessage = source !== 'continue'
+      if (shouldAppendUserMessage) {
+        let userContent: string | ContentBlock[]
+        const textBlocks: Array<Extract<ContentBlock, { type: 'text' }>> = []
+        const hasImages = Boolean(images && images.length > 0)
+        const textForUserBlock =
+          resolvedCommand.userText ||
+          (isQueuedInsertion && hasImages && !resolvedCommand.command ? QUEUED_IMAGE_ONLY_TEXT : '')
 
-      if (isQueuedInsertion) {
-        textBlocks.push({ type: 'text', text: QUEUED_MESSAGE_SYSTEM_REMIND })
-      }
+        if (isQueuedInsertion) {
+          textBlocks.push({ type: 'text', text: QUEUED_MESSAGE_SYSTEM_REMIND })
+        }
 
-      if (resolvedCommand.command) {
-        textBlocks.push({
-          type: 'text',
-          text: serializeSystemCommand(resolvedCommand.command)
-        })
-      }
+        if (resolvedCommand.command) {
+          textBlocks.push({
+            type: 'text',
+            text: serializeSystemCommand(resolvedCommand.command)
+          })
+        }
 
-      if (textForUserBlock) {
-        textBlocks.push({ type: 'text', text: textForUserBlock })
-      }
+        if (textForUserBlock) {
+          textBlocks.push({ type: 'text', text: textForUserBlock })
+        }
 
-      if (hasImages) {
-        userContent = [...textBlocks, ...(images ?? []).map(imageAttachmentToContentBlock)]
-      } else if (textBlocks.length === 1 && textBlocks[0]?.type === 'text') {
-        userContent = textBlocks[0].text
-      } else {
-        userContent = textBlocks
-      }
+        if (hasImages) {
+          userContent = [...textBlocks, ...(images ?? []).map(imageAttachmentToContentBlock)]
+        } else if (textBlocks.length === 1 && textBlocks[0]?.type === 'text') {
+          userContent = textBlocks[0].text
+        } else {
+          userContent = textBlocks
+        }
 
-      const userMsg: UnifiedMessage = {
-        id: nanoid(),
-        role: 'user',
-        content: userContent,
-        createdAt: Date.now(),
-        ...(source && { source })
+        const userMsg: UnifiedMessage = {
+          id: nanoid(),
+          role: 'user',
+          content: userContent,
+          createdAt: Date.now(),
+          ...(source && { source })
+        }
+        chatStore.addMessage(sessionId, userMsg)
       }
-      chatStore.addMessage(sessionId, userMsg)
 
       // Auto-title: fire-and-forget AI title + icon generation for the first message (skip for team notifications)
       const session = useChatStore.getState().sessions.find((s) => s.id === sessionId)
-      if (session && session.title === 'New Conversation') {
+      if (shouldAppendUserMessage && session && session.title === 'New Conversation') {
         const capturedSessionId = sessionId
         generateSessionTitle(resolvedCommand.titleInput)
           .then((result) => {
@@ -1262,15 +1316,17 @@ export function useChatActions(): {
           })
       }
 
-      // Create assistant placeholder message
-      const assistantMsgId = nanoid()
-      const assistantMsg: UnifiedMessage = {
-        id: assistantMsgId,
-        role: 'assistant',
-        content: '',
-        createdAt: Date.now()
+      // Create assistant placeholder message unless we're continuing on the same assistant bubble
+      const assistantMsgId = existingAssistantMessage?.id ?? nanoid()
+      if (!existingAssistantMessage) {
+        const assistantMsg: UnifiedMessage = {
+          id: assistantMsgId,
+          role: 'assistant',
+          content: '',
+          createdAt: Date.now()
+        }
+        chatStore.addMessage(sessionId, assistantMsg)
       }
-      chatStore.addMessage(sessionId, assistantMsg)
       chatStore.setStreamingMessageId(sessionId, assistantMsgId)
 
       const isImageRequest = baseProviderConfig.type === 'openai-images'
@@ -1361,12 +1417,6 @@ export function useChatActions(): {
         let finalEffectiveToolDefs = settings.teamToolsEnabled
           ? finalToolDefs
           : finalToolDefs.filter((t) => !TEAM_TOOL_NAMES.has(t.name))
-
-        if (mode === 'clarify') {
-          finalEffectiveToolDefs = finalEffectiveToolDefs.filter((t) =>
-            CLARIFY_ALLOWED_TOOLS.has(t.name)
-          )
-        }
 
         // Plan mode: restrict to read-only + planning tools
         const isPlanMode = useUIStore.getState().planMode
@@ -1633,7 +1683,9 @@ export function useChatActions(): {
         agentStore.clearToolCalls()
 
         // Accumulate usage across all iterations + SubAgent runs
-        const accumulatedUsage: TokenUsage = { inputTokens: 0, outputTokens: 0 }
+        const accumulatedUsage: TokenUsage = existingAssistantMessage?.usage
+          ? { ...existingAssistantMessage.usage }
+          : { inputTokens: 0, outputTokens: 0 }
         const requestTimings: RequestTiming[] = []
         const loopStartedAt = Date.now()
         let currentUsageProviderId = agentProviderConfig.providerId ?? null
@@ -1700,7 +1752,7 @@ export function useChatActions(): {
 
         try {
           const messages = useChatStore.getState().getSessionMessages(sessionId)
-          let messagesToSend = messages.slice(0, -1) // Exclude the empty assistant placeholder
+          let messagesToSend = existingAssistantMessage ? messages : messages.slice(0, -1) // Exclude the empty assistant placeholder
 
           // Build and inject dynamic context into the last user message
           const sessionSnapshot = useChatStore.getState().sessions.find((s) => s.id === sessionId)
@@ -2083,7 +2135,9 @@ export function useChatActions(): {
                 if (event.usage || event.timing) {
                   useChatStore.getState().updateMessage(sessionId!, assistantMsgId, {
                     usage: { ...accumulatedUsage },
-                    ...(event.providerResponseId ? { providerResponseId: event.providerResponseId } : {})
+                    ...(event.providerResponseId
+                      ? { providerResponseId: event.providerResponseId }
+                      : {})
                   })
                 }
                 if (event.usage) {
@@ -2252,6 +2306,186 @@ export function useChatActions(): {
     resetTeamAutoTrigger()
     abortAllTeammates()
   }, [])
+
+  const continueLastToolExecution = useCallback(async () => {
+    const chatStore = useChatStore.getState()
+    const agentStore = useAgentStore.getState()
+    const sessionId = chatStore.activeSessionId
+    if (!sessionId) return
+    if (hasActiveSessionRun(sessionId)) return
+
+    await chatStore.loadSessionMessages(sessionId)
+    const messages = chatStore.getSessionMessages(sessionId)
+    const tailToolExecution = getTailToolExecutionState(messages)
+    if (!tailToolExecution) return
+
+    const session = chatStore.sessions.find((item) => item.id === sessionId)
+    if (!session) return
+
+    const resumedAssistantMessageId = tailToolExecution.assistantMessageId
+    let handedOffToSendMessage = false
+
+    chatStore.setStreamingMessageId(sessionId, resumedAssistantMessageId)
+    agentStore.setRunning(true)
+
+    try {
+      const toolResultsById = new Map(tailToolExecution.toolResultMap)
+      const pendingToolUses = tailToolExecution.toolUseBlocks.filter(
+        (toolUse) => !toolResultsById.has(toolUse.id)
+      )
+
+      if (pendingToolUses.length > 0) {
+        const abortController = new AbortController()
+        sessionAbortControllers.set(sessionId, abortController)
+        agentStore.setSessionStatus(sessionId, 'running')
+
+        try {
+          for (const toolUse of pendingToolUses) {
+            if (abortController.signal.aborted) return
+
+            const cachedResult = getStoredToolCallResult(sessionId, toolUse.id)
+            if (cachedResult) {
+              toolResultsById.set(toolUse.id, {
+                content: cachedResult.content,
+                isError: cachedResult.isError
+              })
+              continue
+            }
+
+            const pluginChatId = extractPluginChatId(session.externalChatId)
+            const toolCtx: ToolContext = {
+              sessionId,
+              workingFolder: session.workingFolder,
+              sshConnectionId: session.sshConnectionId,
+              signal: abortController.signal,
+              ipc: ipcClient,
+              currentToolUseId: toolUse.id,
+              agentRunId: resumedAssistantMessageId,
+              ...(session.pluginId ? { pluginId: session.pluginId } : {}),
+              ...(pluginChatId ? { pluginChatId } : {}),
+              ...(session.pluginChatType ? { pluginChatType: session.pluginChatType } : {}),
+              ...(session.pluginSenderId ? { pluginSenderId: session.pluginSenderId } : {}),
+              ...(session.pluginSenderName ? { pluginSenderName: session.pluginSenderName } : {}),
+              sharedState: {}
+            }
+
+            const requiresApproval = toolRegistry.checkRequiresApproval(
+              toolUse.name,
+              toolUse.input,
+              toolCtx
+            )
+
+            if (requiresApproval) {
+              agentStore.addToolCall({
+                id: toolUse.id,
+                name: toolUse.name,
+                input: toolUse.input,
+                status: 'pending_approval',
+                requiresApproval: true
+              })
+
+              const approved = await agentStore.requestApproval(toolUse.id)
+              if (approved) {
+                agentStore.addApprovedTool(toolUse.name)
+              } else {
+                const deniedOutput = encodeToolError('User denied permission')
+                agentStore.updateToolCall(toolUse.id, {
+                  status: 'error',
+                  output: deniedOutput,
+                  error: 'User denied permission',
+                  completedAt: Date.now()
+                })
+                toolResultsById.set(toolUse.id, { content: deniedOutput, isError: true })
+                continue
+              }
+            }
+
+            const startedAt = Date.now()
+            agentStore.addToolCall({
+              id: toolUse.id,
+              name: toolUse.name,
+              input: toolUse.input,
+              status: 'running',
+              requiresApproval,
+              startedAt
+            })
+
+            const output = await toolRegistry.execute(toolUse.name, toolUse.input, toolCtx)
+            const isError = typeof output === 'string' && isStructuredToolErrorText(output)
+            const errorMessage = extractToolErrorMessage(output)
+
+            agentStore.updateToolCall(toolUse.id, {
+              status: isError ? 'error' : 'completed',
+              output,
+              ...(errorMessage ? { error: errorMessage } : {}),
+              completedAt: Date.now()
+            })
+
+            if (
+              resumedAssistantMessageId &&
+              (toolUse.name === 'Write' || toolUse.name === 'Edit')
+            ) {
+              void agentStore.refreshRunChanges(resumedAssistantMessageId)
+            }
+
+            toolResultsById.set(toolUse.id, { content: output, isError })
+          }
+        } finally {
+          const activeController = sessionAbortControllers.get(sessionId)
+          if (activeController === abortController) {
+            sessionAbortControllers.delete(sessionId)
+          }
+          agentStore.setSessionStatus(sessionId, null)
+        }
+      }
+
+      const consolidatedToolResults = tailToolExecution.toolUseBlocks.map((toolUse) => {
+        const existingResult = toolResultsById.get(toolUse.id)
+        if (existingResult) {
+          return {
+            type: 'tool_result' as const,
+            toolUseId: toolUse.id,
+            content: existingResult.content,
+            ...(existingResult.isError ? { isError: true } : {})
+          }
+        }
+
+        const fallbackOutput = encodeToolError('Tool continuation failed')
+        return {
+          type: 'tool_result' as const,
+          toolUseId: toolUse.id,
+          content: fallbackOutput,
+          isError: true
+        }
+      })
+
+      const nextMessages: UnifiedMessage[] = [
+        ...messages.slice(0, tailToolExecution.assistantIndex + 1),
+        {
+          id: nanoid(),
+          role: 'user',
+          content: consolidatedToolResults,
+          createdAt: Date.now()
+        }
+      ]
+
+      chatStore.replaceSessionMessages(sessionId, nextMessages)
+      handedOffToSendMessage = true
+      await sendMessage('', undefined, 'continue', sessionId, undefined, resumedAssistantMessageId)
+    } finally {
+      if (!handedOffToSendMessage) {
+        if (useChatStore.getState().streamingMessages[sessionId] === resumedAssistantMessageId) {
+          useChatStore.getState().setStreamingMessageId(sessionId, null)
+        }
+        const hasOtherRunning = Object.values(useAgentStore.getState().runningSessions).some(
+          (status) => status === 'running'
+        )
+        if (!hasOtherRunning) {
+          useAgentStore.getState().setRunning(false)
+        }
+      }
+    }
+  }, [sendMessage])
 
   const retryLastMessage = useCallback(async () => {
     stopStreaming()
@@ -2455,6 +2689,7 @@ export function useChatActions(): {
   return {
     sendMessage,
     stopStreaming,
+    continueLastToolExecution,
     retryLastMessage,
     editAndResend,
     deleteMessage,

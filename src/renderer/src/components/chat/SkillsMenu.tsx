@@ -60,10 +60,7 @@ export function SkillsMenu({
   const loadChannels = useChannelStore((s) => s.loadChannels)
   const loadProviders = useChannelStore((s) => s.loadProviders)
   const configuredChannels = React.useMemo(
-    () =>
-      channels.filter(
-        (p) => p.enabled && (!projectId ? true : p.projectId === projectId)
-      ),
+    () => channels.filter((p) => p.enabled && (!projectId ? true : p.projectId === projectId)),
     [channels, projectId]
   )
   const openSettingsPage = useUIStore((s) => s.openSettingsPage)
@@ -74,12 +71,16 @@ export function SkillsMenu({
   const activeMcpIds = activeMcpIdsByProject[projectId ?? '__global__'] ?? []
   const toggleActiveMcp = useMcpStore((s) => s.toggleActiveMcp)
   const loadMcpServers = useMcpStore((s) => s.loadServers)
+  const refreshAllMcpServers = useMcpStore((s) => s.refreshAllServers)
   const mcpStatuses = useMcpStore((s) => s.serverStatuses)
   const mcpTools = useMcpStore((s) => s.serverTools)
   const connectedMcpServers = React.useMemo(
     () =>
       mcpServers.filter(
-        (s) => s.enabled && mcpStatuses[s.id] === 'connected' && (!projectId ? true : s.projectId === projectId)
+        (s) =>
+          s.enabled &&
+          mcpStatuses[s.id] === 'connected' &&
+          (!projectId ? true : !s.projectId || s.projectId === projectId)
       ),
     [mcpServers, mcpStatuses, projectId]
   )
@@ -92,6 +93,7 @@ export function SkillsMenu({
     loadProviders()
     loadChannels()
     loadMcpServers()
+    refreshAllMcpServers()
 
     let cancelled = false
     setCommandsLoading(true)
@@ -108,7 +110,7 @@ export function SkillsMenu({
     return () => {
       cancelled = true
     }
-  }, [open, loadSkills, loadChannels, loadProviders, loadMcpServers])
+  }, [open, loadSkills, loadChannels, loadProviders, loadMcpServers, refreshAllMcpServers])
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>

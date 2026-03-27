@@ -5,7 +5,8 @@ const ICON_BASE = 'https://unpkg.com/@lobehub/icons-static-png@1.83.0'
 
 const iconUrlMap: Record<string, string> = {
   'routin-ai': 'https://routin.ai/icons/favicon.ico',
-  'routin-ai-plan': 'https://routin.ai/icons/favicon.ico'
+  'routin-ai-plan': 'https://routin.ai/icons/favicon.ico',
+  'copilot-oauth': 'https://github.githubassets.com/favicons/favicon.png'
 }
 
 const providerIconSlugMap: Record<string, string> = {
@@ -27,6 +28,7 @@ const providerIconSlugMap: Record<string, string> = {
   siliconflow: 'siliconcloud',
   'gitee-ai': 'giteeai',
   'codex-oauth': 'openai',
+  'copilot-oauth': 'github',
   xiaomi: 'xiaomimimo',
   'bigmodel-coding': 'chatglm',
   bigmodel: 'chatglm'

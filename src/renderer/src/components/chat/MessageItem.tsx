@@ -18,8 +18,10 @@ interface MessageItemProps {
   isStreaming?: boolean
   isLastUserMessage?: boolean
   isLastAssistantMessage?: boolean
+  showContinue?: boolean
   disableAnimation?: boolean
   onRetryAssistantMessage?: () => void
+  onContinueAssistantMessage?: () => void
   onEditUserMessage?: (messageId: string, draft: EditableUserMessageDraft) => void
   onDeleteMessage?: (messageId: string) => void
   toolResults?: Map<string, { content: ToolResultContent; isError?: boolean }>
@@ -112,8 +114,10 @@ function MessageItemInner({
   isStreaming,
   isLastUserMessage,
   isLastAssistantMessage,
+  showContinue,
   disableAnimation,
   onRetryAssistantMessage,
+  onContinueAssistantMessage,
   onEditUserMessage,
   onDeleteMessage,
   toolResults,
@@ -158,7 +162,9 @@ function MessageItemInner({
             toolResults={toolResults}
             msgId={message.id}
             showRetry={isLastAssistantMessage}
+            showContinue={showContinue && isLastAssistantMessage}
             onRetry={onRetryAssistantMessage}
+            onContinue={onContinueAssistantMessage}
             onDelete={onDeleteMessage}
             liveToolCallMap={liveToolCallMap}
             renderMode={renderMode}
@@ -223,8 +229,10 @@ function areEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
     prev.isStreaming === next.isStreaming &&
     prev.isLastUserMessage === next.isLastUserMessage &&
     prev.isLastAssistantMessage === next.isLastAssistantMessage &&
+    prev.showContinue === next.showContinue &&
     prev.disableAnimation === next.disableAnimation &&
     prev.onRetryAssistantMessage === next.onRetryAssistantMessage &&
+    prev.onContinueAssistantMessage === next.onContinueAssistantMessage &&
     prev.onEditUserMessage === next.onEditUserMessage &&
     prev.onDeleteMessage === next.onDeleteMessage &&
     prev.message.role === next.message.role &&

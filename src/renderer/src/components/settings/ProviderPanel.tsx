@@ -47,7 +47,12 @@ import {
   modelSupportsVision,
   normalizeProviderBaseUrl
 } from '@renderer/stores/provider-store'
-import { useQuotaStore, type CodexQuota, type CodexQuotaWindow } from '@renderer/stores/quota-store'
+import {
+  useQuotaStore,
+  type CodexQuota,
+  type CodexQuotaWindow,
+  type CopilotQuota
+} from '@renderer/stores/quota-store'
 import {
   startProviderOAuth,
   disconnectProviderOAuth,
@@ -59,6 +64,8 @@ import {
   refreshProviderChannelUserInfo,
   clearProviderChannelAuth
 } from '@renderer/lib/auth/provider-auth'
+import type { OAuthDeviceCodeInfo } from '@renderer/lib/auth/oauth'
+import { clearCopilotQuota, exchangeCopilotToken } from '@renderer/lib/auth/copilot'
 import type {
   ProviderType,
   AIModelConfig,
@@ -69,6 +76,7 @@ import type {
 } from '@renderer/lib/api/types'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip'
 import { ipcStreamRequest } from '@renderer/lib/ipc/api-stream'
+import { ipcClient } from '@renderer/lib/ipc/ipc-client'
 import { loadPrompt } from '@renderer/lib/prompts/prompt-loader'
 import { ProviderIcon, ModelIcon } from './provider-icons'
 import {
@@ -153,6 +161,11 @@ async function fetchModelsFromProvider(
     }
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
     if (userAgent) headers['User-Agent'] = userAgent
+    if (builtinId === 'copilot-oauth') {
+      headers['Copilot-Integration-Id'] = 'vscode-chat'
+      headers['editor-version'] = 'vscode/1.105.0'
+      headers['editor-plugin-version'] = 'copilot-chat/0.26.7'
+    }
     const result = await window.electron.ipcRenderer.invoke('api:request', {
       url,
       method: 'GET',
@@ -309,6 +322,10 @@ function ModelFormDialog({
     initial?.cacheCreationPrice?.toString() ?? ''
   )
   const [cacheHitPrice, setCacheHitPrice] = useState(initial?.cacheHitPrice?.toString() ?? '')
+  const [premiumRequestMultiplier, setPremiumRequestMultiplier] = useState(
+    initial?.premiumRequestMultiplier?.toString() ?? ''
+  )
+  const [availablePlans, setAvailablePlans] = useState(initial?.availablePlans?.join(', ') ?? '')
   const [supportsVision, setSupportsVision] = useState(initial?.supportsVision ?? false)
   const [supportsFunctionCall, setSupportsFunctionCall] = useState(
     initial?.supportsFunctionCall ?? true
@@ -364,6 +381,15 @@ function ModelFormDialog({
       const v = parseFloat(cacheHitPrice)
       if (!isNaN(v)) model.cacheHitPrice = v
     }
+    if (premiumRequestMultiplier.trim()) {
+      const v = parseFloat(premiumRequestMultiplier)
+      if (!isNaN(v)) model.premiumRequestMultiplier = v
+    }
+    const parsedPlans = availablePlans
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+    if (parsedPlans.length > 0) model.availablePlans = parsedPlans
     model.supportsVision = supportsVision
     if (!supportsFunctionCall) model.supportsFunctionCall = false
     model.supportsComputerUse = supportsComputerUse
@@ -577,6 +603,30 @@ function ModelFormDialog({
                 />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <div className="space-y-1">
+                <p className="text-[11px] text-muted-foreground">
+                  {t('provider.premiumRequestMultiplier')}
+                </p>
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="1"
+                  value={premiumRequestMultiplier}
+                  onChange={(e) => setPremiumRequestMultiplier(e.target.value)}
+                  className="text-xs"
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[11px] text-muted-foreground">{t('provider.availablePlans')}</p>
+                <Input
+                  placeholder="pro, pro+, business"
+                  value={availablePlans}
+                  onChange={(e) => setAvailablePlans(e.target.value)}
+                  className="text-xs"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Icon */}
@@ -736,6 +786,8 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
   const isOAuthAuth = authMode === 'oauth'
   const isChannelAuth = authMode === 'channel'
   const isCodexProvider = provider.builtinId === 'codex-oauth'
+  const isCopilotProvider = provider.builtinId === 'copilot-oauth'
+  const supportsManualOAuth = isCodexProvider || isCopilotProvider
 
   const [showKey, setShowKey] = useState(false)
   const [showChannelToken, setShowChannelToken] = useState(false)
@@ -762,6 +814,7 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
     provider.models.find((m) => m.enabled)?.id ?? provider.models[0]?.id ?? ''
   )
   const [oauthLoginTab, setOauthLoginTab] = useState<'connect' | 'manual'>('connect')
+  const [oauthDeviceInfo, setOauthDeviceInfo] = useState<OAuthDeviceCodeInfo | null>(null)
   const [fetchingQuota, setFetchingQuota] = useState(false)
   const builtinPreset = useMemo(
     () =>
@@ -773,13 +826,22 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
   const oauthAbortRef = useRef<AbortController | null>(null)
   const codexQuota = useMemo(() => {
     if (!isCodexProvider) return null
-    return (
+    const quota =
       quotaByKey[provider.id] ||
       (provider.builtinId ? quotaByKey[provider.builtinId] : undefined) ||
       quotaByKey['codex'] ||
       null
-    )
+    return quota?.type === 'codex' ? quota : null
   }, [isCodexProvider, provider.id, provider.builtinId, quotaByKey])
+  const copilotQuota = useMemo(() => {
+    if (!isCopilotProvider) return null
+    const quota =
+      quotaByKey[provider.id] ||
+      (provider.builtinId ? quotaByKey[provider.builtinId] : undefined) ||
+      quotaByKey['copilot'] ||
+      null
+    return quota?.type === 'copilot' ? (quota as CopilotQuota) : null
+  }, [isCopilotProvider, provider.id, provider.builtinId, quotaByKey])
   const formatPercent = (value?: number): string | null => {
     if (value === undefined || Number.isNaN(value)) return null
     const rounded = Math.round(value * 10) / 10
@@ -912,16 +974,17 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
     setChannelCode('')
     setManualOAuthJson('')
     setManualOAuthError('')
+    setOauthDeviceInfo(null)
+    setOauthLoginTab('connect')
   }, [provider.id, provider.channel?.channelType, provider.channelConfig?.defaultChannelType])
 
   const oauthConfig = provider.oauthConfig ?? { authorizeUrl: '', tokenUrl: '', clientId: '' }
   const oauthClientIdLocked = oauthConfig.clientIdLocked === true
   const hideOAuthSettings = provider.ui?.hideOAuthSettings === true
-  const oauthConfigReady = !!(
-    oauthConfig.authorizeUrl &&
-    oauthConfig.tokenUrl &&
-    oauthConfig.clientId
-  )
+  const oauthConfigReady =
+    oauthConfig.flowType === 'device_code'
+      ? !!(oauthConfig.deviceCodeUrl && oauthConfig.tokenUrl && oauthConfig.clientId)
+      : !!(oauthConfig.authorizeUrl && oauthConfig.tokenUrl && oauthConfig.clientId)
   const channelRequiresAppToken = provider.channelConfig?.requiresAppToken !== false
   const channelAppIdLocked = provider.channelConfig?.appIdLocked === true
   const channelAppIdValue = channelAppIdLocked
@@ -1010,9 +1073,18 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
     const controller = new AbortController()
     oauthAbortRef.current?.abort()
     oauthAbortRef.current = controller
+    setOauthDeviceInfo(null)
     setOauthConnecting(true)
     try {
-      await startProviderOAuth(provider.id, controller.signal)
+      if (isCopilotProvider) {
+        await startProviderOAuth(provider.id, {
+          signal: controller.signal,
+          onDeviceCode: (info) => setOauthDeviceInfo(info)
+        })
+      } else {
+        await startProviderOAuth(provider.id, controller.signal)
+      }
+      setOauthDeviceInfo(null)
       toast.success(t('provider.oauthConnected'))
     } catch (err) {
       if (!isAbortError(err)) {
@@ -1030,6 +1102,7 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
 
   const handleOAuthCancel = (): void => {
     oauthAbortRef.current?.abort()
+    setOauthDeviceInfo(null)
   }
 
   const handleOAuthRefresh = async (): Promise<void> => {
@@ -1052,10 +1125,14 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
 
   const handleOAuthDisconnect = (): void => {
     disconnectProviderOAuth(provider.id)
+    setOauthDeviceInfo(null)
     if (isCodexProvider) {
       clearQuota(provider.id)
       if (provider.builtinId) clearQuota(provider.builtinId)
       clearQuota('codex')
+    }
+    if (isCopilotProvider) {
+      clearCopilotQuota(provider)
     }
     toast.success(t('provider.oauthDisconnected'))
   }
@@ -1068,11 +1145,12 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
     return t('provider.oauthManualApplyFailed')
   }
 
-  const handleManualOAuthApply = (): void => {
+  const handleManualOAuthApply = async (): Promise<void> => {
     setManualOAuthError('')
     try {
-      applyManualProviderOAuth(provider.id, manualOAuthJson)
+      await applyManualProviderOAuth(provider.id, manualOAuthJson)
       setManualOAuthJson('')
+      setOauthDeviceInfo(null)
       toast.success(t('provider.oauthManualApplied'))
     } catch (err) {
       const message = resolveManualOAuthError(err)
@@ -1140,12 +1218,40 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
     toast.success(t('provider.channelDisconnected'))
   }
 
+  const openExternal = async (url: string): Promise<void> => {
+    await ipcClient.invoke('shell:openExternal', url)
+  }
+
+  const invokeApiRequest = async (args: {
+    url: string
+    method: string
+    headers: Record<string, string>
+    body?: string
+    useSystemProxy?: boolean
+  }): Promise<{ statusCode?: number; body?: string; error?: string }> => {
+    return (await ipcClient.invoke('api:request', args)) as {
+      statusCode?: number
+      body?: string
+      error?: string
+    }
+  }
+
   const handleFetchQuota = async (): Promise<void> => {
-    if (!isCodexProvider) return
+    if (!isCodexProvider && !isCopilotProvider) return
     setFetchingQuota(true)
     try {
       const activeProvider = await ensureAuthForRequest()
       if (!activeProvider) return
+
+      if (isCopilotProvider) {
+        if (!activeProvider.oauth?.accessToken) {
+          throw new Error('Missing GitHub OAuth token')
+        }
+        await exchangeCopilotToken(activeProvider, activeProvider.oauth)
+        toast.success(t('provider.quotaFetched'))
+        return
+      }
+
       const model =
         activeProvider.models.find((m) => m.enabled)?.id ??
         activeProvider.models[0]?.id ??
@@ -1159,7 +1265,6 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
       if (activeProvider.oauth?.accessToken) {
         headers['Authorization'] = `Bearer ${activeProvider.oauth.accessToken}`
       }
-      if (activeProvider.userAgent) headers['User-Agent'] = activeProvider.userAgent
       const overrides = activeProvider.requestOverrides?.headers
       if (overrides) {
         const sid = `quota-${Date.now()}`
@@ -1217,12 +1322,22 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
   }
 
   const handleCopyAccountJson = async (): Promise<void> => {
-    let payload: Record<string, string>
+    let payload: Record<string, unknown>
     if (isOAuthAuth && provider.oauth?.accessToken) {
       payload = { access_token: provider.oauth.accessToken }
       if (provider.oauth.refreshToken) payload.refresh_token = provider.oauth.refreshToken
       if (provider.oauth.expiresAt)
         payload.expires_at = new Date(provider.oauth.expiresAt).toISOString()
+      if (provider.oauth.idToken) payload.id_token = provider.oauth.idToken
+      if (provider.oauth.copilotAccessToken)
+        payload.copilot_access_token = provider.oauth.copilotAccessToken
+      if (provider.oauth.copilotExpiresAt)
+        payload.copilot_expires_at = new Date(provider.oauth.copilotExpiresAt).toISOString()
+      if (provider.oauth.copilotApiUrl) payload.copilot_api_url = provider.oauth.copilotApiUrl
+      if (provider.oauth.copilotSku) payload.sku = provider.oauth.copilotSku
+      if (provider.oauth.copilotTelemetry) payload.telemetry = provider.oauth.copilotTelemetry
+      if (provider.oauth.copilotChatEnabled !== undefined)
+        payload.chat_enabled = provider.oauth.copilotChatEnabled
     } else if (isChannelAuth && provider.channel?.accessToken) {
       payload = { access_token: provider.channel.accessToken }
     } else {
@@ -1253,16 +1368,30 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
         requestType
       )
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      const applyHeaderOverrides = (modelId: string): void => {
+        const overrides = activeProvider.requestOverrides?.headers
+        if (!overrides) return
+        const sid = `test-${Date.now()}`
+        for (const [key, raw] of Object.entries(overrides)) {
+          const val = String(raw)
+            .replace(/\{\{\s*sessionId\s*\}\}/g, sid)
+            .replace(/\{\{\s*model\s*\}\}/g, modelId)
+            .trim()
+          if (val) headers[key] = val
+        }
+      }
       let url: string
       let body: string
       if (isAnthropic) {
         url = `${baseUrl}/v1/messages`
         headers['x-api-key'] = activeProvider.apiKey
         headers['anthropic-version'] = '2023-06-01'
+        applyHeaderOverrides(model)
         body = JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] })
       } else if (isResponses) {
         url = `${baseUrl}/responses`
         if (activeProvider.apiKey) headers['Authorization'] = `Bearer ${activeProvider.apiKey}`
+        applyHeaderOverrides(model)
         const bodyObj: Record<string, unknown> = {
           model,
           input: [{ type: 'message', role: 'user', content: 'Hi' }],
@@ -1277,9 +1406,15 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
       } else {
         url = `${baseUrl}/chat/completions`
         if (activeProvider.apiKey) headers['Authorization'] = `Bearer ${activeProvider.apiKey}`
-        body = JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] })
+        applyHeaderOverrides(model)
+        body = JSON.stringify({
+          model,
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'Hi' }],
+          ...(activeProvider.requestOverrides?.body ?? {})
+        })
       }
-      const result = await window.electron.ipcRenderer.invoke('api:request', {
+      const result = await invokeApiRequest({
         url,
         method: 'POST',
         headers,
@@ -1404,9 +1539,7 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
                   variant="ghost"
                   size="sm"
                   className="h-7 gap-1 px-2 text-[11px] text-muted-foreground"
-                  onClick={() =>
-                    void window.electron.ipcRenderer.invoke('shell:openExternal', apiKeyUrl)
-                  }
+                  onClick={() => void openExternal(apiKeyUrl)}
                 >
                   <ExternalLink className="size-3" />
                   {t('provider.getApiKey')}
@@ -1437,7 +1570,7 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
 
         {isOAuthAuth && (
           <section className="space-y-2">
-            {isCodexProvider && (
+            {supportsManualOAuth && (
               <div className="flex gap-1 p-0.5 rounded-md bg-muted/50 w-fit">
                 <button
                   type="button"
@@ -1483,7 +1616,38 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
                 {t('provider.oauthAccount', { account: provider.oauth.accountId })}
               </p>
             )}
-            {(!isCodexProvider || oauthLoginTab === 'connect') && (
+            {isCopilotProvider && oauthConnecting && oauthDeviceInfo && (
+              <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] text-muted-foreground">
+                    {t('provider.oauthVerificationUrl')}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 gap-1 px-1.5 text-[11px]"
+                    onClick={() =>
+                      void openExternal(
+                        oauthDeviceInfo.verificationUriComplete || oauthDeviceInfo.verificationUri
+                      )
+                    }
+                  >
+                    <ExternalLink className="size-3" />
+                    {t('provider.openLink')}
+                  </Button>
+                </div>
+                <div className="text-xs font-mono break-all">{oauthDeviceInfo.verificationUri}</div>
+                <div className="flex items-center justify-between gap-3 pt-1 border-t">
+                  <span className="text-[11px] text-muted-foreground">
+                    {t('provider.oauthDeviceCode')}
+                  </span>
+                  <span className="text-sm font-mono font-semibold tracking-widest">
+                    {oauthDeviceInfo.userCode}
+                  </span>
+                </div>
+              </div>
+            )}
+            {(!supportsManualOAuth || oauthLoginTab === 'connect') && (
               <>
                 <div className="flex flex-wrap items-center gap-2">
                   {!provider.oauth?.accessToken && (
@@ -1550,7 +1714,7 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
           </section>
         )}
 
-        {isOAuthAuth && isCodexProvider && oauthLoginTab === 'manual' && (
+        {isOAuthAuth && supportsManualOAuth && oauthLoginTab === 'manual' && (
           <section className="space-y-2">
             <label className="text-sm font-medium">{t('provider.oauthManualTitle')}</label>
             <p className="text-[11px] text-muted-foreground">{t('provider.oauthManualDesc')}</p>
@@ -1660,6 +1824,107 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
           </section>
         )}
 
+        {isOAuthAuth && isCopilotProvider && (
+          <section className="space-y-4 pt-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium">{t('provider.copilotStatusTitle')}</label>
+                {copilotQuota && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button className="text-muted-foreground hover:text-foreground transition-colors">
+                        <MonitorSmartphone className="size-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="p-3 max-w-xs space-y-2">
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-xs text-muted-foreground">
+                          {t('provider.copilotQuotaSku')}
+                        </span>
+                        <span className="text-xs font-semibold">{copilotQuota.sku || '-'}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 border-t pt-2">
+                        <span className="text-xs text-muted-foreground">
+                          {t('provider.copilotQuotaChat')}
+                        </span>
+                        <span className="text-xs font-semibold">
+                          {copilotQuota.chatEnabled
+                            ? t('provider.copilotChatEnabled')
+                            : t('provider.copilotChatDisabled')}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 border-t pt-2">
+                        <span className="text-xs text-muted-foreground">
+                          {t('provider.copilotQuotaTelemetry')}
+                        </span>
+                        <span className="text-xs font-semibold">
+                          {copilotQuota.telemetry || '-'}
+                        </span>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                disabled={!authReadyForUi || fetchingQuota}
+                onClick={() => void handleFetchQuota()}
+              >
+                {fetchingQuota ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3" />
+                )}
+                {fetchingQuota ? t('provider.fetchingQuota') : t('provider.fetchQuota')}
+              </Button>
+            </div>
+            {copilotQuota ? (
+              <div className="rounded-md border bg-muted/20 px-3 py-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">{t('provider.copilotQuotaSku')}</span>
+                  <span className="font-semibold">{copilotQuota.sku || '-'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">{t('provider.copilotQuotaChat')}</span>
+                  <span className="font-semibold">
+                    {copilotQuota.chatEnabled
+                      ? t('provider.copilotChatEnabled')
+                      : t('provider.copilotChatDisabled')}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">
+                    {t('provider.copilotQuotaTelemetry')}
+                  </span>
+                  <span className="font-semibold">{copilotQuota.telemetry || '-'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">
+                    {t('provider.copilotQuotaTokenExpires')}
+                  </span>
+                  <span className="font-semibold">
+                    {copilotQuota.tokenExpiresAt
+                      ? new Date(copilotQuota.tokenExpiresAt).toLocaleString()
+                      : '-'}
+                  </span>
+                </div>
+                <div className="space-y-1 pt-1 border-t">
+                  <div className="text-muted-foreground">{t('provider.copilotQuotaApiBase')}</div>
+                  <div className="font-mono break-all text-[11px]">
+                    {copilotQuota.apiBaseUrl || '-'}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">
+                {t('provider.codexQuotaUnavailable')}
+              </p>
+            )}
+          </section>
+        )}
+
         {isOAuthAuth && !hideOAuthSettings && (
           <section className="space-y-2 mt-4">
             <label className="text-sm font-medium">{t('provider.oauthSettings')}</label>
@@ -1706,42 +1971,100 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
                   className="text-xs"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium">{t('provider.oauthRedirectPath')}</label>
-                  <Input
-                    placeholder="/auth/callback"
-                    value={oauthConfig.redirectPath ?? ''}
-                    onChange={(e) =>
-                      updateOAuthConfig({ redirectPath: e.target.value || undefined })
-                    }
-                    className="text-xs"
+              {isCopilotProvider && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium">{t('provider.oauthHost')}</label>
+                      <Input
+                        placeholder="https://github.com"
+                        value={oauthConfig.host ?? ''}
+                        onChange={(e) => updateOAuthConfig({ host: e.target.value || undefined })}
+                        className="text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium">{t('provider.oauthApiHost')}</label>
+                      <Input
+                        placeholder="https://api.github.com"
+                        value={oauthConfig.apiHost ?? ''}
+                        onChange={(e) =>
+                          updateOAuthConfig({ apiHost: e.target.value || undefined })
+                        }
+                        className="text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium">
+                      {t('provider.oauthDeviceCodeUrl')}
+                    </label>
+                    <Input
+                      placeholder="https://github.com/login/device/code"
+                      value={oauthConfig.deviceCodeUrl ?? ''}
+                      onChange={(e) =>
+                        updateOAuthConfig({ deviceCodeUrl: e.target.value || undefined })
+                      }
+                      className="text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium">
+                      {t('provider.oauthTokenExchangeUrl')}
+                    </label>
+                    <Input
+                      placeholder="https://api.github.com/copilot_internal/v2/token"
+                      value={oauthConfig.tokenExchangeUrl ?? ''}
+                      onChange={(e) =>
+                        updateOAuthConfig({ tokenExchangeUrl: e.target.value || undefined })
+                      }
+                      className="text-xs"
+                    />
+                  </div>
+                </>
+              )}
+              {oauthConfig.flowType !== 'device_code' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium">{t('provider.oauthRedirectPath')}</label>
+                    <Input
+                      placeholder="/auth/callback"
+                      value={oauthConfig.redirectPath ?? ''}
+                      onChange={(e) =>
+                        updateOAuthConfig({ redirectPath: e.target.value || undefined })
+                      }
+                      className="text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium">{t('provider.oauthRedirectPort')}</label>
+                    <Input
+                      type="number"
+                      placeholder="0"
+                      value={oauthConfig.redirectPort?.toString() ?? ''}
+                      onChange={(e) => {
+                        const value = e.target.value.trim()
+                        const nextPort = value ? Number(value) : undefined
+                        updateOAuthConfig({
+                          redirectPort: Number.isFinite(nextPort) ? nextPort : undefined
+                        })
+                      }}
+                      className="text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+              {oauthConfig.flowType !== 'device_code' && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">
+                    {t('provider.oauthUsePkce')}
+                  </span>
+                  <Switch
+                    checked={oauthConfig.usePkce !== false}
+                    onCheckedChange={(checked) => updateOAuthConfig({ usePkce: checked })}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium">{t('provider.oauthRedirectPort')}</label>
-                  <Input
-                    type="number"
-                    placeholder="0"
-                    value={oauthConfig.redirectPort?.toString() ?? ''}
-                    onChange={(e) => {
-                      const value = e.target.value.trim()
-                      const nextPort = value ? Number(value) : undefined
-                      updateOAuthConfig({
-                        redirectPort: Number.isFinite(nextPort) ? nextPort : undefined
-                      })
-                    }}
-                    className="text-xs"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">{t('provider.oauthUsePkce')}</span>
-                <Switch
-                  checked={oauthConfig.usePkce !== false}
-                  onCheckedChange={(checked) => updateOAuthConfig({ usePkce: checked })}
-                />
-              </div>
+              )}
             </div>
           </section>
         )}
@@ -1791,7 +2114,7 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
               {channelRequiresAppToken ? (
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium">{t('provider.channelAppToken')}</label>
-                  <div className="relative">
+                  <div className="relative w-full sm:w-auto">
                     <Input
                       type={showChannelToken ? 'text' : 'password'}
                       placeholder={t('provider.channelAppTokenPlaceholder')}
@@ -2012,9 +2335,9 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
         <Separator className="my-5" />
 
         {/* Models */}
-        <section className="flex min-h-0 flex-1 flex-col space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
+        <section className="flex flex-col space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
               <label className="text-sm font-medium">{t('provider.modelList')}</label>
               <p className="text-[11px] text-muted-foreground">
                 {t('provider.modelCount', {
@@ -2023,7 +2346,7 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
                 })}
               </p>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
               {provider.models.length > 0 && (
                 <>
                   <Button
@@ -2044,13 +2367,13 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
                   >
                     {t('provider.disableAllModels')}
                   </Button>
-                  <div className="relative">
+                  <div className="relative basis-full sm:basis-auto">
                     <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground" />
                     <Input
                       placeholder={t('provider.searchModels')}
                       value={modelSearch}
                       onChange={(e) => setModelSearch(e.target.value)}
-                      className="h-7 w-32 pl-7 text-[11px]"
+                      className="h-7 w-full sm:w-32 pl-7 text-[11px]"
                     />
                   </div>
                 </>
@@ -2080,7 +2403,7 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
             </div>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col rounded-lg border overflow-hidden">
+          <div className="flex min-h-[240px] max-h-[420px] flex-col rounded-lg border overflow-hidden">
             {filteredModels.length === 0 ? (
               <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-muted-foreground">
                 {provider.models.length === 0
@@ -2183,6 +2506,17 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
                                 ? ' / '
                                 : ''}
                               {model.cacheHitPrice != null ? `读 $${model.cacheHitPrice}` : ''}
+                            </span>
+                          )}
+                          {(model.premiumRequestMultiplier != null ||
+                            model.availablePlans?.length) && (
+                            <span className="text-sky-500/70">
+                              {model.premiumRequestMultiplier != null
+                                ? `${model.premiumRequestMultiplier}x premium`
+                                : t('provider.availablePlans')}
+                              {model.availablePlans?.length
+                                ? ` · ${model.availablePlans.join('/')}`
+                                : ''}
                             </span>
                           )}
                           {capabilityIndicators.length > 0 && (

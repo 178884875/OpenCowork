@@ -1022,7 +1022,7 @@ export function ChannelPanel({ projectId }: ChannelPanelProps = {}): React.JSX.E
 
   const projectScopedChannels = useMemo(() => {
     if (!projectId) return channels
-    return channels.filter((channel) => !channel.projectId || channel.projectId === projectId)
+    return channels.filter((channel) => channel.projectId === projectId)
   }, [channels, projectId])
 
   const filteredChannels = useMemo(() => {

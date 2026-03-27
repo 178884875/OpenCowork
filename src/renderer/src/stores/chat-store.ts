@@ -27,6 +27,9 @@ export interface SessionPromptSnapshot {
   planMode: boolean
   systemPrompt: string
   toolDefs: ToolDefinition[]
+  projectId?: string
+  workingFolder?: string
+  sshConnectionId?: string | null
 }
 
 export interface Project {

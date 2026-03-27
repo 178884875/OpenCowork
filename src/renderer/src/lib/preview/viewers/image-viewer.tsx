@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { ZoomIn, ZoomOut, RotateCw, Maximize2, ImageOff } from 'lucide-react'
+import { ZoomIn, ZoomOut, RotateCw, Maximize2, ImageOff, Copy, Check, Loader2 } from 'lucide-react'
 import { Button } from '@renderer/components/ui/button'
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
 import { IPC } from '@renderer/lib/ipc/channels'
@@ -21,15 +21,56 @@ function getMimeType(filePath: string): string {
   return MIME_TYPES[ext] || 'application/octet-stream'
 }
 
+function clampScale(scale: number): number {
+  return Math.min(Math.max(scale, 0.25), 5)
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error('Failed to read image data'))
+        return
+      }
+      const base64 = reader.result.split(',')[1]
+      if (!base64) {
+        reject(new Error('Failed to encode image data'))
+        return
+      }
+      resolve(base64)
+    }
+    reader.onerror = () => {
+      reject(reader.error ?? new Error('Failed to read image data'))
+    }
+    reader.readAsDataURL(blob)
+  })
+}
+
 export function ImageViewer({ filePath, sshConnectionId }: ViewerProps): React.JSX.Element {
   const [scale, setScale] = React.useState(1)
   const [rotation, setRotation] = React.useState(0)
+  const [offset, setOffset] = React.useState({ x: 0, y: 0 })
   const [src, setSrc] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  const [isPanning, setIsPanning] = React.useState(false)
+  const [isCopying, setIsCopying] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
+  const imageRef = React.useRef<HTMLImageElement | null>(null)
+  const panStartRef = React.useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null)
+  const copiedTimerRef = React.useRef<number | null>(null)
 
   React.useEffect(() => {
     let cancelled = false
     let objectUrl: string | null = null
+
+    setSrc(null)
+    setError(null)
+    setScale(1)
+    setRotation(0)
+    setOffset({ x: 0, y: 0 })
+    setIsPanning(false)
+    setCopied(false)
 
     const channel = sshConnectionId ? IPC.SSH_FS_READ_FILE_BINARY : IPC.FS_READ_FILE_BINARY
     const args = sshConnectionId
@@ -60,12 +101,112 @@ export function ImageViewer({ filePath, sshConnectionId }: ViewerProps): React.J
     }
   }, [filePath, sshConnectionId])
 
-  const zoomIn = () => setScale((s) => Math.min(s + 0.25, 5))
-  const zoomOut = () => setScale((s) => Math.max(s - 0.25, 0.25))
-  const rotate = () => setRotation((r) => (r + 90) % 360)
+  React.useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) {
+        window.clearTimeout(copiedTimerRef.current)
+      }
+    }
+  }, [])
+
+  React.useEffect(() => {
+    if (!isPanning) return
+
+    const handleMouseMove = (event: MouseEvent): void => {
+      const panStart = panStartRef.current
+      if (!panStart) return
+      setOffset({
+        x: panStart.offsetX + event.clientX - panStart.x,
+        y: panStart.offsetY + event.clientY - panStart.y
+      })
+    }
+
+    const handleMouseUp = (): void => {
+      panStartRef.current = null
+      setIsPanning(false)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isPanning])
+
+  const zoomIn = () => setScale((current) => clampScale(current + 0.25))
+  const zoomOut = () => setScale((current) => clampScale(current - 0.25))
+  const rotate = () => setRotation((current) => (current + 90) % 360)
   const resetView = () => {
     setScale(1)
     setRotation(0)
+    setOffset({ x: 0, y: 0 })
+  }
+
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    const delta = event.deltaY < 0 ? 0.1 : -0.1
+    setScale((current) => clampScale(Number((current + delta).toFixed(2))))
+  }
+
+  const handleMouseDown = (event: React.MouseEvent<HTMLDivElement>): void => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    panStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      offsetX: offset.x,
+      offsetY: offset.y
+    }
+    setIsPanning(true)
+  }
+
+  const handleCopyImage = async (): Promise<void> => {
+    if (!imageRef.current || isCopying) return
+
+    try {
+      setIsCopying(true)
+      const width = imageRef.current.naturalWidth || imageRef.current.width
+      const height = imageRef.current.naturalHeight || imageRef.current.height
+      if (!width || !height) throw new Error('Image is not ready')
+
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('Canvas context unavailable')
+
+      context.drawImage(imageRef.current, 0, 0, width, height)
+
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((value) => {
+          if (value) {
+            resolve(value)
+            return
+          }
+          reject(new Error('Failed to export image'))
+        }, 'image/png')
+      })
+
+      const result = await window.api.writeImageToClipboard({
+        data: await blobToBase64(blob)
+      })
+      if (result.error) throw new Error(result.error)
+
+      setCopied(true)
+      if (copiedTimerRef.current) {
+        window.clearTimeout(copiedTimerRef.current)
+      }
+      copiedTimerRef.current = window.setTimeout(() => {
+        setCopied(false)
+      }, 1500)
+    } catch (err) {
+      console.error('[ImageViewer] Copy image failed:', err)
+    } finally {
+      setIsCopying(false)
+    }
   }
 
   if (error) {
@@ -92,7 +233,7 @@ export function ImageViewer({ filePath, sshConnectionId }: ViewerProps): React.J
         <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-[10px]" onClick={zoomOut}>
           <ZoomOut className="size-3" />
         </Button>
-        <span className="text-[10px] text-muted-foreground min-w-[3rem] text-center">
+        <span className="min-w-[3rem] text-center text-[10px] text-muted-foreground">
           {Math.round(scale * 100)}%
         </span>
         <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-[10px]" onClick={zoomIn}>
@@ -109,23 +250,51 @@ export function ImageViewer({ filePath, sshConnectionId }: ViewerProps): React.J
         >
           <Maximize2 className="size-3" />
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 gap-1 px-2 text-[10px]"
+          onClick={handleCopyImage}
+          disabled={isCopying}
+          title={copied ? 'Copied' : 'Copy image to clipboard'}
+          aria-label={copied ? 'Copied' : 'Copy image to clipboard'}
+        >
+          {isCopying ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : copied ? (
+            <Check className="size-3 text-green-500" />
+          ) : (
+            <Copy className="size-3" />
+          )}
+        </Button>
         <div className="flex-1" />
-        <span className="text-[10px] text-muted-foreground/50 truncate">
+        <span className="truncate text-[10px] text-muted-foreground/50">
           {filePath.split(/[\\/]/).pop()}
         </span>
       </div>
 
       {/* Image display */}
-      <div className="flex-1 overflow-auto flex items-center justify-center bg-[repeating-conic-gradient(hsl(var(--muted))_0%_25%,transparent_0%_50%)] bg-[length:16px_16px]">
-        <img
-          src={src}
-          alt={filePath.split(/[\\/]/).pop() || ''}
-          className="max-w-none transition-transform duration-200"
-          style={{
-            transform: `scale(${scale}) rotate(${rotation}deg)`
-          }}
-          draggable={false}
-        />
+      <div
+        className="flex flex-1 items-center justify-center overflow-hidden bg-[repeating-conic-gradient(hsl(var(--muted))_0%_25%,transparent_0%_50%)] bg-[length:16px_16px] select-none"
+        onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+      >
+        <div
+          className="flex items-center justify-center"
+          style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
+        >
+          <img
+            ref={imageRef}
+            src={src}
+            alt={filePath.split(/[\\/]/).pop() || ''}
+            className="max-w-none transition-transform duration-200 will-change-transform"
+            style={{
+              transform: `scale(${scale}) rotate(${rotation}deg)`
+            }}
+            draggable={false}
+          />
+        </div>
       </div>
     </div>
   )

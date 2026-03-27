@@ -360,7 +360,7 @@
     "startConversation": "Start a conversation",
     "startConversationDesc": "Ask anything — no tools, just chat.",
     "startClarify": "Start clarifying",
-    "startClarifyDesc": "Interrogate the goal, constraints, risks, and gaps before planning. Read-only mode with no file edits or commands.",
+    "startClarifyDesc": "Interrogate the goal, constraints, risks, and gaps before planning. It defaults to clarification-first behavior, but permissions match Code mode.",
     "startCowork": "Start a Cowork session",
     "startCoworkDesc": "Select a working folder, then ask the assistant to help with your project.",
     "startCoding": "Start coding",
@@ -462,6 +462,8 @@
     "ttft": "TTFT",
     "tps": "TPS",
     "regenerateReference": "Regenerate reference",
+    "continueToolExecution": "Continue execution",
+    "continueToolExecutionHint": "The last run stopped during tool execution. Click to continue in this same message without creating a new AI message.",
     "imageError": {
       "titleTimeout": "Image generation timed out",
       "descTimeout": "The request exceeded 10 minutes. Try simplifying the prompt, reducing image complexity, or retrying.",

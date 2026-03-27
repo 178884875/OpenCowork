@@ -118,7 +118,7 @@ function SubAgentCardInner({
   return (
     <div
       className={cn(
-        'my-4 overflow-hidden rounded-2xl border bg-background/60 p-4 transition-colors',
+        'my-2 overflow-hidden rounded-xl border bg-background/60 p-3 transition-colors',
         isRunning && 'border-violet-500/25 bg-violet-500/[0.03]',
         isCompleted && !isError && 'border-border/60',
         isError && 'border-destructive/30 bg-destructive/5',
@@ -128,7 +128,7 @@ function SubAgentCardInner({
       <div className="flex items-start gap-3">
         <div
           className={cn(
-            'mt-0.5 flex size-10 items-center justify-center rounded-2xl border border-border/60 bg-muted/25',
+            'mt-0.5 flex size-8 items-center justify-center rounded-xl border border-border/60 bg-muted/25',
             isRunning ? 'text-violet-500' : 'text-foreground/80'
           )}
         >
@@ -143,7 +143,7 @@ function SubAgentCardInner({
             <Badge
               variant={isRunning ? 'default' : isError ? 'destructive' : 'secondary'}
               className={cn(
-                'h-5 rounded-full px-2 text-[10px] font-medium',
+                'h-4.5 rounded-full px-1.5 text-[9px] font-medium',
                 isRunning && 'bg-violet-500 animate-pulse'
               )}
             >
@@ -162,7 +162,7 @@ function SubAgentCardInner({
           ) : null}
 
           {promptText ? (
-            <p className="mt-1 line-clamp-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground/75">
+            <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap break-words text-[11px] leading-4.5 text-muted-foreground/75">
               {promptText}
             </p>
           ) : null}
@@ -170,14 +170,14 @@ function SubAgentCardInner({
 
         <button
           onClick={handleOpenPanel}
-          className="rounded-full border border-border/60 p-2 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+          className="rounded-full border border-border/60 p-1.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
           title={t('subAgent.viewDetails')}
         >
           <Maximize2 className="size-3.5" />
         </button>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/60">
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground/60">
         {live || histMeta ? (
           <>
             <span className="rounded-full border border-border/60 bg-background/70 px-2.5 py-1">
@@ -203,12 +203,12 @@ function SubAgentCardInner({
         ) : null}
       </div>
 
-      <div className="mt-3 rounded-2xl border border-border/60 bg-muted/20 px-3 py-3">
+      <div className="mt-2 rounded-xl border border-border/60 bg-muted/20 px-2.5 py-2">
         <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55">
           {isRunning ? <Loader2 className="size-3 animate-spin" /> : <Brain className="size-3" />}
           <span>{isRunning ? t('subAgent.thinking') : t('subAgent.result')}</span>
         </div>
-        <p className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground/88 line-clamp-5">
+        <p className="whitespace-pre-wrap break-words text-[12px] leading-5 text-foreground/88 line-clamp-4">
           {previewText ||
             (isRunning
               ? t('subAgent.exploring', { name: displayName })
@@ -216,7 +216,7 @@ function SubAgentCardInner({
         </p>
       </div>
 
-      <div className="mt-3 flex items-center justify-between gap-3">
+      <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-[11px] text-muted-foreground/55">
           {isRunning
             ? t('subAgent.openInRunsRunning', {

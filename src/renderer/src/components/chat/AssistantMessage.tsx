@@ -20,6 +20,7 @@ import {
   ZoomIn,
   Trash2,
   RotateCcw,
+  Play,
   Ellipsis,
   Languages,
   Volume2,
@@ -97,7 +98,9 @@ interface AssistantMessageProps {
   liveToolCallMap?: Map<string, ToolCallState> | null
   msgId?: string
   showRetry?: boolean
+  showContinue?: boolean
   onRetry?: () => void
+  onContinue?: () => void
   onDelete?: (messageId: string) => void
   renderMode?: AssistantRenderMode
 }
@@ -664,9 +667,10 @@ export function AssistantMessage({
   liveToolCallMap,
   msgId,
   showRetry,
+  showContinue,
   onRetry,
-  onDelete,
-  renderMode = 'default'
+  onContinue,
+  onDelete
 }: AssistantMessageProps): React.JSX.Element {
   const { t } = useTranslation('chat')
   const devMode = useSettingsStore((s) => s.devMode)
@@ -791,17 +795,6 @@ export function AssistantMessage({
     }
     return items
   }, [normalizedContent])
-  const foregroundSubAgentTaskBlocks = useMemo(
-    () =>
-      normalizedContent?.filter(
-        (block): block is Extract<ContentBlock, { type: 'tool_use' }> =>
-          block.type === 'tool_use' &&
-          block.name === TASK_TOOL_NAME &&
-          !block.input.run_in_background
-      ) ?? [],
-    [normalizedContent]
-  )
-
   const renderContent = (): React.JSX.Element => {
     // Show image generation loader when generating images
     if (isGeneratingImage && isStreaming) {
@@ -1031,14 +1024,6 @@ export function AssistantMessage({
             completedAt={liveTc?.completedAt}
           />
         </ScaleIn>
-      )
-    }
-
-    if (renderMode === 'default' && foregroundSubAgentTaskBlocks.length > 0) {
-      return (
-        <div className="space-y-2">
-          {foregroundSubAgentTaskBlocks.map((block) => renderToolBlock(block, block.id))}
-        </div>
       )
     }
 
@@ -1415,8 +1400,11 @@ export function AssistantMessage({
           (plainText ||
             (msgId && onDelete) ||
             (devMode && debugInfo) ||
+            (showContinue && onContinue) ||
             (showRetry && onRetry)) && (
-            <div className="mt-2 flex items-center gap-1 opacity-0 transition-opacity group-hover/msg:opacity-100">
+            <div
+              className={`mt-2 flex items-center gap-1 transition-opacity ${showContinue && onContinue ? 'opacity-100' : 'opacity-0 group-hover/msg:opacity-100'}`}
+            >
               {plainText && (
                 <ActionIconButton
                   label={t('action.copy', { ns: 'common' })}
@@ -1424,6 +1412,28 @@ export function AssistantMessage({
                   onClick={handleCopy}
                 />
               )}
+              {showContinue && onContinue ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={onContinue}
+                      aria-label={t('assistantMessage.continueToolExecution', {
+                        defaultValue: '继续执行'
+                      })}
+                      className="flex size-7 items-center justify-center rounded-md border border-border/50 bg-background/80 text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground"
+                    >
+                      <Play className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    {t('assistantMessage.continueToolExecutionHint', {
+                      defaultValue:
+                        '检测到上次停在工具执行，点击后会在这条消息里继续，不会新增 AI 消息'
+                    })}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
               {showRetry && onRetry ? (
                 <ActionIconButton
                   label={t('assistantMessage.regenerateReference', {
@@ -1478,6 +1488,14 @@ export function AssistantMessage({
                     )}
                     {collapsed ? t('messageActions.expand') : t('messageActions.collapse')}
                   </DropdownMenuItem>
+                  {showContinue && onContinue && (
+                    <DropdownMenuItem onSelect={onContinue}>
+                      <Play className="size-4" />
+                      {t('assistantMessage.continueToolExecution', {
+                        defaultValue: '继续执行'
+                      })}
+                    </DropdownMenuItem>
+                  )}
                   {showRetry && onRetry && (
                     <DropdownMenuItem onSelect={onRetry}>
                       <RotateCcw className="size-4" />

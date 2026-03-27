@@ -441,26 +441,13 @@ async function resolveFinalReport(options: {
     return existingReport.trim()
   }
 
-  const retryPrompt = buildRetryReportPrompt({ taskInput, finalOutput, status, error })
-  const retryPromptMessage: UnifiedMessage = {
-    id: nanoid(),
-    role: 'user',
-    content: retryPrompt,
-    createdAt: Date.now()
-  }
-
+  const retryPrompt = buildRetryReportPrompt({ status, error })
   onEvent?.({
     type: 'sub_agent_report_update',
     subAgentName,
     toolUseId,
     report: '',
     status: reportCalled ? 'retrying' : 'fallback'
-  })
-  onEvent?.({
-    type: 'sub_agent_user_message',
-    subAgentName,
-    toolUseId,
-    message: retryPromptMessage
   })
   onEvent?.({
     type: 'sub_agent_iteration',
@@ -509,8 +496,6 @@ async function resolveFinalReport(options: {
 }
 
 function buildRetryReportPrompt(options: {
-  taskInput: string
-  finalOutput: string
   status: 'completed' | 'failed' | 'aborted'
   error?: string
 }): string {
@@ -522,12 +507,7 @@ function buildRetryReportPrompt(options: {
     'Return the full report in Markdown.',
     '',
     `Execution status: ${options.status}`,
-    options.error ? `Error detail: ${options.error}` : '',
-    'Original task input:',
-    options.taskInput,
-    '',
-    'Captured final output:',
-    options.finalOutput || '(empty)'
+    options.error ? `Error detail: ${options.error}` : ''
   ]
     .filter(Boolean)
     .join('\n')

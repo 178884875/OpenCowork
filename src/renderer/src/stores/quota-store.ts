@@ -21,7 +21,17 @@ export interface CodexQuota {
   fetchedAt: number
 }
 
-export type ProviderQuota = CodexQuota
+export interface CopilotQuota {
+  type: 'copilot'
+  sku?: string
+  chatEnabled?: boolean
+  telemetry?: string
+  apiBaseUrl?: string
+  tokenExpiresAt?: number
+  fetchedAt: number
+}
+
+export type ProviderQuota = CodexQuota | CopilotQuota
 
 export interface QuotaUpdatePayload {
   requestId?: string

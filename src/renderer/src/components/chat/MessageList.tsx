@@ -4,7 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { useChatStore } from '@renderer/stores/chat-store'
 import { useUIStore } from '@renderer/stores/ui-store'
+import { useAgentStore } from '@renderer/stores/agent-store'
 import { MessageItem } from './MessageItem'
+import { getTailToolExecutionState } from './transcript-utils'
 import {
   MessageSquare,
   CircleHelp,
@@ -51,6 +53,7 @@ const modeHints = {
 
 interface MessageListProps {
   onRetry?: () => void
+  onContinue?: () => void
   onEditUserMessage?: (messageId: string, draft: EditableUserMessageDraft) => void
   onDeleteMessage?: (messageId: string) => void
 }
@@ -59,6 +62,7 @@ interface RenderableMessage {
   messageId: string
   isLastUserMessage: boolean
   isLastAssistantMessage: boolean
+  showContinue: boolean
 }
 
 interface RenderableMessageMeta {
@@ -80,8 +84,10 @@ interface VirtualMessageRowProps {
   messageId: string
   isLastUserMessage: boolean
   isLastAssistantMessage: boolean
+  showContinue: boolean
   disableAnimation: boolean
   onRetry?: () => void
+  onContinue?: () => void
   onEditUserMessage?: (messageId: string, draft: EditableUserMessageDraft) => void
   onDeleteMessage?: (messageId: string) => void
 }
@@ -228,8 +234,10 @@ const VirtualMessageRow = React.memo(function VirtualMessageRow({
   messageId,
   isLastUserMessage,
   isLastAssistantMessage,
+  showContinue,
   disableAnimation,
   onRetry,
+  onContinue,
   onEditUserMessage,
   onDeleteMessage
 }: VirtualMessageRowProps): React.JSX.Element | null {
@@ -255,8 +263,10 @@ const VirtualMessageRow = React.memo(function VirtualMessageRow({
         isStreaming={isStreaming}
         isLastUserMessage={isLastUserMessage}
         isLastAssistantMessage={isLastAssistantMessage}
+        showContinue={showContinue}
         disableAnimation={disableAnimation}
         onRetryAssistantMessage={onRetry}
+        onContinueAssistantMessage={onContinue}
         onEditUserMessage={onEditUserMessage}
         onDeleteMessage={onDeleteMessage}
         toolResults={toolResults}
@@ -267,6 +277,7 @@ const VirtualMessageRow = React.memo(function VirtualMessageRow({
 
 export function MessageList({
   onRetry,
+  onContinue,
   onEditUserMessage,
   onDeleteMessage
 }: MessageListProps): React.JSX.Element {
@@ -292,6 +303,9 @@ export function MessageList({
     })
   )
   const mode = useUIStore((s) => s.mode)
+  const isSessionRunning = useAgentStore((s) =>
+    activeSessionId ? s.runningSessions[activeSessionId] === 'running' : false
+  )
   const listRef = React.useRef<VListHandle | null>(null)
   const [isAtBottom, setIsAtBottom] = React.useState(true)
   const pendingInitialScrollSessionIdRef = React.useRef<string | null>(null)
@@ -310,9 +324,17 @@ export function MessageList({
     [messages, streamingMessageId]
   )
 
+  const continueAssistantMessageId = React.useMemo(() => {
+    if (streamingMessageId || isSessionRunning) return null
+    return getTailToolExecutionState(messages)?.assistantMessageId ?? null
+  }, [isSessionRunning, messages, streamingMessageId])
+
   const renderableMessages = React.useMemo<RenderableMessage[]>(() => {
-    return renderableMeta.items
-  }, [renderableMeta.items])
+    return renderableMeta.items.map((item) => ({
+      ...item,
+      showContinue: item.messageId === continueAssistantMessageId
+    }))
+  }, [continueAssistantMessageId, renderableMeta.items])
 
   const olderUnloadedMessageCount = Math.max(0, activeSessionMessageCount - messages.length)
   const hasLoadMoreRow = olderUnloadedMessageCount > 0
@@ -650,7 +672,7 @@ export function MessageList({
               )
             }
 
-            const { messageId, isLastUserMessage, isLastAssistantMessage } = row.data
+            const { messageId, isLastUserMessage, isLastAssistantMessage, showContinue } = row.data
             const disableAnimation =
               lastMessageRowIndex >= 0
                 ? rowIndex >= Math.max(0, lastMessageRowIndex - (TAIL_STATIC_MESSAGE_COUNT - 1))
@@ -663,8 +685,10 @@ export function MessageList({
                 messageId={messageId}
                 isLastUserMessage={isLastUserMessage}
                 isLastAssistantMessage={isLastAssistantMessage}
+                showContinue={showContinue}
                 disableAnimation={disableAnimation}
                 onRetry={onRetry}
+                onContinue={onContinue}
                 onEditUserMessage={onEditUserMessage}
                 onDeleteMessage={onDeleteMessage}
               />

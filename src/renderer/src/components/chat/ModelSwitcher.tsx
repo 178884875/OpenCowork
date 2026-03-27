@@ -164,19 +164,24 @@ function ModelSettingsPopover({
   const hasAnySetting = supportsThinking || supportsFastMode || supportsContextCompression
 
   const contextCompressionPercent = Math.round(
-    clampCompressionThreshold(model?.contextCompressionThreshold ?? DEFAULT_CONTEXT_COMPRESSION_THRESHOLD) * 100
+    clampCompressionThreshold(
+      model?.contextCompressionThreshold ?? DEFAULT_CONTEXT_COMPRESSION_THRESHOLD
+    ) * 100
   )
 
-  const updateContextCompressionThreshold = useCallback((value: number) => {
-    if (!model?.id) return
-    const normalized = clampCompressionThreshold(value / 100)
-    const providerStore = useProviderStore.getState()
-    const activeProviderId = providerStore.activeProviderId
-    if (!activeProviderId) return
-    providerStore.updateModel(activeProviderId, model.id, {
-      contextCompressionThreshold: normalized
-    })
-  }, [model])
+  const updateContextCompressionThreshold = useCallback(
+    (value: number) => {
+      if (!model?.id) return
+      const normalized = clampCompressionThreshold(value / 100)
+      const providerStore = useProviderStore.getState()
+      const activeProviderId = providerStore.activeProviderId
+      if (!activeProviderId) return
+      providerStore.updateModel(activeProviderId, model.id, {
+        contextCompressionThreshold: normalized
+      })
+    },
+    [model]
+  )
 
   return (
     <Popover>
@@ -310,7 +315,9 @@ function ModelSettingsPopover({
 
           {supportsContextCompression && (
             <>
-              {(supportsThinking || supportsFastMode) && <div className="my-1 border-t border-border/50" />}
+              {(supportsThinking || supportsFastMode) && (
+                <div className="my-1 border-t border-border/50" />
+              )}
               <div className="flex items-center gap-1.5 px-1 pb-1 pt-1 text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider">
                 <Settings2 className="size-3" />
                 {tChat('input.contextCompressionThreshold')}
@@ -325,7 +332,9 @@ function ModelSettingsPopover({
                   onChange={(e) => updateContextCompressionThreshold(Number(e.target.value))}
                   className="w-full"
                 />
-                <span className="shrink-0 text-[10px] text-muted-foreground">{contextCompressionPercent}%</span>
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  {contextCompressionPercent}%
+                </span>
               </div>
             </>
           )}
@@ -353,7 +362,9 @@ export function ModelSwitcher(): React.JSX.Element {
   const mainModelSelectionMode = useSettingsStore((s) => s.mainModelSelectionMode)
   const autoModelSelectionsBySession = useUIStore((s) => s.autoModelSelectionsBySession)
   const autoModelRoutingStatesBySession = useUIStore((s) => s.autoModelRoutingStatesBySession)
-  const autoSelection = activeSessionId ? (autoModelSelectionsBySession[activeSessionId] ?? null) : null
+  const autoSelection = activeSessionId
+    ? (autoModelSelectionsBySession[activeSessionId] ?? null)
+    : null
   const autoRoutingState = activeSessionId
     ? (autoModelRoutingStatesBySession[activeSessionId] ?? 'idle')
     : 'idle'
@@ -378,12 +389,22 @@ export function ModelSwitcher(): React.JSX.Element {
 
   const codexQuota = useMemo(() => {
     if (!displayProvider || displayProvider.builtinId !== 'codex-oauth') return null
-    return (
+    const quota =
       quotaByKey[displayProvider.id] ||
       (displayProvider.builtinId ? quotaByKey[displayProvider.builtinId] : undefined) ||
       quotaByKey['codex'] ||
       null
-    )
+    return quota?.type === 'codex' ? quota : null
+  }, [displayProvider, quotaByKey])
+
+  const copilotQuota = useMemo(() => {
+    if (!displayProvider || displayProvider.builtinId !== 'copilot-oauth') return null
+    const quota =
+      quotaByKey[displayProvider.id] ||
+      (displayProvider.builtinId ? quotaByKey[displayProvider.builtinId] : undefined) ||
+      quotaByKey['copilot'] ||
+      null
+    return quota?.type === 'copilot' ? quota : null
   }, [displayProvider, quotaByKey])
 
   const formatPercent = (value?: number): string => {
@@ -659,6 +680,58 @@ export function ModelSwitcher(): React.JSX.Element {
                     style={{ width: `${Math.min(100, codexQuota.secondary.usedPercent ?? 0)}%` }}
                   />
                 </div>
+              </div>
+            )}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {copilotQuota && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30 border border-border/10 cursor-help hover:bg-muted/50 transition-colors mx-1">
+              <MonitorSmartphone className="size-3 text-sky-500" />
+              <div className="flex flex-col leading-none gap-0.5">
+                <span className="text-[9px] text-muted-foreground/70 font-medium">
+                  {copilotQuota.sku || 'copilot'}
+                </span>
+                <span className="text-[9px] text-muted-foreground/50">
+                  {copilotQuota.chatEnabled
+                    ? tSettings('provider.copilotChatEnabled')
+                    : tSettings('provider.copilotChatDisabled')}
+                </span>
+              </div>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="p-3 w-56 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                {tSettings('provider.copilotQuotaSku')}
+              </span>
+              <span className="text-xs font-bold">{copilotQuota.sku || '-'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                {tSettings('provider.copilotQuotaChat')}
+              </span>
+              <span className="text-xs font-bold">
+                {copilotQuota.chatEnabled
+                  ? tSettings('provider.copilotChatEnabled')
+                  : tSettings('provider.copilotChatDisabled')}
+              </span>
+            </div>
+            {copilotQuota.tokenExpiresAt && (
+              <div className="flex items-center justify-between gap-2 border-t pt-2">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                  {tSettings('provider.copilotQuotaTokenExpires')}
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  {new Date(copilotQuota.tokenExpiresAt).toLocaleString([], {
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </span>
               </div>
             )}
           </TooltipContent>

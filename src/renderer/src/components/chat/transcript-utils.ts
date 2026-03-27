@@ -1,10 +1,23 @@
-import type { ContentBlock, ToolResultContent, UnifiedMessage } from '@renderer/lib/api/types'
+import type {
+  ContentBlock,
+  ToolResultContent,
+  ToolUseBlock,
+  UnifiedMessage
+} from '@renderer/lib/api/types'
 import { isEditableUserMessage } from '@renderer/lib/image-attachments'
 
 export interface RenderableMessageMeta {
   messageId: string
   isLastUserMessage: boolean
   isLastAssistantMessage: boolean
+}
+
+export interface TailToolExecutionState {
+  assistantIndex: number
+  assistantMessageId: string
+  toolUseBlocks: ToolUseBlock[]
+  toolResultMap: Map<string, { content: ToolResultContent; isError?: boolean }>
+  trailingToolResultMessageCount: number
 }
 
 export function isToolResultOnlyUserMessage(message: UnifiedMessage): boolean {
@@ -56,6 +69,44 @@ export function getToolResultsLookup(
   }
 
   return next
+}
+
+export function getTailToolExecutionState(
+  messages: UnifiedMessage[]
+): TailToolExecutionState | null {
+  if (messages.length === 0) return null
+
+  const toolResultMap = new Map<string, { content: ToolResultContent; isError?: boolean }>()
+  let trailingToolResultMessageCount = 0
+  let assistantIndex = messages.length - 1
+
+  while (assistantIndex >= 0) {
+    const message = messages[assistantIndex]
+    if (!isToolResultOnlyUserMessage(message)) break
+    collectToolResults(message.content as ContentBlock[], toolResultMap)
+    trailingToolResultMessageCount += 1
+    assistantIndex -= 1
+  }
+
+  if (assistantIndex < 0) return null
+
+  const assistantMessage = messages[assistantIndex]
+  if (assistantMessage.role !== 'assistant' || !Array.isArray(assistantMessage.content)) {
+    return null
+  }
+
+  const toolUseBlocks = assistantMessage.content.filter(
+    (block): block is ToolUseBlock => block.type === 'tool_use'
+  )
+  if (toolUseBlocks.length === 0) return null
+
+  return {
+    assistantIndex,
+    assistantMessageId: assistantMessage.id,
+    toolUseBlocks,
+    toolResultMap,
+    trailingToolResultMessageCount
+  }
 }
 
 export function buildRenderableMessageMeta(

@@ -2,10 +2,7 @@ import { useCallback, useEffect } from 'react'
 import { nanoid } from 'nanoid'
 import { toast } from 'sonner'
 import { useChatStore } from '@renderer/stores/chat-store'
-import {
-  useSettingsStore,
-  resolveReasoningEffortForModel
-} from '@renderer/stores/settings-store'
+import { useSettingsStore, resolveReasoningEffortForModel } from '@renderer/stores/settings-store'
 import { useProviderStore } from '@renderer/stores/provider-store'
 import { ensureProviderAuthReady } from '@renderer/lib/auth/provider-auth'
 import { useAgentStore } from '@renderer/stores/agent-store'

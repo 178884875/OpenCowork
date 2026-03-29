@@ -13,10 +13,7 @@ import type { ProviderConfig, ToolDefinition, UnifiedMessage } from '@renderer/l
 import type { ToolContext, ToolHandler } from '@renderer/lib/tools/tool-types'
 import type { SubAgentDefinition } from '@renderer/lib/agent/sub-agents/types'
 import { useProviderStore } from '@renderer/stores/provider-store'
-import {
-  useSettingsStore,
-  resolveReasoningEffortForModel
-} from '@renderer/stores/settings-store'
+import { useSettingsStore, resolveReasoningEffortForModel } from '@renderer/stores/settings-store'
 
 export type WikiGenerationMode = 'full' | 'regenerate' | 'incremental'
 

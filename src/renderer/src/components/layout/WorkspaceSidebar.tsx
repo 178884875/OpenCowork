@@ -1093,10 +1093,10 @@ export function WorkspaceSidebar(): React.JSX.Element {
         )}
 
         <div className="mt-auto px-2 py-2">
-          <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="size-8 rounded-full">
+                <Button variant="ghost" size="icon" className="size-8 shrink-0 rounded-full">
                   <CircleHelp className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -1114,7 +1114,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
 
             <Button
               variant="ghost"
-              className="h-8 w-full justify-between gap-2 px-2.5 text-[12px] text-foreground/80 hover:bg-muted/40"
+              className="h-8 flex-1 justify-between gap-2 px-2.5 text-[12px] text-foreground/80 hover:bg-muted/40"
               onClick={() => useUIStore.getState().openSettingsPage('general')}
             >
               <span className="flex min-w-0 items-center gap-2">

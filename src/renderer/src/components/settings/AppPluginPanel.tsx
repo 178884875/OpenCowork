@@ -27,7 +27,8 @@ import {
   IMAGE_GENERATE_TOOL_NAME,
   IMAGE_PLUGIN_ID,
   type AppPluginDescriptor,
-  type AppPluginId
+  type AppPluginId,
+  type AppPluginInstance
 } from '@renderer/lib/app-plugin/types'
 
 function resolveDefaultImageModelId(providerId: string): string | null {
@@ -56,6 +57,16 @@ function getPluginIcon(id: AppPluginId): React.JSX.Element {
   return <Puzzle className="size-4" />
 }
 
+function createFallbackPlugin(id: AppPluginId): AppPluginInstance {
+  return {
+    id,
+    enabled: false,
+    useGlobalModel: true,
+    providerId: null,
+    modelId: null
+  }
+}
+
 function getPluginState(options: {
   descriptor: AppPluginDescriptor
   pluginEnabled: boolean
@@ -71,7 +82,7 @@ export function AppPluginPanel(): React.JSX.Element {
   const { t } = useTranslation('settings')
   const [selectedPluginId, setSelectedPluginId] = useState<AppPluginId>(IMAGE_PLUGIN_ID)
   const activeProjectId = useChatStore((state) => state.activeProjectId)
-  const pluginList = useAppPluginStore((state) => state.getEnabledPlugins(activeProjectId))
+  const pluginsByProject = useAppPluginStore((state) => state.pluginsByProject)
   const updatePlugin = useAppPluginStore((state) => state.updatePlugin)
   const togglePluginEnabled = useAppPluginStore((state) => state.togglePluginEnabled)
   const providers = useProviderStore((state) => state.providers)
@@ -90,9 +101,16 @@ export function AppPluginPanel(): React.JSX.Element {
     [providers]
   )
 
+  const projectPlugins = useMemo(
+    () => pluginsByProject[activeProjectId ?? '__global__'] ?? [],
+    [pluginsByProject, activeProjectId]
+  )
   const visibleDescriptors = useMemo(() => APP_PLUGIN_DESCRIPTORS.filter((d) => !d.hidden), [])
-  const selectedPlugin = useAppPluginStore((state) =>
-    state.getPlugin(selectedPluginId, activeProjectId)
+  const selectedPlugin = useMemo(
+    () =>
+      projectPlugins.find((plugin) => plugin.id === selectedPluginId) ??
+      createFallbackPlugin(selectedPluginId),
+    [projectPlugins, selectedPluginId]
   )
   const selectedDescriptor =
     visibleDescriptors.find((descriptor) => descriptor.id === selectedPluginId) ??
@@ -134,7 +152,9 @@ export function AppPluginPanel(): React.JSX.Element {
         </div>
         <div className="space-y-2">
           {visibleDescriptors.map((descriptor) => {
-            const plugin = pluginList.find((item) => item.id === descriptor.id) ?? null
+            const plugin =
+              projectPlugins.find((item) => item.id === descriptor.id) ??
+              createFallbackPlugin(descriptor.id)
             const selected = descriptor.id === selectedPluginId
             return (
               <button

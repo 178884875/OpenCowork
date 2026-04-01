@@ -78,8 +78,27 @@ function getAgentIcon(agentName: string): React.ReactNode {
   return <Bot className="size-4" />
 }
 
+function getLatestErroredTool(agent: SubAgentState): SubAgentState['toolCalls'][number] | null {
+  for (let index = agent.toolCalls.length - 1; index >= 0; index -= 1) {
+    const toolCall = agent.toolCalls[index]
+    if (toolCall.status === 'error') return toolCall
+  }
+  return null
+}
+
+function getAgentFailureText(agent: SubAgentState): string {
+  const toolCall = getLatestErroredTool(agent)
+  if (agent.errorMessage?.trim()) return agent.errorMessage.trim()
+  if (toolCall?.error?.trim()) return `${toolCall.name}: ${toolCall.error.trim()}`
+  return ''
+}
+
 function getAgentSummary(agent: SubAgentState): string {
-  return agent.report.trim() || agent.streamingText.trim() || agent.errorMessage?.trim() || ''
+  const failureText = getAgentFailureText(agent)
+  if ((agent.success === false || !!agent.errorMessage) && failureText) {
+    return failureText
+  }
+  return agent.report.trim() || agent.streamingText.trim() || failureText
 }
 
 function getPreviewText(text: string, isRunning: boolean): string {

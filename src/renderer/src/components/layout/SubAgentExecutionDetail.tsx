@@ -7,6 +7,7 @@ import {
   Loader2,
   MessageSquareText,
   ScrollText,
+  TriangleAlert,
   Wrench,
   X,
   icons
@@ -86,6 +87,21 @@ function findTargetAgent(
   )
 }
 
+function getLatestErroredTool(agent: SubAgentState): SubAgentState['toolCalls'][number] | null {
+  for (let index = agent.toolCalls.length - 1; index >= 0; index -= 1) {
+    const toolCall = agent.toolCalls[index]
+    if (toolCall.status === 'error') return toolCall
+  }
+  return null
+}
+
+function getFailurePrimaryText(agent: SubAgentState): string {
+  if (agent.errorMessage?.trim()) return agent.errorMessage.trim()
+  const failedTool = getLatestErroredTool(agent)
+  if (failedTool?.error?.trim()) return failedTool.error.trim()
+  return ''
+}
+
 export function SubAgentExecutionDetail({
   toolUseId,
   inlineText,
@@ -142,12 +158,13 @@ export function SubAgentExecutionDetail({
 
   const displayName = agent.displayName ?? agent.name
   const elapsed = formatElapsed((agent.completedAt ?? now) - agent.startedAt)
+  const failedTool = getLatestErroredTool(agent)
+  const failureText = getFailurePrimaryText(agent)
+  const failedToolText = failedTool?.error?.trim()
+    ? `${failedTool.name}: ${failedTool.error.trim()}`
+    : ''
   const summaryText =
-    agent.report.trim() ||
-    agent.streamingText.trim() ||
-    agent.errorMessage?.trim() ||
-    inlineText?.trim() ||
-    ''
+    agent.report.trim() || agent.streamingText.trim() || inlineText?.trim() || failureText || ''
   const icon = getAgentIcon(displayName)
   const isFailed = agent.success === false || !!agent.errorMessage
 
@@ -271,6 +288,23 @@ export function SubAgentExecutionDetail({
               </div>
             </div>
           </section>
+
+          {isFailed && failureText ? (
+            <section className="rounded-xl border border-destructive/35 bg-destructive/5 p-3.5">
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-destructive/80">
+                <TriangleAlert className="size-3.5" />
+                <span>{t('detailPanel.error', { defaultValue: '失败原因' })}</span>
+              </div>
+              <div className="space-y-2 text-sm leading-6 text-foreground/90">
+                <div className="whitespace-pre-wrap break-words">{failureText}</div>
+                {failedToolText && failedToolText !== failureText ? (
+                  <div className="rounded-lg border border-destructive/20 bg-background/50 px-3 py-2 text-xs text-muted-foreground/90">
+                    {failedToolText}
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
 
           <section className="rounded-xl border border-border/60 bg-background/70 p-3.5">
             <div className="mb-3 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/65">

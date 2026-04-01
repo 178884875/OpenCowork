@@ -163,10 +163,47 @@ interface SubAgentState {
   completedAt: number | null
 }
 
+function sumOptionalUsageValue(current?: number, incoming?: number): number | undefined {
+  const total = (current ?? 0) + (incoming ?? 0)
+  return total || undefined
+}
+
+function mergeMessageUsage(
+  current: UnifiedMessage['usage'],
+  incoming: UnifiedMessage['usage']
+): UnifiedMessage['usage'] {
+  if (!incoming) return current
+  if (!current) {
+    return {
+      ...incoming,
+      requestTimings: incoming.requestTimings ? [...incoming.requestTimings] : undefined
+    }
+  }
+
+  return {
+    inputTokens: current.inputTokens + incoming.inputTokens,
+    outputTokens: current.outputTokens + incoming.outputTokens,
+    billableInputTokens: sumOptionalUsageValue(
+      current.billableInputTokens,
+      incoming.billableInputTokens
+    ),
+    cacheCreationTokens: sumOptionalUsageValue(
+      current.cacheCreationTokens,
+      incoming.cacheCreationTokens
+    ),
+    cacheReadTokens: sumOptionalUsageValue(current.cacheReadTokens, incoming.cacheReadTokens),
+    reasoningTokens: sumOptionalUsageValue(current.reasoningTokens, incoming.reasoningTokens),
+    contextTokens: incoming.contextTokens ?? current.contextTokens,
+    totalDurationMs: sumOptionalUsageValue(current.totalDurationMs, incoming.totalDurationMs),
+    requestTimings: [...(current.requestTimings ?? []), ...(incoming.requestTimings ?? [])]
+  }
+}
+
 function finalizeAssistantMessage(
   sa: SubAgentState,
   usage?: UnifiedMessage['usage'],
-  providerResponseId?: string
+  providerResponseId?: string,
+  clearCurrentMessage = true
 ): void {
   if (!sa.currentAssistantMessageId) return
   const message = sa.transcript.find((item) => item.id === sa.currentAssistantMessageId)
@@ -175,12 +212,14 @@ function finalizeAssistantMessage(
     return
   }
   if (usage) {
-    message.usage = usage
+    message.usage = mergeMessageUsage(message.usage, usage)
   }
   if (providerResponseId) {
     message.providerResponseId = providerResponseId
   }
-  sa.currentAssistantMessageId = null
+  if (clearCurrentMessage) {
+    sa.currentAssistantMessageId = null
+  }
 }
 
 function trimCompletedSubAgentsMap(map: Record<string, SubAgentState>): void {
@@ -1082,8 +1121,13 @@ export const useAgentStore = create<AgentStore>()(
               const sa = state.activeSubAgents[id]
               if (sa) {
                 sa.iteration = event.iteration
-                sa.currentAssistantMessageId = event.assistantMessage.id
-                sa.transcript.push(event.assistantMessage)
+                const currentAssistant = sa.currentAssistantMessageId
+                  ? sa.transcript.find((item) => item.id === sa.currentAssistantMessageId)
+                  : null
+                if (!currentAssistant || currentAssistant.role !== 'assistant') {
+                  sa.currentAssistantMessageId = event.assistantMessage.id
+                  sa.transcript.push(event.assistantMessage)
+                }
               }
               break
             }
@@ -1147,14 +1191,13 @@ export const useAgentStore = create<AgentStore>()(
             case 'sub_agent_message_end': {
               const sa = state.activeSubAgents[id]
               if (sa) {
-                finalizeAssistantMessage(sa, event.usage, event.providerResponseId)
+                finalizeAssistantMessage(sa, event.usage, event.providerResponseId, false)
               }
               break
             }
             case 'sub_agent_tool_result_message': {
               const sa = state.activeSubAgents[id]
               if (sa) {
-                finalizeAssistantMessage(sa)
                 sa.transcript.push(event.message)
                 upsertSubAgentHistory(state.subAgentHistory, sa)
               }

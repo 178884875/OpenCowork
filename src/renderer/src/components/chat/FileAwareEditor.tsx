@@ -55,6 +55,13 @@ function appendTextContent(target: HTMLElement, text: string): void {
   })
 }
 
+function getFileChipLabel(file: SelectedFileItem | undefined, fallbackText: string): string {
+  if (file?.name) return file.name
+  const normalized = fallbackText.replace(/\\/g, '/')
+  const segments = normalized.split('/').filter(Boolean)
+  return segments[segments.length - 1] || fallbackText
+}
+
 function buildFileChip(
   node: EditorFileNode,
   file: SelectedFileItem | undefined,
@@ -80,7 +87,7 @@ function buildFileChip(
   const trigger = document.createElement('button')
   trigger.type = 'button'
   trigger.className = 'inline-flex min-w-0 items-center gap-1'
-  trigger.title = file?.previewPath || node.fallbackText
+  trigger.title = file?.previewPath || file?.originalPath || node.fallbackText
   trigger.addEventListener('mousedown', (event) => {
     event.preventDefault()
   })
@@ -98,7 +105,7 @@ function buildFileChip(
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-3"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>'
   const label = document.createElement('span')
   label.className = 'truncate max-w-[240px]'
-  label.textContent = file?.sendPath || node.fallbackText
+  label.textContent = getFileChipLabel(file, node.fallbackText)
   trigger.append(icon, label)
 
   const actions: HTMLElement[] = []
@@ -143,8 +150,7 @@ function buildFileChip(
 
   if (actions.length > 0) {
     const actionsContainer = document.createElement('span')
-    actionsContainer.className =
-      'inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover/file-ref:opacity-100'
+    actionsContainer.className = 'hidden items-center gap-0.5 group-hover/file-ref:inline-flex'
     actionsContainer.append(...actions)
     wrapper.append(actionsContainer)
   }

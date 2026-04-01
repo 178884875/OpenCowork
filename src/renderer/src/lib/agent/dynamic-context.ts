@@ -1,8 +1,11 @@
 import { useUIStore } from '../../stores/ui-store'
 import { useChatStore } from '../../stores/chat-store'
+import { useTaskStore } from '../../stores/task-store'
+import { usePlanStore } from '../../stores/plan-store'
+import { useSettingsStore } from '../../stores/settings-store'
 import { ipcClient } from '../ipc/ipc-client'
 import { estimateTokens } from '../format-tokens'
-import type { AIModelConfig, ProviderConfig } from '../api/types'
+import type { AIModelConfig } from '../api/types'
 import type { LayeredMemorySnapshot, SessionMemoryScope } from './memory-files'
 
 const FILE_CONTEXT_BUDGET_RATIO = 0.25
@@ -10,32 +13,34 @@ const FILE_CONTEXT_BUDGET_MAX_TOKENS = 24_000
 const FILE_CONTEXT_FALLBACK_TOKENS = 12_000
 
 /**
- * Build dynamic context for the first user message in a session.
- * Includes selected file contents and layered memory content (if any).
+ * Build a runtime reminder injected into the last user message.
+ * Includes lightweight session state and selected file contents.
  */
-export async function buildDynamicContext(options: {
+export async function buildRuntimeReminder(options: {
   sessionId: string
-  memorySnapshot?: LayeredMemorySnapshot
-  sessionScope?: SessionMemoryScope
-  providerConfig?: ProviderConfig | null
   modelConfig?: AIModelConfig | null
 }): Promise<string> {
-  const { sessionId, memorySnapshot, sessionScope = 'main', modelConfig } = options
+  const { sessionId, modelConfig } = options
 
   const parts: string[] = []
+  const sessionStateContext = buildSessionStateContext(sessionId)
+  if (sessionStateContext) {
+    parts.push(sessionStateContext)
+  }
+
   const selectedFiles = useUIStore.getState().selectedFiles ?? []
   const session = useChatStore.getState().sessions.find((s) => s.id === sessionId)
   const workingFolder = session?.workingFolder
 
   if (selectedFiles.length > 0) {
-    const selectedFileContext = await buildSelectedFileContext(selectedFiles, workingFolder, modelConfig)
+    const selectedFileContext = await buildSelectedFileContext(
+      selectedFiles,
+      workingFolder,
+      modelConfig
+    )
     if (selectedFileContext) {
       parts.push(selectedFileContext)
     }
-  }
-
-  if (memorySnapshot) {
-    appendMemoryContext(parts, memorySnapshot, sessionScope)
   }
 
   if (parts.length === 0) {
@@ -43,6 +48,53 @@ export async function buildDynamicContext(options: {
   }
 
   return `<system-reminder>\n${parts.join('\n')}\n</system-reminder>`
+}
+
+export function buildMemoryContext(
+  snapshot: LayeredMemorySnapshot,
+  sessionScope: SessionMemoryScope = 'main'
+): string | null {
+  const parts: string[] = []
+  appendMemoryContext(parts, snapshot, sessionScope)
+  return parts.length > 0 ? parts.join('\n') : null
+}
+
+function buildSessionStateContext(sessionId: string): string | null {
+  const parts: string[] = ['Session State:']
+
+  if (useSettingsStore.getState().webSearchEnabled) {
+    parts.push(
+      '- Web Search: enabled. Use the WebSearch tool for current external information when useful.'
+    )
+  }
+
+  const tasks = useTaskStore.getState().getTasksBySession(sessionId)
+  if (tasks.length > 0) {
+    const pending = tasks.filter((task) => task.status === 'pending').length
+    const inProgress = tasks.filter((task) => task.status === 'in_progress').length
+    const completed = tasks.filter((task) => task.status === 'completed').length
+    parts.push(
+      `- Task List: ${tasks.length} tasks (${pending} pending, ${inProgress} in_progress, ${completed} completed)`
+    )
+    if (inProgress > 0 || pending > 0) {
+      parts.push(
+        '  Reminder: Continue with existing tasks and use TaskUpdate to keep status current.'
+      )
+    }
+  }
+
+  const plan = usePlanStore.getState().getPlanBySession(sessionId)
+  if (plan) {
+    parts.push(`- Plan: "${plan.title}" (status: ${plan.status})`)
+    if (plan.status === 'approved' || plan.status === 'implementing') {
+      parts.push('  Reminder: An approved plan exists. Follow the plan steps for implementation.')
+    }
+    if (plan.status === 'rejected') {
+      parts.push('  Reminder: The plan was rejected. Revise it in Plan Mode based on feedback.')
+    }
+  }
+
+  return parts.length > 1 ? parts.join('\n') : null
 }
 
 async function buildSelectedFileContext(
@@ -115,7 +167,10 @@ function resolveFileContextBudget(modelConfig?: AIModelConfig | null): number {
   if (typeof contextLength !== 'number' || contextLength <= 0) {
     return FILE_CONTEXT_FALLBACK_TOKENS
   }
-  return Math.min(FILE_CONTEXT_BUDGET_MAX_TOKENS, Math.max(4_000, Math.floor(contextLength * FILE_CONTEXT_BUDGET_RATIO)))
+  return Math.min(
+    FILE_CONTEXT_BUDGET_MAX_TOKENS,
+    Math.max(4_000, Math.floor(contextLength * FILE_CONTEXT_BUDGET_RATIO))
+  )
 }
 
 function truncateToTokenBudget(content: string, tokenBudget: number): string {

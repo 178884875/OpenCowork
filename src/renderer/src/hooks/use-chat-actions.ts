@@ -1700,7 +1700,7 @@ export function useChatActions(): {
           })
 
           agentSystemPrompt = buildSystemPrompt({
-            mode: mode as 'clarify' | 'cowork' | 'code',
+            mode: mode as 'clarify' | 'cowork' | 'code' | 'acp',
             workingFolder: session?.workingFolder,
             sessionId,
             userRules: userPrompt || undefined,
@@ -1895,28 +1895,28 @@ export function useChatActions(): {
           const messages = useChatStore.getState().getSessionMessages(sessionId)
           let messagesToSend = existingAssistantMessage ? messages : messages.slice(0, -1) // Exclude the empty assistant placeholder
 
-          // Build and inject dynamic context into the last user message
+          // Build and inject a runtime reminder into the last user message
           const sessionSnapshot = useChatStore.getState().sessions.find((s) => s.id === sessionId)
           const sessionMode = sessionSnapshot?.mode ?? uiStore.mode
           const shouldInjectContext =
-            sessionMode === 'clarify' || sessionMode === 'cowork' || sessionMode === 'code'
+            sessionMode === 'clarify' ||
+            sessionMode === 'cowork' ||
+            sessionMode === 'code' ||
+            sessionMode === 'acp'
 
           if (shouldInjectContext && messagesToSend.length > 0) {
-            const { buildDynamicContext } = await import('@renderer/lib/agent/dynamic-context')
-            const dynamicContext = await buildDynamicContext({
+            const { buildRuntimeReminder } = await import('@renderer/lib/agent/dynamic-context')
+            const runtimeReminder = await buildRuntimeReminder({
               sessionId,
-              memorySnapshot,
-              sessionScope,
-              providerConfig: agentProviderConfig,
               modelConfig: resolvedModelConfig
             })
 
-            if (dynamicContext) {
-              // Find the last user message and prepend dynamic context to its content
+            if (runtimeReminder) {
+              // Find the last user message and prepend the runtime reminder to its content
               const lastUserIndex = messagesToSend.findLastIndex((m) => m.role === 'user')
               if (lastUserIndex >= 0) {
                 const lastUserMsg = messagesToSend[lastUserIndex]
-                const contextBlock = { type: 'text' as const, text: dynamicContext }
+                const contextBlock = { type: 'text' as const, text: runtimeReminder }
 
                 let newContent: ContentBlock[]
                 if (typeof lastUserMsg.content === 'string') {
@@ -1925,11 +1925,11 @@ export function useChatActions(): {
                   newContent = [contextBlock, ...lastUserMsg.content]
                 }
 
-                console.log('[Dynamic Context] Injecting context into last user message:', {
+                console.log('[Runtime Reminder] Injecting context into last user message:', {
                   messageId: lastUserMsg.id,
                   originalContentType: typeof lastUserMsg.content,
                   newContentLength: newContent.length,
-                  contextPreview: dynamicContext.substring(0, 100)
+                  contextPreview: runtimeReminder.substring(0, 100)
                 })
 
                 messagesToSend = [

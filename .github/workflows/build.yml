@@ -472,7 +472,7 @@ jobs:
       - name: Prepare macOS artifacts
         shell: bash
         env:
-          MAC_AUTO_UPDATE_ENABLED: ${{ steps.mac_signing.outputs.auto_update_enabled }}
+          MAC_SIGNING_ENABLED: ${{ steps.mac_signing.outputs.enabled }}
         run: |
           mkdir -p release-assets
           dmg_file=$(find dist -maxdepth 1 -type f -name '*.dmg' | head -n 1)
@@ -495,39 +495,38 @@ jobs:
           cp "$zip_file" "release-assets/OpenCowork-${{ matrix.platform }}-${{ matrix.artifact_arch }}.zip"
           echo "✅ Prepared $(basename "$zip_file") -> OpenCowork-${{ matrix.platform }}-${{ matrix.artifact_arch }}.zip"
 
-          if [ "${MAC_AUTO_UPDATE_ENABLED}" != "true" ]; then
-            echo "ℹ️ Skip macOS updater metadata because code signing is not configured"
-            exit 0
-          fi
-
-          if [ -z "$yml_file" ]; then
+          if [ -n "$yml_file" ]; then
+            cp "$yml_file" "release-assets/latest-mac-${{ matrix.artifact_arch }}.yml"
+            echo "✅ Prepared $(basename "$yml_file") -> latest-mac-${{ matrix.artifact_arch }}.yml"
+          elif [ "${MAC_SIGNING_ENABLED}" = "true" ]; then
             echo "❌ No macOS update metadata found"
             exit 1
+          else
+            echo "ℹ️ No macOS updater metadata was produced for this unsigned build"
           fi
 
-          cp "$yml_file" "release-assets/latest-mac-${{ matrix.artifact_arch }}.yml"
-          echo "✅ Prepared $(basename "$yml_file") -> latest-mac-${{ matrix.artifact_arch }}.yml"
-
       - name: Patch macOS update metadata
-        if: steps.mac_signing.outputs.auto_update_enabled == 'true'
         shell: bash
         run: |
           yml="release-assets/latest-mac-${{ matrix.artifact_arch }}.yml"
-          if [ -f "$yml" ]; then
-            node -e "
-              const fs = require('fs');
-              const p = process.argv[1];
-              const arch = process.argv[2];
-              let c = fs.readFileSync(p, 'utf8');
-              const m = c.match(/path: (\S+\.zip)/);
-              if (m) {
-                const n = 'OpenCowork-mac-' + arch + '.zip';
-                c = c.split(m[1]).join(n);
-                fs.writeFileSync(p, c);
-                console.log('Patched ' + p + ':', m[1], '->', n);
-              }
-            " "$yml" "${{ matrix.artifact_arch }}"
+          if [ ! -f "$yml" ]; then
+            echo "ℹ️ Skip macOS metadata patch because updater metadata is missing"
+            exit 0
           fi
+
+          node -e "
+            const fs = require('fs');
+            const p = process.argv[1];
+            const arch = process.argv[2];
+            let c = fs.readFileSync(p, 'utf8');
+            const m = c.match(/path: (\S+\.zip)/);
+            if (m) {
+              const n = 'OpenCowork-mac-' + arch + '.zip';
+              c = c.split(m[1]).join(n);
+              fs.writeFileSync(p, c);
+              console.log('Patched ' + p + ':', m[1], '->', n);
+            }
+          " "$yml" "${{ matrix.artifact_arch }}"
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v6

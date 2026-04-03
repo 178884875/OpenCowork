@@ -376,6 +376,10 @@ function GeneralPanel(): React.JSX.Element {
   const [downloadedVersion, setDownloadedVersion] = useState<string | null>(null)
   const sessions = useChatStore((s) => s.sessions)
   const clearAllSessions = useChatStore((s) => s.clearAllSessions)
+  const effectiveProjectDirectory =
+    settings.projectDefaultDirectoryMode === 'custom' && settings.projectDefaultDirectory.trim()
+      ? settings.projectDefaultDirectory.trim()
+      : settings.lastProjectDirectory.trim()
 
   const fontOptions = [
     { label: t('general.appearance.fontSystem'), value: '__default__' },
@@ -564,6 +568,18 @@ function GeneralPanel(): React.JSX.Element {
     toast.success(t('general.data.cleared', { count: total }))
   }, [clearAllSessions, t])
 
+  const handlePickProjectDefaultDirectory = useCallback(async () => {
+    const result = (await ipcClient.invoke(IPC.FS_SELECT_FOLDER, {
+      defaultPath: effectiveProjectDirectory || undefined
+    })) as { canceled?: boolean; path?: string }
+    if (result.canceled || !result.path) return
+    settings.updateSettings({
+      projectDefaultDirectoryMode: 'custom',
+      projectDefaultDirectory: result.path,
+      lastProjectDirectory: result.path
+    })
+  }, [effectiveProjectDirectory, settings])
+
   return (
     <div className="space-y-8">
       <div>
@@ -694,6 +710,59 @@ function GeneralPanel(): React.JSX.Element {
             </SelectItem>
           </SelectContent>
         </Select>
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <label className="text-sm font-medium">默认项目目录</label>
+          <p className="text-xs text-muted-foreground">
+            新建项目时，输入项目名会在这里创建同名文件夹；关闭自定义后会优先使用上次使用的位置。
+          </p>
+        </div>
+        <div className="flex items-center justify-between max-w-lg">
+          <div>
+            <label className="text-sm font-medium">使用自定义目录</label>
+            <p className="text-xs text-muted-foreground">关闭后优先回填上次创建项目的目录。</p>
+          </div>
+          <Switch
+            checked={settings.projectDefaultDirectoryMode === 'custom'}
+            onCheckedChange={(checked) =>
+              settings.updateSettings({
+                projectDefaultDirectoryMode: checked ? 'custom' : 'last-used'
+              })
+            }
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            type="text"
+            value={settings.projectDefaultDirectory}
+            onChange={(e) => settings.updateSettings({ projectDefaultDirectory: e.target.value })}
+            onBlur={() => {
+              const next = settings.projectDefaultDirectory.trim()
+              settings.updateSettings({
+                projectDefaultDirectory: next,
+                projectDefaultDirectoryMode: next ? 'custom' : 'last-used'
+              })
+            }}
+            placeholder="D:\\code"
+            className="max-w-lg text-xs"
+            disabled={settings.projectDefaultDirectoryMode !== 'custom'}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => void handlePickProjectDefaultDirectory()}
+            disabled={settings.projectDefaultDirectoryMode !== 'custom'}
+          >
+            选择目录
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          当前生效：{effectiveProjectDirectory || '系统 Documents 目录'}
+        </p>
       </section>
 
       {/* Appearance */}

@@ -38,6 +38,8 @@
     "unknownProject": "Unknown Project",
     "pinnedProjects": "Pinned Projects",
     "projects": "Projects",
+    "importProject": "Import project (JSON)",
+    "exportProjectAsJson": "Export project as JSON",
     "expandOlderSessions": "Show history ({{count}})",
     "collapseOlderSessions": "Hide history",
     "sessions": "sessions",

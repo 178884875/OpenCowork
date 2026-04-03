@@ -25,6 +25,64 @@ export type PromptRecommendationModelBindings = Record<
 
 export type MainModelSelectionMode = 'auto' | 'manual'
 export type ClarifyPlanModeAutoSwitchTarget = 'off' | 'code' | 'acp'
+export type ProjectDefaultDirectoryMode = 'last-used' | 'custom'
+
+export interface RecentWorkingTarget {
+  workingFolder: string
+  sshConnectionId: string | null
+  updatedAt: number
+}
+
+const MAX_RECENT_WORKING_TARGETS = 8
+
+function normalizeWorkingFolderPath(folderPath: string): string {
+  const trimmed = folderPath.trim()
+  if (!trimmed) return ''
+  if (trimmed === '/') return '/'
+  if (/^[A-Za-z]:[\\/]?$/.test(trimmed)) {
+    return `${trimmed.slice(0, 2)}\\`
+  }
+  return trimmed.replace(/[\\/]+$/, '')
+}
+
+export function getRecentWorkingTargetKey(target: {
+  workingFolder?: string | null
+  sshConnectionId?: string | null
+}): string {
+  return `${target.sshConnectionId ?? 'local'}::${normalizeWorkingFolderPath(target.workingFolder ?? '').toLowerCase()}`
+}
+
+function sanitizeRecentWorkingTargets(targets: unknown): RecentWorkingTarget[] {
+  if (!Array.isArray(targets)) return []
+
+  const deduped = new Map<string, RecentWorkingTarget>()
+
+  for (const item of targets) {
+    if (!item || typeof item !== 'object') continue
+
+    const workingFolder = normalizeWorkingFolderPath(
+      'workingFolder' in item && typeof item.workingFolder === 'string' ? item.workingFolder : ''
+    )
+    if (!workingFolder) continue
+
+    const sshConnectionId =
+      'sshConnectionId' in item && typeof item.sshConnectionId === 'string'
+        ? item.sshConnectionId
+        : null
+    const updatedAt =
+      'updatedAt' in item && typeof item.updatedAt === 'number' ? item.updatedAt : Date.now()
+
+    deduped.set(getRecentWorkingTargetKey({ workingFolder, sshConnectionId }), {
+      workingFolder,
+      sshConnectionId,
+      updatedAt
+    })
+  }
+
+  return Array.from(deduped.values())
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, MAX_RECENT_WORKING_TARGETS)
+}
 
 function getSystemLanguage(): 'en' | 'zh' {
   const lang = navigator.language || navigator.languages?.[0] || 'en'
@@ -128,9 +186,23 @@ interface SettingsStore {
   promptRecommendationModels: PromptRecommendationModelBindings
   newSessionDefaultModel: SessionDefaultModelBinding | null
   mainModelSelectionMode: MainModelSelectionMode
+  projectDefaultDirectoryMode: ProjectDefaultDirectoryMode
+  projectDefaultDirectory: string
+  lastProjectDirectory: string
+  recentWorkingTargets: RecentWorkingTarget[]
 
-  updateSettings: (patch: Partial<Omit<SettingsStore, 'updateSettings'>>) => void
+  updateSettings: (patch: Partial<SettingsStoreData>) => void
+  pushRecentWorkingTarget: (target: {
+    workingFolder: string
+    sshConnectionId?: string | null
+  }) => void
+  clearRecentWorkingTargets: () => void
 }
+
+type SettingsStoreData = Omit<
+  SettingsStore,
+  'updateSettings' | 'pushRecentWorkingTarget' | 'clearRecentWorkingTargets'
+>
 
 export const useSettingsStore = create<SettingsStore>()(
   persist(
@@ -195,12 +267,28 @@ export const useSettingsStore = create<SettingsStore>()(
       },
       newSessionDefaultModel: null,
       mainModelSelectionMode: 'auto',
+      projectDefaultDirectoryMode: 'last-used',
+      projectDefaultDirectory: '',
+      lastProjectDirectory: '',
+      recentWorkingTargets: [],
 
-      updateSettings: (patch) => set(patch)
+      updateSettings: (patch) => set(patch),
+      pushRecentWorkingTarget: (target) =>
+        set((state) => ({
+          recentWorkingTargets: sanitizeRecentWorkingTargets([
+            {
+              workingFolder: normalizeWorkingFolderPath(target.workingFolder),
+              sshConnectionId: target.sshConnectionId ?? null,
+              updatedAt: Date.now()
+            },
+            ...state.recentWorkingTargets
+          ])
+        })),
+      clearRecentWorkingTargets: () => set({ recentWorkingTargets: [] })
     }),
     {
       name: 'opencowork-settings',
-      version: 10,
+      version: 11,
       storage: createJSONStorage(() => ipcStorage),
       migrate: (persisted: unknown, version: number) => {
         const state = persisted as Record<string, unknown>
@@ -238,6 +326,16 @@ export const useSettingsStore = create<SettingsStore>()(
         if (state.mainModelSelectionMode === undefined) {
           state.mainModelSelectionMode = 'auto'
         }
+        if (state.projectDefaultDirectoryMode === undefined) {
+          state.projectDefaultDirectoryMode = 'last-used'
+        }
+        if (state.projectDefaultDirectory === undefined) {
+          state.projectDefaultDirectory = ''
+        }
+        if (state.lastProjectDirectory === undefined) {
+          state.lastProjectDirectory = ''
+        }
+        state.recentWorkingTargets = sanitizeRecentWorkingTargets(state.recentWorkingTargets)
         // Add appearance settings if missing
         if (state.backgroundColor === undefined) {
           state.backgroundColor = ''
@@ -334,7 +432,11 @@ export const useSettingsStore = create<SettingsStore>()(
         // Prompt Recommendation Settings
         promptRecommendationModels: state.promptRecommendationModels,
         newSessionDefaultModel: state.newSessionDefaultModel,
-        mainModelSelectionMode: state.mainModelSelectionMode
+        mainModelSelectionMode: state.mainModelSelectionMode,
+        projectDefaultDirectoryMode: state.projectDefaultDirectoryMode,
+        projectDefaultDirectory: state.projectDefaultDirectory,
+        lastProjectDirectory: state.lastProjectDirectory,
+        recentWorkingTargets: state.recentWorkingTargets
         // NOTE: apiKey is intentionally excluded from localStorage persistence.
         // In production, it should be stored securely in the main process.
       })

@@ -253,6 +253,8 @@ interface ChatStore {
   duplicateSession: (sessionId: string) => Promise<string | null>
   togglePinSession: (sessionId: string) => void
   restoreSession: (session: Session) => void
+  importSession: (session: Session, projectId?: string | null) => string
+  importProjectArchive: (payload: { project: Project; sessions: Session[] }) => string
   clearAllSessions: () => void
   removeLastAssistantMessage: (sessionId: string) => boolean
   removeLastUserMessage: (sessionId: string) => void
@@ -398,6 +400,15 @@ function rowToMessage(row: MessageRow): UnifiedMessage {
   }
 }
 
+function cloneImportedMessages(messages: UnifiedMessage[] | undefined): UnifiedMessage[] {
+  const source = Array.isArray(messages) ? messages : []
+  const cloned = JSON.parse(JSON.stringify(source)) as UnifiedMessage[]
+  return cloned.map((message) => ({
+    ...message,
+    id: nanoid()
+  }))
+}
+
 function sanitizeToolBlocksForResend(messages: UnifiedMessage[]): {
   messages: UnifiedMessage[]
   changed: boolean
@@ -465,6 +476,23 @@ function sanitizeToolBlocksForResend(messages: UnifiedMessage[]): {
 
   if (stripIds.size === 0) {
     return { messages, changed: false }
+  }
+
+  const strippedWriteToolUseIds = [...stripIds].filter((id) => {
+    const block = (assistantMessage.content as ContentBlock[]).find(
+      (item) => item.type === 'tool_use' && item.id === id
+    )
+    return block?.type === 'tool_use' && block.name === 'Write'
+  })
+  if (strippedWriteToolUseIds.length > 0) {
+    console.log('[WriteTrace] sanitizeToolErrorsForResend stripping write tool blocks', {
+      assistantIndex,
+      stripIds: [...stripIds],
+      strippedWriteToolUseIds,
+      toolUseIds: [...toolUseIds],
+      toolResultIds: [...toolResultIds],
+      tailMessageCount: messages.length - assistantIndex
+    })
   }
 
   let changed = false
@@ -758,6 +786,13 @@ export const useChatStore = create<ChatStore>()(
         patch.sshConnectionId !== undefined
           ? (patch.sshConnectionId ?? undefined)
           : current.sshConnectionId
+
+      if (nextWorkingFolder) {
+        useSettingsStore.getState().pushRecentWorkingTarget({
+          workingFolder: nextWorkingFolder,
+          sshConnectionId: nextSshConnectionId ?? null
+        })
+      }
 
       if (
         nextWorkingFolder === current.workingFolder &&
@@ -1066,7 +1101,12 @@ export const useChatStore = create<ChatStore>()(
         if (idx !== -1) state.sessions.splice(idx, 1)
 
         if (state.activeSessionId === id) {
-          state.activeSessionId = state.sessions[0]?.id ?? null
+          const nextSessionInProject = deletedProjectId
+            ? state.sessions
+                .filter((session) => session.projectId === deletedProjectId)
+                .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+            : null
+          state.activeSessionId = nextSessionInProject?.id ?? null
         }
 
         nextActiveId = state.activeSessionId
@@ -1360,6 +1400,100 @@ export const useChatStore = create<ChatStore>()(
       const activePlan = usePlanStore.getState().getPlanBySession(normalizedSession.id)
       usePlanStore.getState().setActivePlan(activePlan?.id ?? null)
       useUIStore.getState().syncSessionScopedState(normalizedSession.id)
+    },
+
+    importSession: (session, projectId) => {
+      let targetProjectId =
+        projectId ??
+        session.projectId ??
+        get().activeProjectId ??
+        get().projects.find((project) => !project.pluginId)?.id ??
+        get().projects[0]?.id ??
+        null
+
+      const project = get().projects.find((item) => item.id === targetProjectId)
+      if (project) {
+        targetProjectId = project.id
+      }
+
+      const importedMessages = cloneImportedMessages(session.messages)
+      const normalizedSession: Session = {
+        ...session,
+        id: nanoid(),
+        messages: importedMessages,
+        messageCount: importedMessages.length,
+        messagesLoaded: true,
+        promptSnapshot: undefined,
+        projectId: targetProjectId ?? undefined,
+        workingFolder: project?.workingFolder ?? session.workingFolder,
+        sshConnectionId: project?.sshConnectionId ?? session.sshConnectionId,
+        pluginId: undefined,
+        externalChatId: undefined,
+        pluginChatType: undefined,
+        pluginSenderId: undefined,
+        pluginSenderName: undefined
+      }
+
+      set((state) => {
+        state.sessions.push(normalizedSession)
+        state.activeSessionId = normalizedSession.id
+        if (targetProjectId) {
+          state.activeProjectId = targetProjectId
+        }
+      })
+      dbCreateSession(normalizedSession)
+      if (!targetProjectId) {
+        void get()
+          .ensureDefaultProject()
+          .then((defaultProject) => {
+            if (!defaultProject) return
+            set((state) => {
+              const target = state.sessions.find((item) => item.id === normalizedSession.id)
+              if (!target || target.projectId) return
+              target.projectId = defaultProject.id
+              target.workingFolder = defaultProject.workingFolder
+              target.sshConnectionId = defaultProject.sshConnectionId
+              state.activeProjectId = defaultProject.id
+            })
+            dbUpdateSession(normalizedSession.id, {
+              projectId: defaultProject.id,
+              workingFolder: defaultProject.workingFolder ?? null,
+              sshConnectionId: defaultProject.sshConnectionId ?? null
+            })
+          })
+      }
+      normalizedSession.messages.forEach((msg, i) => dbAddMessage(normalizedSession.id, msg, i))
+      useTaskStore.getState().clearTasks()
+      const activePlan = usePlanStore.getState().getPlanBySession(normalizedSession.id)
+      usePlanStore.getState().setActivePlan(activePlan?.id ?? null)
+      useUIStore.getState().syncSessionScopedState(normalizedSession.id)
+      return normalizedSession.id
+    },
+
+    importProjectArchive: ({ project, sessions }) => {
+      const now = Date.now()
+      const importedProject: Project = {
+        ...project,
+        id: nanoid(),
+        createdAt: now,
+        updatedAt: now,
+        pluginId: undefined
+      }
+
+      dbCreateProject(importedProject)
+
+      const importedSessionIds: string[] = []
+      for (const session of sessions) {
+        const importedSessionId = get().importSession(session, importedProject.id)
+        importedSessionIds.push(importedSessionId)
+      }
+
+      set((state) => {
+        state.activeProjectId = importedProject.id
+        state.activeSessionId = importedSessionIds[0] ?? state.activeSessionId
+      })
+
+      return importedProject.id
     },
 
     clearAllSessions: () => {

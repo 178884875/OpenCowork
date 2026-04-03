@@ -35,12 +35,29 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   '.heif': 'image/heif'
 }
 
+const MAX_FILE_READ_BYTES = 50 * 1024 * 1024 // 50 MB
+const MAX_IMAGE_READ_BYTES = 20 * 1024 * 1024 // 20 MB
+
+async function assertFileSize(filePath: string, limit: number): Promise<number> {
+  const stat = await fs.promises.stat(filePath)
+  if (stat.size > limit) {
+    throw new Error(
+      `File too large (${(stat.size / 1024 / 1024).toFixed(1)} MB, limit ${(limit / 1024 / 1024).toFixed(0)} MB): ${filePath}`
+    )
+  }
+  return stat.size
+}
+
 const FILE_SEARCH_CACHE_TTL_MS = 5_000
 const FILE_SEARCH_MAX_RESULTS = 20
+const FILE_SEARCH_CACHE_MAX_ENTRIES = 50
 const fileSearchCache = new Map<string, { expiresAt: number; files: string[] }>()
+const FILE_OPERATION_RETRY_DELAYS_MS = [40, 120, 250, 500, 1_000]
 
 type GrepResultItem = { file: string; line: number; text: string }
 type GrepLimitReason = 'max_results' | 'max_output_bytes' | 'timeout' | null
+
+type FileOperationError = NodeJS.ErrnoException & { message: string }
 
 interface GrepCollector {
   results: GrepResultItem[]
@@ -288,26 +305,80 @@ async function listSearchableFiles(searchRoot: string): Promise<string[]> {
     files
   })
 
+  // Evict oldest entries if cache grows too large
+  if (fileSearchCache.size > FILE_SEARCH_CACHE_MAX_ENTRIES) {
+    const firstKey = fileSearchCache.keys().next().value
+    if (firstKey !== undefined) fileSearchCache.delete(firstKey)
+  }
+
   return files
 }
 
-function isBinaryFile(filePath: string): boolean {
+async function isBinaryFile(filePath: string): Promise<boolean> {
   try {
     const ext = path.extname(filePath).toLowerCase()
     if (GREP_BINARY_EXTENSIONS.has(ext)) return true
 
-    const buffer = Buffer.alloc(512)
-    const fd = fs.openSync(filePath, 'r')
-    const bytesRead = fs.readSync(fd, buffer, 0, 512, 0)
-    fs.closeSync(fd)
-
-    for (let i = 0; i < bytesRead; i++) {
-      if (buffer[i] === 0) return true
+    const handle = await fs.promises.open(filePath, 'r')
+    try {
+      const buffer = Buffer.alloc(512)
+      const { bytesRead } = await handle.read(buffer, 0, 512, 0)
+      for (let i = 0; i < bytesRead; i++) {
+        if (buffer[i] === 0) return true
+      }
+      return false
+    } finally {
+      await handle.close()
     }
-    return false
   } catch {
     return true
   }
+}
+
+function isRetryableFileError(error: unknown): error is FileOperationError {
+  if (!(error instanceof Error)) return false
+  const code = (error as FileOperationError).code
+  return code === 'EBUSY' || code === 'EPERM' || code === 'EACCES'
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function withFileOperationRetries<T>(operation: () => T | Promise<T>): Promise<T> {
+  let lastError: unknown
+
+  for (let attempt = 0; attempt <= FILE_OPERATION_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      return await operation()
+    } catch (error) {
+      lastError = error
+      if (!isRetryableFileError(error) || attempt === FILE_OPERATION_RETRY_DELAYS_MS.length) {
+        throw error
+      }
+      await delay(FILE_OPERATION_RETRY_DELAYS_MS[attempt])
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
+}
+
+async function writeTextFileWithRetries(filePath: string, content: string): Promise<void> {
+  await withFileOperationRetries(async () => {
+    await fs.promises.writeFile(filePath, content, 'utf-8')
+  })
+}
+
+async function writeBinaryFileWithRetries(filePath: string, data: Buffer): Promise<void> {
+  await withFileOperationRetries(async () => {
+    await fs.promises.writeFile(filePath, data)
+  })
+}
+
+async function moveFileWithRetries(from: string, to: string): Promise<void> {
+  await withFileOperationRetries(async () => {
+    await fs.promises.rename(from, to)
+  })
 }
 
 function createGrepCollector(searchRoot: string): GrepCollector {
@@ -558,22 +629,29 @@ export function registerFsHandlers(): void {
       try {
         const ext = path.extname(args.path).toLowerCase()
         if (IMAGE_EXTENSIONS.has(ext)) {
-          const buffer = fs.readFileSync(args.path)
+          await assertFileSize(args.path, MAX_IMAGE_READ_BYTES)
+          const buffer = await fs.promises.readFile(args.path)
           return {
             type: 'image',
             mediaType: IMAGE_MIME_TYPES[ext] || 'application/octet-stream',
             data: buffer.toString('base64')
           }
         }
-        const content = fs.readFileSync(args.path, 'utf-8')
+        await assertFileSize(args.path, MAX_FILE_READ_BYTES)
+        const content = await fs.promises.readFile(args.path, 'utf-8')
+        const lines = content.split('\n')
+        const MAX_READ_LINES = 2000
+        const start = Math.max(0, (args.offset ?? 1) - 1)
+        const end = args.limit ? start + args.limit : start + MAX_READ_LINES
+        const clampedEnd = Math.min(end, start + MAX_READ_LINES, lines.length)
         if (args.offset !== undefined || args.limit !== undefined) {
-          const lines = content.split('\n')
-          const start = (args.offset ?? 1) - 1
-          const end = args.limit ? start + args.limit : lines.length
           return lines
-            .slice(start, end)
+            .slice(start, clampedEnd)
             .map((line, i) => `${start + i + 1}\t${line}`)
             .join('\n')
+        }
+        if (lines.length > MAX_READ_LINES) {
+          return lines.slice(0, MAX_READ_LINES).join('\n')
         }
         return content
       } catch (err) {
@@ -594,12 +672,19 @@ export function registerFsHandlers(): void {
     ) => {
       try {
         const beforeExists = fs.existsSync(args.path)
-        const beforeText = beforeExists ? fs.readFileSync(args.path, 'utf-8') : undefined
+        let beforeText: string | undefined
+        if (beforeExists) {
+          try {
+            beforeText = await fs.promises.readFile(args.path, 'utf-8')
+          } catch {
+            // best-effort: skip diff if read fails
+          }
+        }
         const dir = path.dirname(args.path)
         if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true })
+          await fs.promises.mkdir(dir, { recursive: true })
         }
-        fs.writeFileSync(args.path, args.content, 'utf-8')
+        await writeTextFileWithRetries(args.path, args.content)
         recordLocalTextWriteChange({
           meta: args.changeMeta,
           filePath: args.path,
@@ -641,7 +726,7 @@ export function registerFsHandlers(): void {
 
   ipcMain.handle('fs:mkdir', async (_event, args: { path: string }) => {
     try {
-      fs.mkdirSync(args.path, { recursive: true })
+      await fs.promises.mkdir(args.path, { recursive: true })
       return { success: true }
     } catch (err) {
       return { error: String(err) }
@@ -650,7 +735,7 @@ export function registerFsHandlers(): void {
 
   ipcMain.handle('fs:delete', async (_event, args: { path: string }) => {
     try {
-      fs.rmSync(args.path, { recursive: true, force: true })
+      await fs.promises.rm(args.path, { recursive: true, force: true })
       return { success: true }
     } catch (err) {
       return { error: String(err) }
@@ -659,18 +744,20 @@ export function registerFsHandlers(): void {
 
   ipcMain.handle('fs:move', async (_event, args: { from: string; to: string }) => {
     try {
-      fs.renameSync(args.from, args.to)
+      await moveFileWithRetries(args.from, args.to)
       return { success: true }
     } catch (err) {
       return { error: String(err) }
     }
   })
 
-  ipcMain.handle('fs:select-folder', async () => {
+  ipcMain.handle('fs:select-folder', async (_event, args?: { defaultPath?: string }) => {
     const win = BrowserWindow.getFocusedWindow()
     if (!win) return { canceled: true }
+    const defaultPath = args?.defaultPath?.trim()
     const result = await dialog.showOpenDialog(win, {
-      properties: ['openDirectory']
+      properties: ['openDirectory'],
+      defaultPath: defaultPath || undefined
     })
     if (result.canceled) return { canceled: true }
     return { path: result.filePaths[0] }
@@ -680,8 +767,8 @@ export function registerFsHandlers(): void {
     try {
       const desktopPath = app.getPath('desktop')
       const desktopName = path.basename(desktopPath) || 'Desktop'
-      const directories = fs
-        .readdirSync(desktopPath, { withFileTypes: true })
+      const entries = await fs.promises.readdir(desktopPath, { withFileTypes: true })
+      const directories = entries
         .filter((entry) => entry.isDirectory())
         .map((entry) => ({
           name: entry.name,
@@ -913,7 +1000,7 @@ export function registerFsHandlers(): void {
       if (result.canceled || !result.filePath) return { canceled: true }
       try {
         const base64 = args.dataUrl.replace(/^data:image\/\w+;base64,/, '')
-        fs.writeFileSync(result.filePath, Buffer.from(base64, 'base64'))
+        await writeBinaryFileWithRetries(result.filePath, Buffer.from(base64, 'base64'))
         return { success: true, filePath: result.filePath }
       } catch (err) {
         return { error: String(err) }
@@ -938,7 +1025,8 @@ export function registerFsHandlers(): void {
   // Binary file read (returns base64)
   ipcMain.handle('fs:read-file-binary', async (_event, args: { path: string }) => {
     try {
-      const buffer = fs.readFileSync(args.path)
+      await assertFileSize(args.path, MAX_FILE_READ_BYTES)
+      const buffer = await fs.promises.readFile(args.path)
       return { data: buffer.toString('base64') }
     } catch (err) {
       return { error: String(err) }
@@ -950,9 +1038,9 @@ export function registerFsHandlers(): void {
     try {
       const dir = path.dirname(args.path)
       if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true })
+        await fs.promises.mkdir(dir, { recursive: true })
       }
-      fs.writeFileSync(args.path, Buffer.from(args.data, 'base64'))
+      await writeBinaryFileWithRetries(args.path, Buffer.from(args.data, 'base64'))
       return { success: true }
     } catch (err) {
       return { error: String(err) }
@@ -1050,7 +1138,8 @@ export function registerFsHandlers(): void {
         const result = await mammoth.extractRawText({ path: args.path })
         return { content: result.value, name: path.basename(args.path) }
       }
-      const content = fs.readFileSync(args.path, 'utf-8')
+      await assertFileSize(args.path, MAX_FILE_READ_BYTES)
+      const content = await fs.promises.readFile(args.path, 'utf-8')
       return { content, name: path.basename(args.path) }
     } catch (err) {
       return { error: String(err) }

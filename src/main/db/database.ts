@@ -3,6 +3,7 @@ import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs'
 import { nanoid } from 'nanoid'
+import { readSettings } from '../ipc/settings-handlers'
 
 const DATA_DIR = path.join(os.homedir(), '.open-cowork')
 const DB_PATH = path.join(DATA_DIR, 'data.db')
@@ -51,20 +52,39 @@ function deriveProjectNameFromFolder(folderPath: string): string {
   return sanitizeProjectName(name)
 }
 
+function getPreferredLocalProjectBaseDirectory(): string {
+  const settings = readSettings()
+  const mode = settings.projectDefaultDirectoryMode
+  const customDir =
+    typeof settings.projectDefaultDirectory === 'string'
+      ? settings.projectDefaultDirectory.trim()
+      : ''
+  const lastUsedDir =
+    typeof settings.lastProjectDirectory === 'string' ? settings.lastProjectDirectory.trim() : ''
+
+  if (mode === 'custom' && customDir) {
+    return customDir
+  }
+  if (lastUsedDir) {
+    return lastUsedDir
+  }
+  return path.join(os.homedir(), 'Documents')
+}
+
 function ensureUniqueLocalProjectDirectory(baseName: string): { name: string; folderPath: string } {
-  const documentsDir = path.join(os.homedir(), 'Documents')
-  if (!fs.existsSync(documentsDir)) {
-    fs.mkdirSync(documentsDir, { recursive: true })
+  const baseDirectory = getPreferredLocalProjectBaseDirectory()
+  if (!fs.existsSync(baseDirectory)) {
+    fs.mkdirSync(baseDirectory, { recursive: true })
   }
 
   const safeBaseName = sanitizeProjectName(baseName)
   let candidateName = safeBaseName
   let suffix = 1
-  let candidatePath = path.join(documentsDir, candidateName)
+  let candidatePath = path.join(baseDirectory, candidateName)
 
   while (fs.existsSync(candidatePath)) {
     candidateName = `${safeBaseName} (${suffix})`
-    candidatePath = path.join(documentsDir, candidateName)
+    candidatePath = path.join(baseDirectory, candidateName)
     suffix += 1
   }
 

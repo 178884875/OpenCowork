@@ -10,7 +10,10 @@ import {
   CalendarDays,
   ChevronDown,
   CircleHelp,
-  ShieldCheck,
+  Copy,
+  Download,
+  Eraser,
+  FileText,
   FolderInput,
   FolderOpen,
   FolderPlus,
@@ -20,25 +23,30 @@ import {
   Info,
   Languages,
   Loader2,
+  MessageSquare,
+  Monitor,
   MoreHorizontal,
   PanelLeftClose,
+  Pencil,
   Pin,
   PinOff,
   Plus,
   Settings,
   Trash2,
-  Wand2,
-  Monitor,
-  Pencil,
-  FileText,
-  MessageSquare,
-  Copy,
-  Eraser
+  Upload,
+  Wand2
 } from 'lucide-react'
 import { DynamicIcon } from 'lucide-react/dynamic'
 import { Button } from '@renderer/components/ui/button'
 import { Badge } from '@renderer/components/ui/badge'
 import { Input } from '@renderer/components/ui/input'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger
+} from '@renderer/components/ui/context-menu'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,7 +72,7 @@ import {
   DialogHeader,
   DialogTitle
 } from '@renderer/components/ui/dialog'
-import { useChatStore, type SessionMode } from '@renderer/stores/chat-store'
+import { useChatStore, type Project, type Session, type SessionMode } from '@renderer/stores/chat-store'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { useSettingsStore } from '@renderer/stores/settings-store'
 import { useAgentStore } from '@renderer/stores/agent-store'
@@ -78,17 +86,11 @@ import { toast } from 'sonner'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-const modeIcons: Record<SessionMode, React.ReactNode> = {
-  chat: <MessageSquare className="size-4" />,
-  clarify: <CircleHelp className="size-4" />,
-  cowork: <FolderOpen className="size-4" />,
-  code: <FileText className="size-4" />,
-  acp: <ShieldCheck className="size-4" />
-}
-
 type SessionListItem = ReturnType<typeof mapSession>
 type BucketKey = 'today' | 'recentThreeDays' | 'recentWeek' | 'oneMonth' | 'older'
-type FolderPickerTarget = { type: 'create' } | { type: 'project'; projectId: string }
+type FolderPickerTarget =
+  | { type: 'create'; projectName: string }
+  | { type: 'project'; projectId: string }
 
 function mapSession(session: ReturnType<typeof useChatStore.getState>['sessions'][number]): {
   id: string
@@ -117,6 +119,7 @@ function mapSession(session: ReturnType<typeof useChatStore.getState>['sessions'
 function mapProject(project: ReturnType<typeof useChatStore.getState>['projects'][number]): {
   id: string
   name: string
+  createdAt: number
   updatedAt: number
   workingFolder?: string
   sshConnectionId?: string
@@ -126,6 +129,7 @@ function mapProject(project: ReturnType<typeof useChatStore.getState>['projects'
   return {
     id: project.id,
     name: project.name,
+    createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     workingFolder: project.workingFolder,
     sshConnectionId: project.sshConnectionId,
@@ -159,16 +163,6 @@ function getBucketKey(updatedAt: number): BucketKey {
   return 'older'
 }
 
-function formatSessionStamp(updatedAt: number): string {
-  const date = new Date(updatedAt)
-  const now = new Date()
-  const sameDay = date.toDateString() === now.toDateString()
-  if (sameDay) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  }
-  return date.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
-}
-
 function deriveProjectNameFromFolder(folderPath?: string | null): string {
   const normalized = folderPath?.trim().replace(/[\\/]+$/, '')
   if (!normalized) return 'New Project'
@@ -184,6 +178,55 @@ function downloadMarkdown(filename: string, content: string): void {
   anchor.download = filename
   anchor.click()
   URL.revokeObjectURL(url)
+}
+
+function downloadJson(filename: string, data: unknown): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function sanitizeExportFileName(name: string): string {
+  const sanitized = name.replace(/[^a-zA-Z0-9-_ ]/g, '').trim()
+  return sanitized || 'conversation'
+}
+
+type ExportedSessionPayload = {
+  version: 1
+  type: 'session'
+  session: Session
+}
+
+type ExportedProjectPayload = {
+  version: 1
+  type: 'project'
+  project: Project
+  sessions: Session[]
+}
+
+type VirtualListItem<T> =
+  | { type: 'header'; key: string; label: string }
+  | { type: 'item'; key: string; data: T }
+
+function buildVirtualListItems<T>(
+  sections: Array<{ key: string; label: string; items: T[] }>
+): VirtualListItem<T>[] {
+  return sections.flatMap((section) => [
+    { type: 'header' as const, key: `header-${section.key}`, label: section.label },
+    ...section.items.map((item, index) => ({
+      type: 'item' as const,
+      key: `${section.key}-${index}`,
+      data: item
+    }))
+  ])
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 export function WorkspaceSidebar(): React.JSX.Element {
@@ -243,6 +286,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
   }, [sessionDigest])
   const activeProjectId = useChatStore((state) => state.activeProjectId)
   const activeSessionId = useChatStore((state) => state.activeSessionId)
+  const streamingSessionIdsSig = useChatStore((state) =>
+    Object.keys(state.streamingMessages).sort().join('\u0000')
+  )
   const createProject = useChatStore((state) => state.createProject)
   const setActiveProject = useChatStore((state) => state.setActiveProject)
   const renameProject = useChatStore((state) => state.renameProject)
@@ -254,14 +300,32 @@ export function WorkspaceSidebar(): React.JSX.Element {
   const duplicateSession = useChatStore((state) => state.duplicateSession)
   const clearSessionMessages = useChatStore((state) => state.clearSessionMessages)
   const togglePinSession = useChatStore((state) => state.togglePinSession)
+  const importSession = useChatStore((state) => state.importSession)
+  const importProjectArchive = useChatStore((state) => state.importProjectArchive)
   const runningSessions = useAgentStore((state) => state.runningSessions)
   const runningSubAgentSessionIdsSig = useAgentStore((state) => state.runningSubAgentSessionIdsSig)
+  const runningBackgroundSessionIdsSig = useAgentStore((state) =>
+    Object.values(state.backgroundProcesses)
+      .filter((process) => process.sessionId && process.status === 'running')
+      .map((process) => process.sessionId as string)
+      .sort()
+      .join('\u0000')
+  )
   const activeTeamSessionId = useTeamStore((state) => state.activeTeam?.sessionId ?? null)
   const userAvatar = useSettingsStore((state) => state.userAvatar)
   const userName = useSettingsStore((state) => state.userName)
   const language = useSettingsStore((state) => state.language)
+  const projectDefaultDirectoryMode = useSettingsStore((state) => state.projectDefaultDirectoryMode)
+  const projectDefaultDirectory = useSettingsStore((state) => state.projectDefaultDirectory)
+  const lastProjectDirectory = useSettingsStore((state) => state.lastProjectDirectory)
   const searchRef = useRef<HTMLInputElement>(null)
+  const importSessionInputRef = useRef<HTMLInputElement>(null)
+  const importProjectInputRef = useRef<HTMLInputElement>(null)
+  const projectScrollRef = useRef<HTMLDivElement>(null)
+  const sessionScrollRef = useRef<HTMLDivElement>(null)
   const [search, setSearch] = useState('')
+  const [projectScrollTop, setProjectScrollTop] = useState(0)
+  const [sessionScrollTop, setSessionScrollTop] = useState(0)
   const [renameDialog, setRenameDialog] = useState<
     | { type: 'project'; id: string; currentName: string }
     | { type: 'session'; id: string; currentName: string }
@@ -274,9 +338,19 @@ export function WorkspaceSidebar(): React.JSX.Element {
     | null
   >(null)
   const [folderPickerTarget, setFolderPickerTarget] = useState<FolderPickerTarget | null>(null)
+  const [createProjectDialogOpen, setCreateProjectDialogOpen] = useState(false)
+  const [newProjectName, setNewProjectName] = useState('')
   const runningSubAgentSessionIds = useMemo(
     () => new Set(runningSubAgentSessionIdsSig ? runningSubAgentSessionIdsSig.split('\u0000') : []),
     [runningSubAgentSessionIdsSig]
+  )
+  const runningBackgroundSessionIds = useMemo(
+    () => new Set(runningBackgroundSessionIdsSig ? runningBackgroundSessionIdsSig.split('\u0000') : []),
+    [runningBackgroundSessionIdsSig]
+  )
+  const streamingSessionIds = useMemo(
+    () => new Set(streamingSessionIdsSig ? streamingSessionIdsSig.split('\u0000') : []),
+    [streamingSessionIdsSig]
   )
   const runningProjectIds = useMemo(() => {
     const projectIds = new Set<string>()
@@ -285,13 +359,22 @@ export function WorkspaceSidebar(): React.JSX.Element {
       const isRunning =
         runningSessions[session.id] === 'running' ||
         runningSubAgentSessionIds.has(session.id) ||
+        runningBackgroundSessionIds.has(session.id) ||
+        streamingSessionIds.has(session.id) ||
         activeTeamSessionId === session.id
       if (isRunning) {
         projectIds.add(session.projectId)
       }
     }
     return projectIds
-  }, [sessions, runningSessions, runningSubAgentSessionIds, activeTeamSessionId])
+  }, [
+    sessions,
+    runningSessions,
+    runningSubAgentSessionIds,
+    runningBackgroundSessionIds,
+    streamingSessionIds,
+    activeTeamSessionId
+  ])
   const visibleProjects = useMemo(
     () =>
       projects
@@ -373,6 +456,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
     leftSidebarWidth || persistedLeftSidebarWidth || LEFT_SIDEBAR_DEFAULT_WIDTH
   )
 
+  const effectiveDefaultProjectDirectory =
+    projectDefaultDirectoryMode === 'custom' && projectDefaultDirectory.trim()
+      ? projectDefaultDirectory.trim()
+      : lastProjectDirectory.trim()
+
   const openHome = useCallback(() => {
     useUIStore.getState().navigateToHome()
   }, [])
@@ -398,9 +486,93 @@ export function WorkspaceSidebar(): React.JSX.Element {
     useUIStore.getState().navigateToSession()
   }, [])
 
+  const handleImportSessionFile = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.target.value = ''
+      if (!file) return
+      try {
+        const text = await file.text()
+        const payload = JSON.parse(text) as unknown
+        if (!isRecord(payload) || payload.type !== 'session' || !('session' in payload)) {
+          throw new Error('invalid-session-file')
+        }
+        importSession(payload.session as Session, activeProjectId)
+        toast.success(t('sidebar.importSuccess', { defaultValue: '导入成功' }))
+      } catch {
+        toast.error(t('sidebar.importFailed', { defaultValue: '导入失败' }))
+      }
+    },
+    [activeProjectId, importSession, t]
+  )
+
+  const handleImportProjectFile = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.target.value = ''
+      if (!file) return
+      try {
+        const text = await file.text()
+        const payload = JSON.parse(text) as unknown
+        if (
+          !isRecord(payload) ||
+          payload.type !== 'project' ||
+          !('project' in payload) ||
+          !('sessions' in payload) ||
+          !Array.isArray(payload.sessions)
+        ) {
+          throw new Error('invalid-project-file')
+        }
+        importProjectArchive({
+          project: payload.project as Project,
+          sessions: payload.sessions as Session[]
+        })
+        toast.success(t('sidebar.importSuccess', { defaultValue: '导入成功' }))
+      } catch {
+        toast.error(t('sidebar.importFailed', { defaultValue: '导入失败' }))
+      }
+    },
+    [importProjectArchive, t]
+  )
+
   const handleCreateProject = useCallback(() => {
-    setFolderPickerTarget({ type: 'create' })
+    setNewProjectName('')
+    setCreateProjectDialogOpen(true)
   }, [])
+
+  const confirmCreateProject = useCallback(async () => {
+    const trimmedName = newProjectName.trim()
+    const nextProjectName = trimmedName || 'New Project'
+    const settingsState = useSettingsStore.getState()
+    const preferredBaseDirectory =
+      settingsState.projectDefaultDirectoryMode === 'custom'
+        ? settingsState.projectDefaultDirectory.trim()
+        : settingsState.lastProjectDirectory.trim()
+
+    const projectId = await createProject({
+      name: nextProjectName
+    })
+
+    if (preferredBaseDirectory) {
+      settingsState.updateSettings({
+        lastProjectDirectory: preferredBaseDirectory
+      })
+    }
+
+    setActiveProject(projectId)
+    useUIStore.getState().navigateToProject()
+    setCreateProjectDialogOpen(false)
+    toast.success(t('sidebar_toast.projectCreated', { defaultValue: '项目已创建' }))
+  }, [createProject, newProjectName, setActiveProject, t])
+
+  const openCreateProjectFolderPicker = useCallback(() => {
+    const trimmedName = newProjectName.trim()
+    setFolderPickerTarget({
+      type: 'create',
+      projectName: trimmedName || 'New Project'
+    })
+    setCreateProjectDialogOpen(false)
+  }, [newProjectName])
 
   const handleCreateProjectWithDirectory = useCallback(
     async (workingFolder: string, sshConnectionId: string | null) => {
@@ -470,6 +642,8 @@ export function WorkspaceSidebar(): React.JSX.Element {
       const hasRunning =
         runningSessions[deleteTarget.id] === 'running' ||
         runningSubAgentSessionIds.has(deleteTarget.id) ||
+        runningBackgroundSessionIds.has(deleteTarget.id) ||
+        streamingSessionIds.has(deleteTarget.id) ||
         activeTeamSessionId === deleteTarget.id
       if (hasRunning) {
         abortSession(deleteTarget.id)
@@ -487,8 +661,10 @@ export function WorkspaceSidebar(): React.JSX.Element {
     deleteProject,
     deleteSession,
     deleteTarget,
+    runningBackgroundSessionIds,
     runningSessions,
     runningSubAgentSessionIds,
+    streamingSessionIds,
     t
   ])
 
@@ -516,6 +692,63 @@ export function WorkspaceSidebar(): React.JSX.Element {
     ],
     [t]
   )
+  const projectSections = useMemo(
+    () => [{ key: 'projects', label: t('sidebar.projects', { defaultValue: '项目' }), items: filteredProjects }],
+    [filteredProjects, t]
+  )
+  const virtualProjectItems = useMemo(() => buildVirtualListItems(projectSections), [projectSections])
+  const sessionSections = useMemo(
+    () =>
+      bucketDefs
+        .map((bucket) => ({ key: bucket.key, label: bucket.label, items: groupedSessions[bucket.key] }))
+        .filter((section) => section.items.length > 0),
+    [bucketDefs, groupedSessions]
+  )
+  const virtualSessionItems = useMemo(() => buildVirtualListItems(sessionSections), [sessionSections])
+
+  const PROJECT_ROW_HEIGHT = 42
+  const SESSION_ROW_HEIGHT = 38
+  const HEADER_ROW_HEIGHT = 26
+  const OVERSCAN = 8
+
+  const projectVisibleRange = useMemo(() => {
+    const viewportHeight = projectScrollRef.current?.clientHeight ?? 400
+    const start = Math.max(0, Math.floor(projectScrollTop / PROJECT_ROW_HEIGHT) - OVERSCAN)
+    const end = Math.min(
+      virtualProjectItems.length,
+      Math.ceil((projectScrollTop + viewportHeight) / PROJECT_ROW_HEIGHT) + OVERSCAN
+    )
+    return { start, end }
+  }, [projectScrollTop, virtualProjectItems.length])
+
+  const sessionOffsets = useMemo(() => {
+    const offsets: number[] = []
+    let total = 0
+    for (const item of virtualSessionItems) {
+      offsets.push(total)
+      total += item.type === 'header' ? HEADER_ROW_HEIGHT : SESSION_ROW_HEIGHT
+    }
+    return { offsets, total }
+  }, [virtualSessionItems])
+
+  const sessionVisibleRange = useMemo(() => {
+    const viewportHeight = sessionScrollRef.current?.clientHeight ?? 400
+    let start = 0
+    while (
+      start < virtualSessionItems.length &&
+      sessionOffsets.offsets[start] + (virtualSessionItems[start]?.type === 'header' ? HEADER_ROW_HEIGHT : SESSION_ROW_HEIGHT) <
+        sessionScrollTop
+    ) {
+      start += 1
+    }
+    start = Math.max(0, start - OVERSCAN)
+    let end = start
+    while (end < virtualSessionItems.length && sessionOffsets.offsets[end] < sessionScrollTop + viewportHeight) {
+      end += 1
+    }
+    end = Math.min(virtualSessionItems.length, end + OVERSCAN)
+    return { start, end }
+  }, [sessionOffsets.offsets, sessionScrollTop, virtualSessionItems])
 
   const navItems = [
     {
@@ -607,13 +840,24 @@ export function WorkspaceSidebar(): React.JSX.Element {
             </div>
 
             <div className="space-y-1.5 px-2.5 pb-2.5">
-              <Button
-                className="h-8 w-full justify-start gap-2 text-[12px]"
-                onClick={handleCreateSession}
-              >
-                <Plus className="size-4" />
-                {t('sidebar.newChat')}
-              </Button>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  className="h-8 flex-1 justify-start gap-2 text-[12px]"
+                  onClick={handleCreateSession}
+                >
+                  <Plus className="size-4" />
+                  {t('sidebar.newChat')}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-8 shrink-0"
+                  onClick={() => importSessionInputRef.current?.click()}
+                  title={t('sidebar.importSession', { defaultValue: '导入会话' })}
+                >
+                  <Upload className="size-4" />
+                </Button>
+              </div>
               <Button
                 variant={chatView === 'archive' ? 'secondary' : 'ghost'}
                 className="h-8 w-full justify-start gap-2 text-[12px]"
@@ -652,7 +896,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+            <div
+              ref={sessionScrollRef}
+              className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+              onScroll={(event) => setSessionScrollTop(event.currentTarget.scrollTop)}
+            >
               {filteredProjectSessions.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-border/60 px-4 py-6 text-center text-sm text-muted-foreground">
                   {searchQuery
@@ -660,174 +908,157 @@ export function WorkspaceSidebar(): React.JSX.Element {
                     : t('sidebar.noProjectSessions', { defaultValue: '当前项目还没有会话' })}
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {bucketDefs.map((bucket) => {
-                    const items = groupedSessions[bucket.key]
-                    if (items.length === 0) return null
+                <div style={{ height: sessionOffsets.total, position: 'relative' }}>
+                  {virtualSessionItems.slice(sessionVisibleRange.start, sessionVisibleRange.end).map((entry, index) => {
+                    const actualIndex = sessionVisibleRange.start + index
+                    const top = sessionOffsets.offsets[actualIndex] ?? 0
+                    if (entry.type === 'header') {
+                      return (
+                        <div
+                          key={entry.key}
+                          className="px-1 text-[11px] font-medium text-muted-foreground"
+                          style={{ position: 'absolute', top, left: 0, right: 0, height: HEADER_ROW_HEIGHT }}
+                        >
+                          {entry.label}
+                        </div>
+                      )
+                    }
+                    const session = entry.data
+                    const isActive = session.id === activeSessionId && chatView === 'session'
+                    const isRunning =
+                      runningSessions[session.id] === 'running' ||
+                      runningSubAgentSessionIds.has(session.id) ||
+                      runningBackgroundSessionIds.has(session.id) ||
+                      streamingSessionIds.has(session.id) ||
+                      activeTeamSessionId === session.id
                     return (
-                      <section key={bucket.key} className="space-y-1.5">
-                        <div className="px-1 text-[11px] font-medium text-muted-foreground">
-                          {bucket.label}
-                        </div>
-                        <div className="space-y-1">
-                          {items.map((session) => {
-                            const isActive =
-                              session.id === activeSessionId && chatView === 'session'
-                            const isRunning = runningSessions[session.id] === 'running'
-                            return (
-                              <div
-                                key={session.id}
-                                className={cn(
-                                  'group flex items-center gap-2 rounded-lg px-1.5 py-1 transition-colors',
-                                  isActive
-                                    ? 'bg-accent text-accent-foreground'
-                                    : 'hover:bg-muted/50 text-foreground/85'
-                                )}
+                      <div
+                        key={session.id}
+                        style={{ position: 'absolute', top, left: 0, right: 0, height: SESSION_ROW_HEIGHT }}
+                      >
+                        <ContextMenu>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              className={cn(
+                                'group flex h-[34px] items-center gap-2 rounded-lg px-2 py-1.5 transition-colors',
+                                isActive
+                                  ? 'bg-accent text-accent-foreground'
+                                  : 'hover:bg-muted/50 text-foreground/85'
+                              )}
+                            >
+                              <button
+                                type="button"
+                                className="flex min-w-0 flex-1 items-center text-left"
+                                onClick={() => openSession(session.id)}
                               >
-                                <button
-                                  type="button"
-                                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                                  onClick={() => openSession(session.id)}
-                                >
-                                  <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background/50 text-muted-foreground">
-                                    {session.pinned ? (
-                                      <Pin className="size-3.5 text-amber-500" />
-                                    ) : session.icon ? (
-                                      <DynamicIcon
-                                        name={session.icon as never}
-                                        className="size-4"
-                                      />
-                                    ) : (
-                                      modeIcons[session.mode]
-                                    )}
-                                  </span>
-                                  <span className="min-w-0 flex-1">
-                                    <span className="line-clamp-1 block text-[12px] font-medium">
-                                      {session.title}
-                                    </span>
-                                    <span className="mt-0.5 block text-[10px] text-muted-foreground">
-                                      {formatSessionStamp(session.updatedAt)}
-                                    </span>
-                                  </span>
-                                </button>
-                                {isRunning && (
-                                  <Loader2 className="size-3.5 animate-spin text-primary" />
-                                )}
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="size-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
-                                    >
-                                      <MoreHorizontal className="size-4" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-44">
-                                    <DropdownMenuItem onClick={() => openSession(session.id)}>
-                                      <MessageSquare className="size-4" />
-                                      {t('sidebar.openSession', { defaultValue: '打开会话' })}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onSelect={() =>
-                                        deferDropdownAction(() =>
-                                          startRename({
-                                            type: 'session',
-                                            id: session.id,
-                                            currentName: session.title
-                                          })
-                                        )
-                                      }
-                                    >
-                                      <Pencil className="size-4" />
-                                      {tCommon('action.rename')}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onClick={() => {
-                                        togglePinSession(session.id)
-                                        toast.success(
-                                          session.pinned
-                                            ? t('sidebar_toast.unpinned')
-                                            : t('sidebar_toast.pinnedMsg')
-                                        )
-                                      }}
-                                    >
-                                      {session.pinned ? (
-                                        <PinOff className="size-4" />
-                                      ) : (
-                                        <Pin className="size-4" />
-                                      )}
-                                      {session.pinned
-                                        ? tCommon('action.unpin')
-                                        : t('sidebar.pinToTop')}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onClick={async () => {
-                                        await duplicateSession(session.id)
-                                        toast.success(t('sidebar_toast.sessionDuplicated'))
-                                      }}
-                                    >
-                                      <Copy className="size-4" />
-                                      {tCommon('action.duplicate')}
-                                    </DropdownMenuItem>
-                                    {session.messageCount > 0 && (
-                                      <DropdownMenuItem
-                                        onClick={async () => {
-                                          const full = useChatStore
-                                            .getState()
-                                            .sessions.find((item) => item.id === session.id)
-                                          if (!full) return
-                                          await useChatStore
-                                            .getState()
-                                            .loadSessionMessages(session.id)
-                                          const snapshot = useChatStore
-                                            .getState()
-                                            .sessions.find((item) => item.id === session.id)
-                                          if (!snapshot) return
-                                          const fileName = `${snapshot.title.replace(/[^a-zA-Z0-9-_ ]/g, '').trim() || 'conversation'}.md`
-                                          downloadMarkdown(fileName, sessionToMarkdown(snapshot))
-                                          toast.success(t('sidebar_toast.exportedOne'))
-                                        }}
-                                      >
-                                        <FileText className="size-4" />
-                                        {t('sidebar.exportAsMarkdown')}
-                                      </DropdownMenuItem>
-                                    )}
-                                    {session.messageCount > 0 && (
-                                      <DropdownMenuItem
-                                        onClick={() => {
-                                          clearSessionMessages(session.id)
-                                          clearPendingSessionMessages(session.id)
-                                          toast.success(t('sidebar_toast.messagesCleared'))
-                                        }}
-                                      >
-                                        <Eraser className="size-4" />
-                                        {t('sidebar.clearMessages')}
-                                      </DropdownMenuItem>
-                                    )}
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      variant="destructive"
-                                      onSelect={() =>
-                                        deferDropdownAction(() =>
-                                          setDeleteTarget({
-                                            type: 'session',
-                                            id: session.id,
-                                            title: session.title
-                                          })
-                                        )
-                                      }
-                                    >
-                                      <Trash2 className="size-4" />
-                                      {tCommon('action.delete')}
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </section>
+                                <span className="line-clamp-1 min-w-0 flex-1 text-[13px] font-medium leading-5">
+                                  {session.title}
+                                </span>
+                              </button>
+                              {isRunning && (
+                                <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+                              )}
+                            </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="w-52">
+                            <ContextMenuItem onClick={() => openSession(session.id)}>
+                              <MessageSquare className="size-4" />
+                              {t('sidebar.openSession', { defaultValue: '打开会话' })}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onSelect={() =>
+                                deferDropdownAction(() =>
+                                  startRename({ type: 'session', id: session.id, currentName: session.title })
+                                )
+                              }
+                            >
+                              <Pencil className="size-4" />
+                              {tCommon('action.rename')}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onClick={() => {
+                                togglePinSession(session.id)
+                                toast.success(
+                                  session.pinned
+                                    ? t('sidebar_toast.unpinned')
+                                    : t('sidebar_toast.pinnedMsg')
+                                )
+                              }}
+                            >
+                              {session.pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+                              {session.pinned ? tCommon('action.unpin') : t('sidebar.pinToTop')}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              onClick={async () => {
+                                await duplicateSession(session.id)
+                                toast.success(t('sidebar_toast.sessionDuplicated'))
+                              }}
+                            >
+                              <Copy className="size-4" />
+                              {tCommon('action.duplicate')}
+                            </ContextMenuItem>
+                            {session.messageCount > 0 && (
+                              <ContextMenuItem
+                                onClick={async () => {
+                                  await useChatStore.getState().loadSessionMessages(session.id)
+                                  const snapshot = useChatStore
+                                    .getState()
+                                    .sessions.find((item) => item.id === session.id)
+                                  if (!snapshot) return
+                                  const fileName = `${sanitizeExportFileName(snapshot.title)}.md`
+                                  downloadMarkdown(fileName, sessionToMarkdown(snapshot))
+                                  toast.success(t('sidebar_toast.exportedOne'))
+                                }}
+                              >
+                                <FileText className="size-4" />
+                                {t('sidebar.exportAsMarkdown')}
+                              </ContextMenuItem>
+                            )}
+                            <ContextMenuItem
+                              onClick={async () => {
+                                await useChatStore.getState().loadSessionMessages(session.id)
+                                const snapshot = useChatStore
+                                  .getState()
+                                  .sessions.find((item) => item.id === session.id)
+                                if (!snapshot) return
+                                downloadJson(`${sanitizeExportFileName(snapshot.title)}.json`, {
+                                  version: 1,
+                                  type: 'session',
+                                  session: snapshot
+                                } satisfies ExportedSessionPayload)
+                                toast.success(t('sidebar.exportedAsJson', { defaultValue: '已导出为 JSON' }))
+                              }}
+                            >
+                              <Download className="size-4" />
+                              {t('sidebar.exportAsJson', { defaultValue: '导出为 JSON' })}
+                            </ContextMenuItem>
+                            {session.messageCount > 0 && (
+                              <ContextMenuItem
+                                onClick={() => {
+                                  clearSessionMessages(session.id)
+                                  clearPendingSessionMessages(session.id)
+                                  toast.success(t('sidebar_toast.messagesCleared'))
+                                }}
+                              >
+                                <Eraser className="size-4" />
+                                {t('sidebar.clearMessages')}
+                              </ContextMenuItem>
+                            )}
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              variant="destructive"
+                              onSelect={() =>
+                                deferDropdownAction(() =>
+                                  setDeleteTarget({ type: 'session', id: session.id, title: session.title })
+                                )
+                              }
+                            >
+                              <Trash2 className="size-4" />
+                              {tCommon('action.delete')}
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                      </div>
                     )
                   })}
                 </div>
@@ -847,7 +1078,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                     />
                     <div className="min-w-0">
                       <div className="truncate text-[13px] font-semibold text-foreground">
-                        {userName || t('titleBar.defaultName', { defaultValue: 'OpenCowork' })}
+                        {userName || t('titleBar.defaultName', { defaultValue: 'OpenCoWork' })}
                       </div>
                       <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
                         {t('sidebar.profileMenu', { defaultValue: '个人菜单' })}
@@ -858,7 +1089,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-52">
                   <DropdownMenuLabel>
-                    {userName || t('titleBar.defaultName', { defaultValue: 'OpenCowork' })}
+                    {userName || t('titleBar.defaultName', { defaultValue: 'OpenCoWork' })}
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
@@ -925,15 +1156,26 @@ export function WorkspaceSidebar(): React.JSX.Element {
               <div className="text-[10px] font-medium text-muted-foreground">
                 {t('sidebar.projects', { defaultValue: '项目' })}
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-6"
-                onClick={() => void handleCreateProject()}
-                title={t('sidebar.newProject', { defaultValue: '新建项目' })}
-              >
-                <FolderPlus className="size-3.5" />
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6"
+                  onClick={() => importProjectInputRef.current?.click()}
+                  title={t('sidebar.importProject', { defaultValue: '导入项目' })}
+                >
+                  <Upload className="size-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6"
+                  onClick={() => void handleCreateProject()}
+                  title={t('sidebar.newProject', { defaultValue: '新建项目' })}
+                >
+                  <FolderPlus className="size-3.5" />
+                </Button>
+              </div>
             </div>
 
             <div className="px-2 pb-2">
@@ -946,7 +1188,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
               />
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-2.5">
+            <div
+              ref={projectScrollRef}
+              className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-2.5"
+              onScroll={(event) => setProjectScrollTop(event.currentTarget.scrollTop)}
+            >
               {filteredProjects.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-border/60 px-4 py-6 text-center text-sm text-muted-foreground">
                   {searchQuery
@@ -954,134 +1200,153 @@ export function WorkspaceSidebar(): React.JSX.Element {
                     : t('sidebar.noProjects', { defaultValue: '还没有项目' })}
                 </div>
               ) : (
-                <div className="space-y-0.5">
-                  {filteredProjects.map((project) => {
+                <div style={{ height: virtualProjectItems.length * PROJECT_ROW_HEIGHT, position: 'relative' }}>
+                  {virtualProjectItems.slice(projectVisibleRange.start, projectVisibleRange.end).map((entry, index) => {
+                    const actualIndex = projectVisibleRange.start + index
+                    const top = actualIndex * PROJECT_ROW_HEIGHT
+                    if (entry.type === 'header') {
+                      return (
+                        <div
+                          key={entry.key}
+                          className="px-0.5 text-[10px] font-medium text-muted-foreground"
+                          style={{ position: 'absolute', top, left: 0, right: 0, height: PROJECT_ROW_HEIGHT }}
+                        >
+                          {entry.label}
+                        </div>
+                      )
+                    }
+                    const project = entry.data
                     const icon = deriveProjectIcon(project.id, sessions)
-                    const count = sessions.filter(
-                      (session) => session.projectId === project.id
-                    ).length
+                    const count = sessions.filter((session) => session.projectId === project.id).length
                     const isActive = activeProjectId === project.id && chatView !== 'home'
                     const isRunning = runningProjectIds.has(project.id)
                     return (
                       <div
                         key={project.id}
-                        className={cn(
-                          'group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors',
-                          isActive ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/40'
-                        )}
+                        style={{ position: 'absolute', top, left: 0, right: 0, height: PROJECT_ROW_HEIGHT }}
                       >
-                        <button
-                          type="button"
-                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                          onClick={() => openProject(project.id)}
+                        <div
+                          className={cn(
+                            'group flex h-[38px] items-center gap-2 rounded-lg px-2 py-1.5 transition-colors',
+                            isActive ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/40'
+                          )}
                         >
-                          <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted/40 text-foreground">
-                            {renderProjectIcon(icon, 'size-3.5')}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="truncate text-[12px] font-medium text-foreground">
-                                {project.name}
-                              </span>
-                              {project.sshConnectionId ? (
-                                <Badge
-                                  variant="secondary"
-                                  className="h-4 px-1 text-[9px] leading-none"
-                                >
-                                  SSH
-                                </Badge>
-                              ) : null}
+                          <button
+                            type="button"
+                            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                            onClick={() => openProject(project.id)}
+                          >
+                            <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted/40 text-foreground">
+                              {renderProjectIcon(icon, 'size-3.5')}
                             </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate text-[12px] font-medium text-foreground">
+                                  {project.name}
+                                </span>
+                                {project.sshConnectionId ? (
+                                  <Badge variant="secondary" className="h-4 px-1 text-[9px] leading-none">
+                                    SSH
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            </div>
+                          </button>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {isRunning && <Loader2 className="size-3.5 animate-spin text-blue-500" />}
+                            {project.pinned && <Pin className="size-3.5 text-amber-500" />}
+                            <span className="text-[10px] text-muted-foreground">{count}</span>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+                                >
+                                  <MoreHorizontal className="size-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-44">
+                                <DropdownMenuItem onClick={() => openProject(project.id)}>
+                                  <FolderOpen className="size-4" />
+                                  {t('sidebar.openProject', { defaultValue: '打开项目' })}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() =>
+                                    deferDropdownAction(() =>
+                                      startRename({ type: 'project', id: project.id, currentName: project.name })
+                                    )
+                                  }
+                                >
+                                  <Pencil className="size-4" />
+                                  {tCommon('action.rename')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() =>
+                                    deferDropdownAction(() =>
+                                      setFolderPickerTarget({ type: 'project', projectId: project.id })
+                                    )
+                                  }
+                                >
+                                  <FolderInput className="size-4" />
+                                  {t('sidebar.changeWorkingFolder', { defaultValue: '工作目录' })}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={async () => {
+                                    const projectSessions = useChatStore
+                                      .getState()
+                                      .sessions.filter((session) => session.projectId === project.id)
+                                    for (const session of projectSessions) {
+                                      await useChatStore.getState().loadSessionMessages(session.id)
+                                    }
+                                    const snapshotSessions = useChatStore
+                                      .getState()
+                                      .sessions.filter((session) => session.projectId === project.id)
+                                    downloadJson(`${sanitizeExportFileName(project.name)}.json`, {
+                                      version: 1,
+                                      type: 'project',
+                                      project,
+                                      sessions: snapshotSessions
+                                    } satisfies ExportedProjectPayload)
+                                    toast.success(t('sidebar.exportedAsJson', { defaultValue: '已导出为 JSON' }))
+                                  }}
+                                >
+                                  <Download className="size-4" />
+                                  {t('sidebar.exportProjectAsJson', { defaultValue: '导出项目为 JSON' })}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    togglePinProject(project.id)
+                                    toast.success(
+                                      project.pinned
+                                        ? t('sidebar_toast.projectUnpinned', { defaultValue: '项目已取消置顶' })
+                                        : t('sidebar_toast.projectPinned', { defaultValue: '项目已置顶' })
+                                    )
+                                  }}
+                                >
+                                  {project.pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+                                  {project.pinned ? tCommon('action.unpin') : t('sidebar.pinToTop')}
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  onSelect={() =>
+                                    deferDropdownAction(() =>
+                                      setDeleteTarget({
+                                        type: 'project',
+                                        id: project.id,
+                                        name: project.name,
+                                        sessionCount: count
+                                      })
+                                    )
+                                  }
+                                >
+                                  <Trash2 className="size-4" />
+                                  {tCommon('action.delete')}
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
-                        </button>
-                        <div className="flex shrink-0 items-center gap-1">
-                          {isRunning && <Loader2 className="size-3.5 animate-spin text-blue-500" />}
-                          {project.pinned && <Pin className="size-3.5 text-amber-500" />}
-                          <span className="text-[10px] text-muted-foreground">{count}</span>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="size-7 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
-                              >
-                                <MoreHorizontal className="size-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-44">
-                              <DropdownMenuItem onClick={() => openProject(project.id)}>
-                                <FolderOpen className="size-4" />
-                                {t('sidebar.openProject', { defaultValue: '打开项目' })}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onSelect={() =>
-                                  deferDropdownAction(() =>
-                                    startRename({
-                                      type: 'project',
-                                      id: project.id,
-                                      currentName: project.name
-                                    })
-                                  )
-                                }
-                              >
-                                <Pencil className="size-4" />
-                                {tCommon('action.rename')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onSelect={() =>
-                                  deferDropdownAction(() =>
-                                    setFolderPickerTarget({
-                                      type: 'project',
-                                      projectId: project.id
-                                    })
-                                  )
-                                }
-                              >
-                                <FolderInput className="size-4" />
-                                {t('sidebar.changeWorkingFolder', {
-                                  defaultValue: '工作目录'
-                                })}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  togglePinProject(project.id)
-                                  toast.success(
-                                    project.pinned
-                                      ? t('sidebar_toast.projectUnpinned', {
-                                          defaultValue: '项目已取消置顶'
-                                        })
-                                      : t('sidebar_toast.projectPinned', {
-                                          defaultValue: '项目已置顶'
-                                        })
-                                  )
-                                }}
-                              >
-                                {project.pinned ? (
-                                  <PinOff className="size-4" />
-                                ) : (
-                                  <Pin className="size-4" />
-                                )}
-                                {project.pinned ? tCommon('action.unpin') : t('sidebar.pinToTop')}
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onSelect={() =>
-                                  deferDropdownAction(() =>
-                                    setDeleteTarget({
-                                      type: 'project',
-                                      id: project.id,
-                                      name: project.name,
-                                      sessionCount: count
-                                    })
-                                  )
-                                }
-                              >
-                                <Trash2 className="size-4" />
-                                {tCommon('action.delete')}
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
                         </div>
                       </div>
                     )
@@ -1128,6 +1393,20 @@ export function WorkspaceSidebar(): React.JSX.Element {
           </div>
         </div>
 
+        <input
+          ref={importSessionInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={handleImportSessionFile}
+        />
+        <input
+          ref={importProjectInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={handleImportProjectFile}
+        />
         <div
           className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize transition-colors hover:bg-primary/20"
           onMouseDown={(event) => {
@@ -1149,6 +1428,53 @@ export function WorkspaceSidebar(): React.JSX.Element {
           }}
         />
       </aside>
+
+      <Dialog open={createProjectDialogOpen} onOpenChange={setCreateProjectDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('sidebar.newProject', { defaultValue: '新建项目' })}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <div className="text-[12px] font-medium text-foreground">
+                {t('input.projectName', { defaultValue: '项目名' })}
+              </div>
+              <Input
+                value={newProjectName}
+                onChange={(event) => setNewProjectName(event.target.value)}
+                placeholder={t('input.projectNamePlaceholder', {
+                  defaultValue: '例如 OpenCoWork'
+                })}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void confirmCreateProject()
+                }}
+              />
+            </div>
+            <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+              <div className="font-medium text-foreground/80">
+                {t('input.defaultProjectDirectory', { defaultValue: '默认项目位置' })}
+              </div>
+              <div className="mt-1 break-all">
+                {effectiveDefaultProjectDirectory ||
+                  t('input.defaultProjectDirectoryFallback', {
+                    defaultValue: '系统 Documents 目录'
+                  })}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateProjectDialogOpen(false)}>
+              {tCommon('action.cancel')}
+            </Button>
+            <Button variant="outline" onClick={() => void openCreateProjectFolderPicker()}>
+              {t('input.selectFolder', { defaultValue: '选择目录' })}
+            </Button>
+            <Button onClick={() => void confirmCreateProject()}>
+              {t('input.createProject', { defaultValue: '创建项目' })}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!renameDialog} onOpenChange={(open) => !open && setRenameDialog(null)}>
         <DialogContent className="sm:max-w-md">
@@ -1172,6 +1498,8 @@ export function WorkspaceSidebar(): React.JSX.Element {
         }}
         workingFolder={folderPickerProject?.workingFolder}
         sshConnectionId={folderPickerProject?.sshConnectionId}
+        projectName={folderPickerTarget?.type === 'create' ? folderPickerTarget.projectName : undefined}
+        createMode={folderPickerTarget?.type === 'create'}
         onSelectLocalFolder={async (folderPath) => {
           if (folderPickerTarget?.type === 'create') {
             await handleCreateProjectWithDirectory(folderPath, null)

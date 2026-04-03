@@ -8,9 +8,11 @@ import {
   DialogTitle
 } from '@renderer/components/ui/dialog'
 import { Input } from '@renderer/components/ui/input'
+import { Switch } from '@renderer/components/ui/switch'
 import { useSshStore } from '@renderer/stores/ssh-store'
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
 import { cn } from '@renderer/lib/utils'
+import { useSettingsStore } from '@renderer/stores/settings-store'
 
 const DEFAULT_SSH_WORKDIR = ''
 
@@ -36,6 +38,8 @@ interface WorkingFolderSelectorDialogProps {
   onOpenChange: (open: boolean) => void
   workingFolder?: string
   sshConnectionId?: string | null
+  projectName?: string
+  createMode?: boolean
   onSelectLocalFolder: (folderPath: string) => void | Promise<void>
   onSelectSshFolder: (folderPath: string, connectionId: string) => void | Promise<void>
 }
@@ -45,6 +49,8 @@ export function WorkingFolderSelectorDialog({
   onOpenChange,
   workingFolder,
   sshConnectionId,
+  projectName,
+  createMode = false,
   onSelectLocalFolder,
   onSelectSshFolder
 }: WorkingFolderSelectorDialogProps): React.JSX.Element {
@@ -52,8 +58,14 @@ export function WorkingFolderSelectorDialog({
   const { t: tLayout } = useTranslation('layout')
   const sshConnections = useSshStore((state) => state.connections)
   const sshLoaded = useSshStore((state) => state._loaded)
+  const projectDefaultDirectoryMode = useSettingsStore((state) => state.projectDefaultDirectoryMode)
+  const projectDefaultDirectory = useSettingsStore((state) => state.projectDefaultDirectory)
+  const lastProjectDirectory = useSettingsStore((state) => state.lastProjectDirectory)
+  const updateSettings = useSettingsStore((state) => state.updateSettings)
   const [desktopDirectories, setDesktopDirectories] = React.useState<DesktopDirectoryOption[]>([])
   const [desktopDirectoriesLoading, setDesktopDirectoriesLoading] = React.useState(false)
+  const [customDefaultDirectoryEnabled, setCustomDefaultDirectoryEnabled] = React.useState(false)
+  const [defaultDirectoryInput, setDefaultDirectoryInput] = React.useState('')
   const [sshDirInputs, setSshDirInputs] = React.useState<Record<string, string>>({})
   const [sshDirEditingId, setSshDirEditingId] = React.useState<string | null>(null)
 
@@ -87,10 +99,58 @@ export function WorkingFolderSelectorDialog({
     if (!sshLoaded) void useSshStore.getState().loadAll()
   }, [loadDesktopDirectories, open, sshLoaded])
 
+  React.useEffect(() => {
+    if (!open) return
+    setCustomDefaultDirectoryEnabled(projectDefaultDirectoryMode === 'custom')
+    setDefaultDirectoryInput(projectDefaultDirectory)
+  }, [open, projectDefaultDirectory, projectDefaultDirectoryMode])
+
   const normalizedWorkingFolder = workingFolder?.toLowerCase()
+  const preferredDirectory =
+    projectDefaultDirectoryMode === 'custom' && projectDefaultDirectory.trim()
+      ? projectDefaultDirectory.trim()
+      : lastProjectDirectory.trim()
+  const suggestedProjectName = projectName?.trim() || 'New Project'
+
+  const deriveBaseDirectoryFromSelectedFolder = React.useCallback((folderPath: string): string => {
+    const normalized = folderPath.trim().replace(/[\\/]+$/, '')
+    if (!normalized) return ''
+
+    const parent = normalized.replace(/[\\/][^\\/]+$/, '')
+    if (!parent) {
+      if (normalized.startsWith('/')) return '/'
+      if (/^[A-Za-z]:$/.test(normalized)) return `${normalized}\\`
+      return normalized
+    }
+    if (/^[A-Za-z]:$/.test(parent)) {
+      return `${parent}\\`
+    }
+    return parent
+  }, [])
+
+  const persistDefaultDirectoryMode = React.useCallback(
+    (enabled: boolean): void => {
+      setCustomDefaultDirectoryEnabled(enabled)
+      updateSettings({
+        projectDefaultDirectoryMode: enabled ? 'custom' : 'last-used',
+        projectDefaultDirectory: enabled ? defaultDirectoryInput.trim() : projectDefaultDirectory
+      })
+    },
+    [defaultDirectoryInput, projectDefaultDirectory, updateSettings]
+  )
+
+  const handleDefaultDirectoryInputBlur = React.useCallback((): void => {
+    updateSettings({
+      projectDefaultDirectory: defaultDirectoryInput.trim(),
+      projectDefaultDirectoryMode:
+        customDefaultDirectoryEnabled && defaultDirectoryInput.trim() ? 'custom' : 'last-used'
+    })
+  }, [customDefaultDirectoryEnabled, defaultDirectoryInput, updateSettings])
 
   const handleSelectOtherFolder = React.useCallback(async (): Promise<void> => {
-    const result = (await ipcClient.invoke('fs:select-folder')) as {
+    const result = (await ipcClient.invoke('fs:select-folder', {
+      defaultPath: preferredDirectory || undefined
+    })) as {
       canceled?: boolean
       path?: string
     }
@@ -98,15 +158,36 @@ export function WorkingFolderSelectorDialog({
       return
     }
     await onSelectLocalFolder(result.path)
+    updateSettings({ lastProjectDirectory: deriveBaseDirectoryFromSelectedFolder(result.path) })
     onOpenChange(false)
-  }, [onOpenChange, onSelectLocalFolder])
+  }, [onOpenChange, onSelectLocalFolder, preferredDirectory, updateSettings])
+
+  const handlePickDefaultDirectory = React.useCallback(async (): Promise<void> => {
+    const result = (await ipcClient.invoke('fs:select-folder', {
+      defaultPath: defaultDirectoryInput.trim() || preferredDirectory || undefined
+    })) as {
+      canceled?: boolean
+      path?: string
+    }
+    if (result.canceled || !result.path) {
+      return
+    }
+    setDefaultDirectoryInput(result.path)
+    updateSettings({
+      projectDefaultDirectoryMode: 'custom',
+      projectDefaultDirectory: result.path,
+      lastProjectDirectory: result.path
+    })
+    setCustomDefaultDirectoryEnabled(true)
+  }, [defaultDirectoryInput, preferredDirectory, updateSettings])
 
   const handleSelectDesktopFolder = React.useCallback(
     async (folderPath: string): Promise<void> => {
       await onSelectLocalFolder(folderPath)
+      updateSettings({ lastProjectDirectory: folderPath })
       onOpenChange(false)
     },
-    [onOpenChange, onSelectLocalFolder]
+    [onOpenChange, onSelectLocalFolder, updateSettings]
   )
 
   const handleSelectSshFolder = React.useCallback(
@@ -127,29 +208,110 @@ export function WorkingFolderSelectorDialog({
       <DialogContent className="p-4 sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="text-sm">
-            {t('input.selectFolder', {
-              defaultValue: 'Select working folder'
-            })}
+            {createMode
+              ? t('input.createProject', { defaultValue: 'Create project' })
+              : t('input.selectFolder', {
+                  defaultValue: 'Select working folder'
+                })}
           </DialogTitle>
         </DialogHeader>
 
         <div className="-mt-1 rounded-xl border bg-background/60 p-3">
-          <div className="mb-2 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
-            <p className="text-[10px] text-muted-foreground/70">
-              {t('input.currentWorkingFolder', {
-                defaultValue: 'Current working folder'
-              })}
-            </p>
-            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <FolderOpen className="size-3 shrink-0" />
-              <span className="truncate">
-                {workingFolder ??
-                  t('input.noWorkingFolderSelected', {
-                    defaultValue: 'No folder selected'
-                  })}
-              </span>
+          {createMode ? (
+            <div className="mb-3 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
+              <p className="text-[10px] text-muted-foreground/70">
+                {t('input.projectName', {
+                  defaultValue: 'Project name'
+                })}
+              </p>
+              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <FolderOpen className="size-3 shrink-0" />
+                <span className="truncate">{suggestedProjectName}</span>
+              </div>
+              <p className="mt-1 text-[10px] text-muted-foreground/60">
+                {t('input.projectNameHint', {
+                  defaultValue: 'Selecting a folder uses the folder name as the project name.'
+                })}
+              </p>
             </div>
-          </div>
+          ) : (
+            <div className="mb-2 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
+              <p className="text-[10px] text-muted-foreground/70">
+                {t('input.currentWorkingFolder', {
+                  defaultValue: 'Current working folder'
+                })}
+              </p>
+              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <FolderOpen className="size-3 shrink-0" />
+                <span className="truncate">
+                  {workingFolder ??
+                    t('input.noWorkingFolderSelected', {
+                      defaultValue: 'No folder selected'
+                    })}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {createMode ? (
+            <div className="mb-3 rounded-md border border-border/60 bg-muted/20 px-2 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground/80">
+                    {t('input.defaultProjectDirectory', {
+                      defaultValue: 'Default project location'
+                    })}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground/60">
+                    {t('input.defaultProjectDirectoryHint', {
+                      defaultValue: 'Use custom path or remember the last used location.'
+                    })}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                  <span>
+                    {t('input.useCustomDirectory', {
+                      defaultValue: 'Custom'
+                    })}
+                  </span>
+                  <Switch
+                    size="sm"
+                    checked={customDefaultDirectoryEnabled}
+                    onCheckedChange={persistDefaultDirectoryMode}
+                  />
+                </div>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <Input
+                  value={defaultDirectoryInput}
+                  onChange={(event) => setDefaultDirectoryInput(event.target.value)}
+                  onBlur={handleDefaultDirectoryInputBlur}
+                  placeholder={t('input.defaultProjectDirectoryPlaceholder', {
+                    defaultValue: 'Leave empty to use last used directory'
+                  })}
+                  className="h-7 text-[11px]"
+                  disabled={!customDefaultDirectoryEnabled}
+                />
+                <button
+                  className="shrink-0 rounded-md border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => void handlePickDefaultDirectory()}
+                  disabled={!customDefaultDirectoryEnabled}
+                >
+                  {t('input.browseDefaultDirectory', {
+                    defaultValue: 'Browse'
+                  })}
+                </button>
+              </div>
+              <p className="mt-1 truncate text-[10px] text-muted-foreground/60">
+                {(customDefaultDirectoryEnabled
+                  ? defaultDirectoryInput.trim()
+                  : preferredDirectory) ||
+                  t('input.defaultProjectDirectoryFallback', {
+                    defaultValue: 'Fallback: system Documents directory'
+                  })}
+              </p>
+            </div>
+          ) : null}
 
           <div className="mb-2 flex items-center justify-end">
             <button
@@ -255,7 +417,9 @@ export function WorkingFolderSelectorDialog({
                         <div
                           className={cn(
                             'overflow-hidden transition-all duration-200',
-                            isEditingDir ? 'max-w-[200px] opacity-100' : 'pointer-events-none max-w-0 opacity-0'
+                            isEditingDir
+                              ? 'max-w-[200px] opacity-100'
+                              : 'pointer-events-none max-w-0 opacity-0'
                           )}
                         >
                           <Input

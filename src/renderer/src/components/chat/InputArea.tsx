@@ -220,7 +220,7 @@ const defaultRecommendationKeys: Record<AppMode, string> = {
   clarify: 'input.recommendationDefaultClarify',
   cowork: 'input.recommendationDefaultCowork',
   code: 'input.recommendationDefaultCode',
-  acp: 'input.recommendationDefaultCode'
+  acp: 'input.recommendationDefaultAcp'
 }
 
 interface FileSearchItem {

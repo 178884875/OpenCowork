@@ -10,6 +10,10 @@ import { resolveAskUserAnswers } from '@renderer/lib/tools/ask-user-tool'
 import type { AskUserQuestionItem, AskUserAnswers } from '@renderer/lib/tools/ask-user-tool'
 import type { ToolCallStatus } from '@renderer/lib/agent/types'
 import type { ToolResultContent } from '@renderer/lib/api/types'
+import {
+  decodeStructuredToolResult,
+  isStructuredToolErrorText
+} from '@renderer/lib/tools/tool-result-format'
 
 interface AskUserQuestionCardProps {
   toolUseId: string
@@ -193,7 +197,7 @@ function outputAsText(output: ToolResultContent | undefined): string | null {
 
 function parseAnsweredPairs(output: ToolResultContent | undefined): AnsweredPair[] {
   const text = outputAsText(output)
-  if (!text) return []
+  if (!text || !/^User answered:\s*/i.test(text)) return []
 
   const body = text.replace(/^User answered:\s*/i, '').trim()
   if (!body) return []
@@ -263,10 +267,17 @@ export function AskUserQuestionCard({
     (s) => s.sessions.find((session) => session.id === s.activeSessionId)?.mode
   )
   const clarifyAutoAcceptRecommended = useSettingsStore((s) => s.clarifyAutoAcceptRecommended)
-  const isAnswered = status === 'completed' && !!output
-  const isPending = !isAnswered && (status === 'running' || isLive)
   const answeredPairs = React.useMemo(() => parseAnsweredPairs(output), [output])
   const answeredText = React.useMemo(() => outputAsText(output), [output])
+  const outputErrorMessage = React.useMemo(() => {
+    if (!output || typeof output !== 'string' || !isStructuredToolErrorText(output)) return null
+    const parsed = decodeStructuredToolResult(output)
+    if (!parsed || Array.isArray(parsed) || typeof parsed.error !== 'string') return null
+    return parsed.error
+  }, [output])
+  const isError = status === 'error' || !!outputErrorMessage
+  const isAnswered = status === 'completed' && answeredPairs.length > 0
+  const isPending = !isAnswered && !isError && (status === 'running' || isLive)
 
   const [selections, setSelections] = useState<Map<number, Set<string>>>(() => new Map())
   const [customTexts, setCustomTexts] = useState<Map<number, string>>(() => new Map())
@@ -398,6 +409,30 @@ export function AskUserQuestionCard({
     }
   }, [currentQuestionIndex])
 
+  if (isError) {
+    return (
+      <div className="my-2.5 rounded-lg border border-destructive/40 bg-destructive/5 p-4 shadow-sm">
+        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <span className="flex size-7 items-center justify-center rounded-full border border-destructive/30 bg-destructive/10">
+            <MessageSquare className="size-3.5 text-destructive" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div>{t('askUser.errorTitle', { defaultValue: '提问失败' })}</div>
+            <div className="text-[11px] text-muted-foreground">
+              {t('askUser.errorSubtitle', { defaultValue: '这次没有进入等待回答状态。' })}
+            </div>
+          </div>
+        </div>
+
+        {(outputErrorMessage ?? answeredText) && (
+          <div className="mt-3 rounded-lg border border-destructive/30 bg-background/60 px-3 py-2 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+            {outputErrorMessage ?? answeredText}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   if (isAnswered) {
     return (
       <div className="my-2.5 rounded-lg border border-border/70 bg-background/70 p-4 shadow-sm">
@@ -413,35 +448,29 @@ export function AskUserQuestionCard({
           </div>
         </div>
 
-        {answeredPairs.length > 0 ? (
-          <div className="mt-3 space-y-2.5">
-            {answeredPairs.map((pair, index) => (
-              <div
-                key={`${pair.question}-${index}`}
-                className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2"
-              >
-                <div className="flex items-start gap-2 text-xs leading-5">
-                  <span className="mt-0.5 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                    Q
-                  </span>
-                  <span className="text-foreground/90">{pair.question}</span>
-                </div>
-                <div className="mt-1.5 flex items-start gap-2 text-xs leading-5">
-                  <span className="mt-0.5 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                    A
-                  </span>
-                  <span className="whitespace-pre-wrap break-words text-muted-foreground">
-                    {pair.answer}
-                  </span>
-                </div>
+        <div className="mt-3 space-y-2.5">
+          {answeredPairs.map((pair, index) => (
+            <div
+              key={`${pair.question}-${index}`}
+              className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2"
+            >
+              <div className="flex items-start gap-2 text-xs leading-5">
+                <span className="mt-0.5 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  Q
+                </span>
+                <span className="text-foreground/90">{pair.question}</span>
               </div>
-            ))}
-          </div>
-        ) : answeredText ? (
-          <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
-            {answeredText}
-          </div>
-        ) : null}
+              <div className="mt-1.5 flex items-start gap-2 text-xs leading-5">
+                <span className="mt-0.5 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                  A
+                </span>
+                <span className="whitespace-pre-wrap break-words text-muted-foreground">
+                  {pair.answer}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     )
   }

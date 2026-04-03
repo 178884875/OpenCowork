@@ -137,7 +137,9 @@ const askUserToolDefinition: Omit<ToolDefinition, 'name'> = {
 const askUserToolExecute: ToolHandler['execute'] = async (input, ctx) => {
   const toolUseId = ctx.currentToolUseId
   if (!toolUseId) {
-    return encodeToolError('Missing tool use ID')
+    return encodeToolError(
+      'Missing tool use ID. AskUserQuestion requires a tool_use block id to keep the question pending and map the user reply back to the running tool call.'
+    )
   }
 
   const questions = input.questions as AskUserQuestionItem[] | undefined

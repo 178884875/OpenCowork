@@ -467,6 +467,15 @@ async function resolveMainRequestProvider(options: {
   }
 
   if (settings.mainModelSelectionMode === 'auto') {
+    if (!options.latestUserInput) {
+      const providerConfig = providerStore.getActiveProviderConfig()
+      return {
+        providerConfig,
+        modelConfig: findProviderModel(providerConfig?.providerId, providerConfig?.model).modelConfig,
+        autoSelection: null
+      }
+    }
+
     const autoSelection = await selectAutoModel({
       latestUserInput: options.latestUserInput,
       allowTools: options.allowTools,
@@ -661,6 +670,12 @@ interface EditableUserMessageTarget {
   draft: EditableUserMessageDraft
 }
 
+interface RetryAssistantTarget {
+  assistantIndex: number
+  userIndex: number
+  draft: EditableUserMessageDraft
+}
+
 interface ResolvedUserCommand {
   command: SystemCommandSnapshot | null
   userText: string
@@ -759,6 +774,31 @@ function isToolResultOnlyUserMessage(message: UnifiedMessage): boolean {
     Array.isArray(message.content) &&
     message.content.every((block) => block.type === 'tool_result')
   )
+}
+
+function findRetryAssistantTarget(
+  messages: UnifiedMessage[],
+  assistantMessageId: string
+): RetryAssistantTarget | null {
+  const assistantIndex = messages.findIndex(
+    (message) => message.id === assistantMessageId && message.role === 'assistant'
+  )
+  if (assistantIndex < 0) return null
+
+  let userIndex = -1
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!isEditableUserMessage(message)) continue
+    userIndex = index
+    break
+  }
+  if (userIndex < 0) return null
+
+  return {
+    assistantIndex,
+    userIndex,
+    draft: extractEditableUserMessageDraft(messages[userIndex].content)
+  }
 }
 
 function buildDeletedMessages(
@@ -1257,6 +1297,7 @@ function getSidecarSupportedToolNames(): Set<string> {
     'DesktopType',
     'DesktopScroll',
     'DesktopWait',
+    IMAGE_GENERATE_TOOL_NAME,
     ...getRendererBridgedToolNames()
   ])
 }
@@ -1282,8 +1323,6 @@ async function canUseSidecarForAgentRun(args: {
   hasMcps: boolean
 }): Promise<boolean> {
   if (args.sessionMode === 'chat') return false
-  if (args.isPlanMode) return false
-  if (args.tools.length === 0) return false
 
   const sidecarRequest = buildSidecarAgentRunRequest({
     messages: args.messages,
@@ -1884,8 +1923,9 @@ export function useChatActions(): {
         }
 
         // Image models: disable all tools (image generation doesn't use tools)
+        // Exception: allow tools when continuing an existing agent run
         const resolvedModelConfig = providerResolution.modelConfig
-        if (resolvedModelConfig?.category === 'image') {
+        if (resolvedModelConfig?.category === 'image' && source !== 'continue') {
           finalEffectiveToolDefs = []
         }
 
@@ -2158,7 +2198,7 @@ export function useChatActions(): {
             sessionMode === 'code' ||
             sessionMode === 'acp'
 
-          if (shouldInjectContext && messagesToSend.length > 0) {
+          if (source !== 'continue' && shouldInjectContext && messagesToSend.length > 0) {
             const { buildRuntimeReminder } = await import('@renderer/lib/agent/dynamic-context')
             const runtimeReminder = await buildRuntimeReminder({
               sessionId,
@@ -2544,6 +2584,16 @@ export function useChatActions(): {
 
               case 'tool_use_generated':
                 runUsedTools = true
+                if (event.toolUseBlock.name === 'Write') {
+                  console.log('[WriteTrace] tool_use_generated', {
+                    sessionId,
+                    assistantMsgId,
+                    toolUseId: event.toolUseBlock.id,
+                    inputKeys: Object.keys(event.toolUseBlock.input ?? {}),
+                    hasContent: typeof event.toolUseBlock.input?.content === 'string',
+                    hasPreview: typeof event.toolUseBlock.input?.content_preview === 'string'
+                  })
+                }
                 // Some providers emit only tool_use_generated without a prior tool_use_streaming_start.
                 // Ensure the assistant message has a visible tool block so later results can attach to it.
                 if (
@@ -2611,6 +2661,17 @@ export function useChatActions(): {
               }
 
               case 'tool_call_result':
+                if (event.toolCall.name === 'Write') {
+                  console.log('[WriteTrace] tool_call_result', {
+                    sessionId,
+                    assistantMsgId,
+                    toolUseId: event.toolCall.id,
+                    status: event.toolCall.status,
+                    inputKeys: Object.keys(event.toolCall.input ?? {}),
+                    hasOutput: event.toolCall.output !== undefined,
+                    error: event.toolCall.error
+                  })
+                }
                 useAgentStore.getState().updateToolCall(event.toolCall.id, {
                   status: event.toolCall.status,
                   output: event.toolCall.output,
@@ -2629,6 +2690,24 @@ export function useChatActions(): {
                 break
 
               case 'iteration_end':
+                if (
+                  event.toolResults?.some((tr) => {
+                    const toolCall = useAgentStore
+                      .getState()
+                      .executedToolCalls.find((tc) => tc.id === tr.toolUseId)
+                    return toolCall?.name === 'Write'
+                  })
+                ) {
+                  console.log('[WriteTrace] iteration_end_tool_results', {
+                    sessionId,
+                    assistantMsgId,
+                    toolResults: event.toolResults.map((tr) => ({
+                      toolUseId: tr.toolUseId,
+                      isError: tr.isError,
+                      contentType: typeof tr.content === 'string' ? 'string' : Array.isArray(tr.content) ? 'blocks' : typeof tr.content
+                    }))
+                  })
+                }
                 streamDeltaBuffer.flushNow()
                 // Reset so the next iteration's thinking block gets properly completed
                 thinkingDone = false
@@ -3118,32 +3197,45 @@ export function useChatActions(): {
     }
   }, [sendMessage])
 
-  const retryLastMessage = useCallback(async () => {
-    stopStreaming()
-    const chatStore = useChatStore.getState()
-    const sessionId = chatStore.activeSessionId
-    if (!sessionId) return
+  const retryLastMessage = useCallback(
+    async (assistantMessageId?: string) => {
+      stopStreaming()
+      const chatStore = useChatStore.getState()
+      const sessionId = chatStore.activeSessionId
+      if (!sessionId) return
 
-    clearPendingSessionMessages(sessionId)
-    await chatStore.loadRecentSessionMessages(sessionId)
-    const messages = chatStore.getSessionMessages(sessionId)
-    const lastEditable = findLastEditableUserMessage(messages)
-    if (!lastEditable) return
+      clearPendingSessionMessages(sessionId)
+      await chatStore.loadRecentSessionMessages(sessionId)
+      const messages = chatStore.getSessionMessages(sessionId)
+      const target = assistantMessageId
+        ? findRetryAssistantTarget(messages, assistantMessageId)
+        : (() => {
+            const lastEditable = findLastEditableUserMessage(messages)
+            if (!lastEditable) return null
+            const assistantIndex = messages.findLastIndex((message, index) => {
+              if (index <= lastEditable.index) return false
+              return message.role === 'assistant'
+            })
+            if (assistantIndex < 0) return null
+            return {
+              assistantIndex,
+              userIndex: lastEditable.index,
+              draft: lastEditable.draft
+            }
+          })()
+      if (!target) return
 
-    const removedAssistant = chatStore.removeLastAssistantMessage(sessionId)
-    if (!removedAssistant) return
-
-    chatStore.removeLastUserMessage(sessionId)
-    await sendMessage(
-      lastEditable.draft.text,
-      lastEditable.draft.images.length > 0
-        ? cloneImageAttachments(lastEditable.draft.images)
-        : undefined,
-      undefined,
-      undefined,
-      lastEditable.draft.command
-    )
-  }, [sendMessage, stopStreaming])
+      chatStore.truncateMessagesFrom(sessionId, target.userIndex)
+      await sendMessage(
+        target.draft.text,
+        target.draft.images.length > 0 ? cloneImageAttachments(target.draft.images) : undefined,
+        undefined,
+        undefined,
+        target.draft.command
+      )
+    },
+    [sendMessage, stopStreaming]
+  )
 
   const editAndResend = useCallback(
     async (messageId: string, draft: EditableUserMessageDraft) => {
@@ -3760,6 +3852,14 @@ function mergeUsage(target: TokenUsage, incoming: TokenUsage): void {
   }
   if (incoming.cacheCreationTokens) {
     target.cacheCreationTokens = (target.cacheCreationTokens ?? 0) + incoming.cacheCreationTokens
+  }
+  if (incoming.cacheCreation5mTokens) {
+    target.cacheCreation5mTokens =
+      (target.cacheCreation5mTokens ?? 0) + incoming.cacheCreation5mTokens
+  }
+  if (incoming.cacheCreation1hTokens) {
+    target.cacheCreation1hTokens =
+      (target.cacheCreation1hTokens ?? 0) + incoming.cacheCreation1hTokens
   }
   if (incoming.cacheReadTokens) {
     target.cacheReadTokens = (target.cacheReadTokens ?? 0) + incoming.cacheReadTokens

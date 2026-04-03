@@ -99,7 +99,7 @@ interface AssistantMessageProps {
   msgId?: string
   showRetry?: boolean
   showContinue?: boolean
-  onRetry?: () => void
+  onRetry?: (messageId: string) => void
   onContinue?: () => void
   onDelete?: (messageId: string) => void
   renderMode?: AssistantRenderMode
@@ -1277,9 +1277,9 @@ export function AssistantMessage({
   }, [plainText, t])
 
   const handleDeleteAndRegenerate = useCallback((): void => {
-    if (!showRetry || !onRetry) return
-    onRetry()
-  }, [onRetry, showRetry])
+    if (!showRetry || !onRetry || !msgId) return
+    onRetry(msgId)
+  }, [msgId, onRetry, showRetry])
 
   const timingSummary = useMemo(() => {
     if (!usage) return null
@@ -1440,7 +1440,7 @@ export function AssistantMessage({
                     defaultValue: '重新生成参考'
                   })}
                   icon={<RotateCcw className="size-3.5" />}
-                  onClick={onRetry}
+                  onClick={() => msgId && onRetry?.(msgId)}
                 />
               ) : null}
               <DropdownMenu>
@@ -1497,7 +1497,7 @@ export function AssistantMessage({
                     </DropdownMenuItem>
                   )}
                   {showRetry && onRetry && (
-                    <DropdownMenuItem onSelect={onRetry}>
+                    <DropdownMenuItem onSelect={() => msgId && onRetry?.(msgId)}>
                       <RotateCcw className="size-4" />
                       {t('assistantMessage.regenerateReference', {
                         defaultValue: '重新生成参考'

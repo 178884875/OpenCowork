@@ -147,6 +147,36 @@ export function normalizeSidecarRecord(value: unknown): Record<string, unknown> 
   return isRecord(value) ? value : {}
 }
 
+function readSidecarString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed : undefined
+}
+
+function createSidecarError(rawEvent: unknown): Error {
+  const event = normalizeSidecarRecord(rawEvent)
+  const nestedError = normalizeSidecarRecord(event.error)
+  const message =
+    readSidecarString(nestedError.message) ??
+    readSidecarString(event.message) ??
+    'Unknown sidecar error'
+  const name =
+    readSidecarString(nestedError.type) ?? readSidecarString(event.errorType) ?? 'SidecarError'
+  const details = readSidecarString(nestedError.details) ?? readSidecarString(event.details)
+  const stackTrace =
+    readSidecarString(nestedError.stackTrace) ?? readSidecarString(event.stackTrace)
+
+  const error = new Error(message)
+  error.name = name
+
+  const stackLines = [details, stackTrace].filter((value): value is string => Boolean(value))
+  if (stackLines.length > 0) {
+    error.stack = `${name}: ${message}\n${stackLines.join('\n')}`
+  }
+
+  return error
+}
+
 function hasUnsupportedProviderFeatures(provider: ProviderConfig): boolean {
   if (
     provider.type !== 'anthropic' &&
@@ -582,13 +612,21 @@ export function normalizeSidecarAgentEvent(rawEvent: unknown): AgentEvent | null
       }
     }
     case 'iteration_end':
+      if (Array.isArray(event.toolResults)) {
+        const rawWriteResults = event.toolResults
+          .map((raw) => normalizeSidecarRecord(raw))
+          .filter((item) => String(item.toolName ?? item.name ?? '') === 'Write')
+        if (rawWriteResults.length > 0) {
+          console.log('[WriteTrace] sidecar raw iteration_end write results', rawWriteResults)
+        }
+      }
       return {
         type: 'iteration_end',
         stopReason: String(event.stopReason ?? 'tool_use'),
         ...(Array.isArray(event.toolResults)
           ? {
               toolResults: event.toolResults
-                .map(raw => {
+                .map((raw) => {
                   const item = normalizeSidecarRecord(raw)
                   const toolUseId = typeof item.toolUseId === 'string' ? item.toolUseId : ''
                   const content = normalizeToolResultOutput(item.content)
@@ -655,14 +693,7 @@ export function normalizeSidecarAgentEvent(rawEvent: unknown): AgentEvent | null
     case 'error':
       return {
         type: 'error',
-        error:
-          event.error instanceof Error
-            ? event.error
-            : new Error(
-                String(
-                  normalizeSidecarRecord(event.error).message ?? event.message ?? 'Unknown sidecar error'
-                )
-              )
+        error: event.error instanceof Error ? event.error : createSidecarError(event)
       }
     default:
       return null

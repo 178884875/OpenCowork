@@ -20,7 +20,7 @@ interface MessageItemProps {
   isLastAssistantMessage?: boolean
   showContinue?: boolean
   disableAnimation?: boolean
-  onRetryAssistantMessage?: () => void
+  onRetryAssistantMessage?: (messageId: string) => void
   onContinueAssistantMessage?: () => void
   onEditUserMessage?: (messageId: string, draft: EditableUserMessageDraft) => void
   onDeleteMessage?: (messageId: string) => void
@@ -161,7 +161,7 @@ function MessageItemInner({
             usage={message.usage}
             toolResults={toolResults}
             msgId={message.id}
-            showRetry={isLastAssistantMessage}
+            showRetry
             showContinue={showContinue && isLastAssistantMessage}
             onRetry={onRetryAssistantMessage}
             onContinue={onContinueAssistantMessage}
@@ -218,10 +218,10 @@ function areToolResultsEqual(
 
 function areEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
   const prevUsageSignal = prev.message.usage
-    ? `${prev.message.usage.inputTokens}:${prev.message.usage.billableInputTokens ?? ''}:${prev.message.usage.outputTokens}:${prev.message.usage.cacheReadTokens ?? 0}:${prev.message.usage.totalDurationMs ?? 0}`
+    ? `${prev.message.usage.inputTokens}:${prev.message.usage.billableInputTokens ?? ''}:${prev.message.usage.outputTokens}:${prev.message.usage.cacheCreationTokens ?? 0}:${prev.message.usage.cacheCreation5mTokens ?? 0}:${prev.message.usage.cacheCreation1hTokens ?? 0}:${prev.message.usage.cacheReadTokens ?? 0}:${prev.message.usage.reasoningTokens ?? 0}:${prev.message.usage.totalDurationMs ?? 0}`
     : ''
   const nextUsageSignal = next.message.usage
-    ? `${next.message.usage.inputTokens}:${next.message.usage.billableInputTokens ?? ''}:${next.message.usage.outputTokens}:${next.message.usage.cacheReadTokens ?? 0}:${next.message.usage.totalDurationMs ?? 0}`
+    ? `${next.message.usage.inputTokens}:${next.message.usage.billableInputTokens ?? ''}:${next.message.usage.outputTokens}:${next.message.usage.cacheCreationTokens ?? 0}:${next.message.usage.cacheCreation5mTokens ?? 0}:${next.message.usage.cacheCreation1hTokens ?? 0}:${next.message.usage.cacheReadTokens ?? 0}:${next.message.usage.reasoningTokens ?? 0}:${next.message.usage.totalDurationMs ?? 0}`
     : ''
 
   return (

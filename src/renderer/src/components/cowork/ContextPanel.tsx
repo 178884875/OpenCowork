@@ -91,7 +91,9 @@ export function ContextPanel(): React.JSX.Element {
     }))
   )
   const activeProvider =
-    providerState.providers.find((provider) => provider.id === providerState.activeProviderId) ?? null
+    providerState.providers.find(
+      (provider) => provider.id === providerState.activeProviderId
+    ) ?? null
   const activeModelCfg =
     activeProvider?.models.find((model) => model.id === providerState.activeModelId) ?? null
   const fallbackProvider = useSettingsStore((s) => s.provider)
@@ -319,12 +321,24 @@ export function ContextPanel(): React.JSX.Element {
                       acc.output += m.usage.outputTokens
                       if (m.usage.cacheCreationTokens)
                         acc.cacheCreation += m.usage.cacheCreationTokens
+                      if (m.usage.cacheCreation5mTokens)
+                        acc.cacheCreation5m += m.usage.cacheCreation5mTokens
+                      if (m.usage.cacheCreation1hTokens)
+                        acc.cacheCreation1h += m.usage.cacheCreation1hTokens
                       if (m.usage.cacheReadTokens) acc.cacheRead += m.usage.cacheReadTokens
                       if (m.usage.reasoningTokens) acc.reasoning += m.usage.reasoningTokens
                     }
                     return acc
                   },
-                  { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, reasoning: 0 }
+                  {
+                    input: 0,
+                    output: 0,
+                    cacheCreation: 0,
+                    cacheCreation5m: 0,
+                    cacheCreation1h: 0,
+                    cacheRead: 0,
+                    reasoning: 0
+                  }
                 )
                 // Include team member token usage (active team + history for this session)
                 const teamStore = useTeamStore.getState()
@@ -342,6 +356,10 @@ export function ContextPanel(): React.JSX.Element {
                     totals.output += member.usage.outputTokens
                     if (member.usage.cacheCreationTokens)
                       totals.cacheCreation += member.usage.cacheCreationTokens
+                    if (member.usage.cacheCreation5mTokens)
+                      totals.cacheCreation5m += member.usage.cacheCreation5mTokens
+                    if (member.usage.cacheCreation1hTokens)
+                      totals.cacheCreation1h += member.usage.cacheCreation1hTokens
                     if (member.usage.cacheReadTokens)
                       totals.cacheRead += member.usage.cacheReadTokens
                     if (member.usage.reasoningTokens)
@@ -354,6 +372,8 @@ export function ContextPanel(): React.JSX.Element {
                   outputTokens: totals.output,
                   billableInputTokens: totals.input,
                   cacheCreationTokens: totals.cacheCreation || undefined,
+                  cacheCreation5mTokens: totals.cacheCreation5m || undefined,
+                  cacheCreation1hTokens: totals.cacheCreation1h || undefined,
                   cacheReadTokens: totals.cacheRead || undefined
                 }
                 const cost = calculateCost(totalUsage, activeModelCfg)

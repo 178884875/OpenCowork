@@ -14,7 +14,13 @@ import type { CompressionConfig } from './context-compression'
 
 // --- Tool Call Runtime State ---
 
-export type ToolCallStatus = 'streaming' | 'pending_approval' | 'running' | 'completed' | 'error'
+export type ToolCallStatus =
+  | 'streaming'
+  | 'pending_approval'
+  | 'running'
+  | 'completed'
+  | 'error'
+  | 'canceled'
 
 export interface ToolCallState {
   id: string

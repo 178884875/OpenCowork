@@ -918,7 +918,10 @@ export function AssistantMessage({
               toolUseId={block.id}
               input={block.input}
               output={liveTc?.output ?? result?.content}
-              status={liveTc?.status ?? (result?.isError ? 'error' : 'completed')}
+              status={
+                liveTc?.status ??
+                (result?.isError ? 'error' : result?.content ? 'completed' : 'canceled')
+              }
               isLive={!!isStreaming}
             />
           </ScaleIn>

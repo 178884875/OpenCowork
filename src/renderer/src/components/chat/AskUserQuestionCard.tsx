@@ -276,8 +276,9 @@ export function AskUserQuestionCard({
     return parsed.error
   }, [output])
   const isError = status === 'error' || !!outputErrorMessage
+  const isCanceled = status === 'canceled'
   const isAnswered = status === 'completed' && answeredPairs.length > 0
-  const isPending = !isAnswered && !isError && (status === 'running' || isLive)
+  const isPending = !isAnswered && !isError && !isCanceled && (status === 'running' || isLive)
 
   const [selections, setSelections] = useState<Map<number, Set<string>>>(() => new Map())
   const [customTexts, setCustomTexts] = useState<Map<number, string>>(() => new Map())
@@ -409,23 +410,51 @@ export function AskUserQuestionCard({
     }
   }, [currentQuestionIndex])
 
-  if (isError) {
+  if (isError || isCanceled) {
+    const title = isCanceled
+      ? t('askUser.canceledTitle', { defaultValue: '提问已取消' })
+      : t('askUser.errorTitle', { defaultValue: '提问失败' })
+    const subtitle = isCanceled
+      ? t('askUser.canceledSubtitle', { defaultValue: '本次提问在等待回答前已中止。' })
+      : t('askUser.errorSubtitle', { defaultValue: '这次没有进入等待回答状态。' })
+
     return (
-      <div className="my-2.5 rounded-lg border border-destructive/40 bg-destructive/5 p-4 shadow-sm">
+      <div
+        className={cn(
+          'my-2.5 rounded-lg p-4 shadow-sm',
+          isCanceled
+            ? 'border border-border/70 bg-muted/20'
+            : 'border border-destructive/40 bg-destructive/5'
+        )}
+      >
         <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-          <span className="flex size-7 items-center justify-center rounded-full border border-destructive/30 bg-destructive/10">
-            <MessageSquare className="size-3.5 text-destructive" />
+          <span
+            className={cn(
+              'flex size-7 items-center justify-center rounded-full border',
+              isCanceled
+                ? 'border-border/60 bg-background/70'
+                : 'border-destructive/30 bg-destructive/10'
+            )}
+          >
+            <MessageSquare
+              className={cn('size-3.5', isCanceled ? 'text-muted-foreground' : 'text-destructive')}
+            />
           </span>
           <div className="min-w-0 flex-1">
-            <div>{t('askUser.errorTitle', { defaultValue: '提问失败' })}</div>
-            <div className="text-[11px] text-muted-foreground">
-              {t('askUser.errorSubtitle', { defaultValue: '这次没有进入等待回答状态。' })}
-            </div>
+            <div>{title}</div>
+            <div className="text-[11px] text-muted-foreground">{subtitle}</div>
           </div>
         </div>
 
         {(outputErrorMessage ?? answeredText) && (
-          <div className="mt-3 rounded-lg border border-destructive/30 bg-background/60 px-3 py-2 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+          <div
+            className={cn(
+              'mt-3 rounded-lg border px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap',
+              isCanceled
+                ? 'border-border/60 bg-background/60 text-muted-foreground'
+                : 'border-destructive/30 bg-background/60 text-muted-foreground'
+            )}
+          >
             {outputErrorMessage ?? answeredText}
           </div>
         )}

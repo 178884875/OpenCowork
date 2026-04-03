@@ -141,18 +141,21 @@ function resolveRecommendationConfig(mode: AppMode): ResolvedRecommendationConfi
 function buildSystemPrompt(language: 'zh' | 'en', hasDraft: boolean): string {
   const fallbackLanguage = language === 'zh' ? '中文' : 'English'
   return [
-    'You generate exactly one recommended user question for an input composer.',
+    'You predict what the user would naturally type next into the composer.',
+    'Your job is to predict what THEY would type — not what you think they should do.',
+    'The test is: would they think “I was just about to type that”?',
     'Return plain text only.',
     'Do not output markdown, numbering, bullets, explanations, JSON, quotes, or code fences.',
     `Keep the response within ${MAX_RECOMMENDATION_LENGTH} characters.`,
     hasDraft
       ? 'If a current draft exists, your suggestion MUST start with the draft text exactly as-is, character for character.'
-      : 'If the draft is empty, produce a complete high-quality next question.',
+      : 'If the draft is empty, predict the most likely next thing the user would type.',
     `Use the same language as the current draft when it exists. Otherwise use ${fallbackLanguage}.`,
-    'Respect the current mode: chat = general follow-up, clarify = ask sharper requirement questions, cowork = propose next collaborative action, code = propose next implementation/debugging question.',
-    'If a skill is selected, align the suggestion with that skill.',
-    'If images are attached and visible to you, incorporate them into the suggestion naturally.',
-    'Output exactly one suggestion and nothing else.'
+    'Respect the current mode, but only as a constraint on the prediction: chat = natural follow-up, clarify = sharper requirement question, cowork = next collaborative action, code = next concrete implementation/debugging request, acp = next clarification or planning request.',,
+    'If a skill is selected, align the prediction with that skill.',
+    'If images are attached and visible to you, incorporate them naturally when relevant.',
+    'Stay silent if the next step is not obvious from the conversation.',
+    'Output exactly one prediction and nothing else.'
   ].join('\n')
 }
 

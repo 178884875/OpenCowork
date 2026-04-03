@@ -14,11 +14,16 @@
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
+    "build:sidecar": "powershell -ExecutionPolicy Bypass -File ./scripts/build-sidecar.ps1",
+    "build:sidecar:win": "powershell -ExecutionPolicy Bypass -File ./scripts/build-sidecar.ps1 -Runtime win-x64",
+    "build:sidecar:mac": "powershell -ExecutionPolicy Bypass -File ./scripts/build-sidecar.ps1 -Runtime osx-arm64",
+    "build:sidecar:linux": "powershell -ExecutionPolicy Bypass -File ./scripts/build-sidecar.ps1 -Runtime linux-x64",
+    "benchmark:sidecar": "dotnet run --project ./src/dotnet/OpenCowork.Agent -- benchmark",
     "postinstall": "electron-builder install-app-deps",
-    "build:unpack": "npm run build && electron-builder --dir",
-    "build:win": "npm run build && electron-builder --win",
-    "build:mac": "electron-vite build && electron-builder --mac",
-    "build:linux": "electron-vite build && electron-builder --linux"
+    "build:unpack": "npm run build && npm run build:sidecar && electron-builder --dir",
+    "build:win": "npm run build && npm run build:sidecar:win && electron-builder --win",
+    "build:mac": "electron-vite build && npm run build:sidecar:mac && electron-builder --mac",
+    "build:linux": "electron-vite build && npm run build:sidecar:linux && electron-builder --linux"
   },
   "dependencies": {
     "@base-ui/react": "^1.1.0",

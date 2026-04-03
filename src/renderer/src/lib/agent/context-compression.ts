@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid'
 import type { UnifiedMessage, ProviderConfig, ContentBlock, AIModelConfig } from '../api/types'
-import { createProvider } from '../api/provider'
+import { runSidecarTextRequest } from '@renderer/lib/ipc/agent-bridge'
 import i18n from '@renderer/locales'
 
 // --- Types ---
@@ -320,8 +320,6 @@ async function callSummarizer(
     }
   ]
 
-  const provider = createProvider(config)
-
   // Use a separate abort controller with timeout fallback
   const abortController = new AbortController()
   const timeout = setTimeout(() => abortController.abort(), 120_000) // 2 min max
@@ -345,16 +343,12 @@ async function callSummarizer(
 
   let result = ''
   try {
-    for await (const event of provider.sendMessage(
+    result = await runSidecarTextRequest({
+      provider: config,
       messages,
-      [], // no tools
-      config,
-      abortController.signal
-    )) {
-      if (event.type === 'text_delta' && event.text) {
-        result += event.text
-      }
-    }
+      signal: abortController.signal,
+      maxIterations: 1
+    })
   } finally {
     clearTimeout(timeout)
   }

@@ -24,6 +24,7 @@ export interface ToolCallState {
   output?: ToolResultContent
   error?: string
   requiresApproval: boolean
+  extraContent?: ToolCallExtraContent
   startedAt?: number
   completedAt?: number
 }
@@ -95,7 +96,13 @@ export type AgentEvent =
     }
   | { type: 'image_generated'; imageBlock: ImageBlock }
   | { type: 'image_error'; imageError: { code: ImageErrorCode; message: string } }
-  | { type: 'message_end'; usage?: TokenUsage; timing?: RequestTiming; providerResponseId?: string }
+  | {
+      type: 'message_end'
+      usage?: TokenUsage
+      timing?: RequestTiming
+      providerResponseId?: string
+      stopReason?: string
+    }
   | {
       type: 'tool_use_streaming_start'
       toolCallId: string

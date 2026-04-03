@@ -255,7 +255,8 @@ export async function* runAgentLoop(
                 name: endToolName,
                 input: toolInput,
                 status: requiresApproval ? 'pending_approval' : 'running',
-                requiresApproval
+                requiresApproval,
+                ...(toolUseBlock.extraContent ? { extraContent: toolUseBlock.extraContent } : {})
               }
               toolCalls.push(tc)
               yield {
@@ -277,12 +278,13 @@ export async function* runAgentLoop(
               if (event.providerResponseId) {
                 providerResponseId = event.providerResponseId
               }
-              if (event.usage || event.timing || event.providerResponseId) {
+              if (event.usage || event.timing || event.providerResponseId || event.stopReason) {
                 yield {
                   type: 'message_end',
                   usage: event.usage,
                   timing: event.timing,
-                  providerResponseId: event.providerResponseId
+                  providerResponseId: event.providerResponseId,
+                  stopReason: event.stopReason
                 }
               }
               break

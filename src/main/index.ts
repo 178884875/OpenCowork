@@ -54,6 +54,7 @@ import { registerImageGifHandlers } from './ipc/image-gif-handlers'
 import { registerGitHandlers } from './ipc/git-handlers'
 import { registerWikiHandlers } from './ipc/wiki-handlers'
 import { registerMigrationHandlers } from './ipc/migration-handlers'
+import { registerSidecarHandlers, getSidecarManager } from './ipc/sidecar-manager'
 import { loadPersistedJobs, cancelAllJobs } from './cron/cron-scheduler'
 import { McpManager } from './mcp/mcp-manager'
 import { closeDb } from './db/database'
@@ -643,6 +644,16 @@ if (gotSingleInstanceLock) {
     registerGitHandlers()
     registerWikiHandlers()
     registerMigrationHandlers()
+    registerSidecarHandlers()
+
+    try {
+      const sidecarReady = await getSidecarManager().ensureStarted()
+      console.log(`[Sidecar] global startup ${sidecarReady ? 'ready' : 'unavailable'}`)
+    } catch (error) {
+      console.warn(
+        `[Sidecar] global startup failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
 
     // Clipboard: write PNG image from base64 data
     ipcMain.handle('clipboard:write-image', (_event, args: { data: string }) => {
@@ -763,6 +774,7 @@ app.on('window-all-closed', () => {
   killAllManagedProcesses()
   closeAllSshSessions()
   cancelAllJobs()
+  getSidecarManager().stop().catch(() => {})
   closeDb()
   if (process.platform !== 'darwin') {
     app.quit()

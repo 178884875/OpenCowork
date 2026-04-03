@@ -1,7 +1,12 @@
 import { ensureProviderAuthReady } from '@renderer/lib/auth/provider-auth'
 import { useProviderStore } from '@renderer/stores/provider-store'
 import type { AutoModelSelectionStatus } from '@renderer/stores/ui-store'
-import { createProvider } from './provider'
+import { agentBridge, canSidecarHandle, runSidecarCleanup } from '@renderer/lib/ipc/agent-bridge'
+import {
+  buildSidecarAgentRunRequest,
+  normalizeSidecarAgentEvent,
+  normalizeSidecarRecord
+} from '@renderer/lib/ipc/sidecar-protocol'
 import type { ProviderConfig, UnifiedMessage } from './types'
 
 const AUTO_MODEL_SELECTOR_PROMPT = [
@@ -153,7 +158,6 @@ export async function selectAutoModel(options: {
       systemPrompt: AUTO_MODEL_SELECTOR_PROMPT
     }
 
-    const provider = createProvider(routingConfig)
     const messages: UnifiedMessage[] = [
       {
         id: 'auto-model-route',
@@ -163,16 +167,88 @@ export async function selectAutoModel(options: {
       }
     ]
 
-    let output = ''
-    for await (const event of provider.sendMessage(
+    const sidecarRequest = buildSidecarAgentRunRequest({
       messages,
-      [],
-      routingConfig,
-      abortController.signal
-    )) {
-      if (event.type === 'text_delta' && event.text) {
-        output += event.text
-        if (output.length >= 32) break
+      provider: routingConfig,
+      tools: [],
+      maxIterations: 1,
+      forceApproval: false
+    })
+    if (!sidecarRequest) {
+      return buildSelectionStatus('main', mainConfig, 'sidecar_request_build_failed')
+    }
+
+    const supportsAgentRun = await canSidecarHandle('agent.run')
+    const supportsProvider = await canSidecarHandle(`provider.${routingConfig.type}`)
+    if (!supportsAgentRun || !supportsProvider) {
+      return buildSelectionStatus('main', mainConfig, 'sidecar_capability_unavailable')
+    }
+
+    const initialized = await agentBridge.initialize()
+    if (!initialized) {
+      return buildSelectionStatus('main', mainConfig, 'sidecar_unavailable')
+    }
+
+    const result = await agentBridge.runAgent(sidecarRequest)
+    let output = ''
+    let finished = false
+    let unsubscribe: (() => void) | null = null
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = async (): Promise<void> => {
+          try {
+            await agentBridge.cancelAgent(result.runId)
+          } catch {
+            // ignore cancellation races
+          }
+          reject(new Error('aborted'))
+        }
+
+        if (abortController.signal.aborted) {
+          void onAbort()
+          return
+        }
+
+        abortController.signal.addEventListener('abort', () => {
+          void onAbort()
+        }, { once: true })
+
+        unsubscribe = agentBridge.on('agent/event', (payload) => {
+          const record = normalizeSidecarRecord(payload)
+          if (String(record.runId ?? '') !== result.runId) return
+          const event = normalizeSidecarAgentEvent(record.event)
+          if (!event) return
+
+          if (event.type === 'text_delta' && event.text) {
+            output += event.text
+            if (output.length >= 32) {
+              finished = true
+              resolve()
+            }
+            return
+          }
+
+          if (event.type === 'loop_end') {
+            finished = true
+            resolve()
+            return
+          }
+
+          if (event.type === 'error') {
+            finished = true
+            reject(event.error)
+          }
+        })
+      })
+    } finally {
+      runSidecarCleanup(unsubscribe)
+      if (!finished) {
+        try {
+          await agentBridge.cancelAgent(result.runId)
+        } catch {
+          // ignore cancellation races
+        }
       }
     }
 

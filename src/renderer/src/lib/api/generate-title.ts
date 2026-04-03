@@ -1,6 +1,6 @@
 import { useSettingsStore } from '@renderer/stores/settings-store'
 import { useProviderStore } from '@renderer/stores/provider-store'
-import { createProvider } from './provider'
+import { runSidecarTextRequest } from '@renderer/lib/ipc/agent-bridge'
 import type { ProviderConfig, UnifiedMessage } from './types'
 import { SESSION_ICONS_PROMPT_LIST } from '@renderer/lib/constants/session-icons'
 
@@ -165,16 +165,15 @@ export async function generateSessionTitle(
   ]
 
   try {
-    const provider = createProvider(config)
     const abortController = new AbortController()
     const timeout = setTimeout(() => abortController.abort(), 15000)
 
-    let title = ''
-    for await (const event of provider.sendMessage(messages, [], config, abortController.signal)) {
-      if (event.type === 'text_delta' && event.text) {
-        title += event.text
-      }
-    }
+    const title = await runSidecarTextRequest({
+      provider: config,
+      messages,
+      signal: abortController.signal,
+      maxIterations: 1
+    })
     clearTimeout(timeout)
 
     if (looksLikeReasoning(title)) return null

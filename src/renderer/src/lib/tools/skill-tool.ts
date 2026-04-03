@@ -11,22 +11,40 @@ export function getRegisteredSkills(): SkillMeta[] {
   return registeredSkills.slice()
 }
 
-function buildSkillDescription(): string {
-  return `Load a skill by name to get detailed instructions or knowledge for a specific task. Returns the full content of the skill's SKILL.md file as context.
+async function loadRegisteredSkills(): Promise<SkillMeta[]> {
+  try {
+    const result = await ipcClient.invoke('skills:list')
+    return Array.isArray(result) ? (result as SkillMeta[]) : []
+  } catch (err) {
+    console.error('[Skills] Failed to load skills from IPC:', err)
+    return []
+  }
+}
 
-You have access to **Skills** — pre-defined expert scripts for specialized tasks. Skills are your MOST RELIABLE way to handle these tasks.
-**BEFORE using Shell, Read, Write, or ANY other tool, check if the user's request matches a Skill listed in the session's \`<system-reminder>\` context.**
+export async function refreshSkillTools(): Promise<void> {
+  registeredSkills = await loadRegisteredSkills()
+  toolRegistry.register(createSkillHandler())
+}
+
+function buildSkillDescription(): string {
+  return `Load a skill by name to get detailed instructions or domain knowledge for a specialized task. Returns the full content of the skill's SKILL.md file as context.
+
+You have access to **Skills** — curated guides for specific workflows.
+Only use the Skill tool when the user's request clearly matches a listed skill, or when the user explicitly asks for a skill.
+Do not call Skill for ordinary coding, file editing, searching, debugging, or repository navigation requests unless a listed skill is obviously the best fit.
 
 ### How to use Skills
-1. **Match**: Before starting any task, check if it matches one of the available Skills in the session context.
-2. **Load first**: Call the Skill tool as your FIRST tool call for matching tasks. Do NOT attempt ad-hoc solutions — Skills contain curated scripts with proper error handling that ad-hoc approaches will miss.
+1. **Match carefully**: Use a skill only when the request clearly aligns with one of the available skills in the session context.
+2. **Load first when relevant**: If a listed skill is clearly applicable, call the Skill tool before other tools.
 3. **Read carefully**: After loading, read the Skill's content thoroughly before taking any action.
 4. **Follow strictly**: Execute the Skill's instructions step-by-step. Do NOT skip steps, reorder them, or substitute your own approach.
-5. **Retry on failure**: If a Skill's script fails, fix the issue and **re-run the exact same script command**. NEVER replace a Skill's script with your own inline code or ad-hoc scripts.
+5. **Retry on failure**: If a Skill's script fails, fix the issue and re-run the same script command when appropriate.
 6. If the user's message begins with "[Skill: <name>]", immediately call that Skill as your first action.`
 }
 
 function createSkillHandler(): ToolHandler {
+  const availableSkillNames = registeredSkills.map((skill) => skill.name)
+
   return {
     definition: {
       name: 'Skill',
@@ -36,7 +54,8 @@ function createSkillHandler(): ToolHandler {
         properties: {
           SkillName: {
             type: 'string',
-            description: 'The name of the skill to load. Must match one of the available skills.'
+            description: 'The name of the skill to load. Must match one of the available skills.',
+            ...(availableSkillNames.length > 0 ? { enum: availableSkillNames } : {})
           }
         },
         required: ['SkillName']
@@ -71,16 +90,5 @@ function createSkillHandler(): ToolHandler {
  * Similar pattern to registerBuiltinSubAgents().
  */
 export async function registerSkillTools(): Promise<void> {
-  let skills: SkillMeta[] = []
-  try {
-    const result = await ipcClient.invoke('skills:list')
-    if (Array.isArray(result)) {
-      skills = result as SkillMeta[]
-    }
-  } catch (err) {
-    console.error('[Skills] Failed to load skills from IPC:', err)
-  }
-
-  registeredSkills = skills
-  toolRegistry.register(createSkillHandler())
+  await refreshSkillTools()
 }

@@ -127,6 +127,7 @@ export interface RequestDebugInfo {
   providerId?: string
   providerBuiltinId?: string
   model?: string
+  executionPath?: 'node' | 'sidecar'
 }
 
 export interface UnifiedMessage {

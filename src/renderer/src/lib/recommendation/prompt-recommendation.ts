@@ -8,7 +8,7 @@ import {
   type ImageAttachment
 } from '@renderer/lib/image-attachments'
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
-import { createProvider } from '@renderer/lib/api/provider'
+import { runSidecarTextRequest } from '@renderer/lib/ipc/agent-bridge'
 import type { ContentBlock, ProviderConfig, UnifiedMessage } from '@renderer/lib/api/types'
 import { useSettingsStore } from '@renderer/stores/settings-store'
 import { useChatStore } from '@renderer/stores/chat-store'
@@ -264,31 +264,20 @@ export async function requestPromptRecommendation(
   const timeout = window.setTimeout(() => controller.abort(), RECOMMENDATION_TIMEOUT_MS)
 
   try {
-    const provider = createProvider({
+    const requestConfig: ProviderConfig = {
       ...config,
       maxTokens: 256,
       temperature: 0.2,
       systemPrompt: buildSystemPrompt(context.fallbackLanguage, context.draftText.length > 0),
       sessionId: context.sessionId ?? undefined
-    })
-
-    let accumulated = ''
-    for await (const event of provider.sendMessage(
-      requestMessages,
-      [],
-      {
-        ...config,
-        maxTokens: 256,
-        temperature: 0.2,
-        systemPrompt: buildSystemPrompt(context.fallbackLanguage, context.draftText.length > 0),
-        sessionId: context.sessionId ?? undefined
-      },
-      controller.signal
-    )) {
-      if (event.type === 'text_delta' && event.text) {
-        accumulated += event.text
-      }
     }
+
+    const accumulated = await runSidecarTextRequest({
+      provider: requestConfig,
+      messages: requestMessages,
+      signal: controller.signal,
+      maxIterations: 1
+    })
 
     const text = sanitizeRecommendationText(accumulated)
     if (!text) {

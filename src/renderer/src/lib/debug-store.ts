@@ -6,6 +6,7 @@ export interface RequestTraceInfo {
   providerId?: string
   providerBuiltinId?: string
   model?: string
+  executionPath?: 'node' | 'sidecar'
 }
 
 const MAX_DEBUG_STORE_ENTRIES = 80
@@ -50,7 +51,8 @@ function mergeTraceIntoDebugInfo(msgId: string, info: RequestDebugInfo): Request
     ...info,
     providerId: info.providerId ?? trace?.providerId,
     providerBuiltinId: info.providerBuiltinId ?? trace?.providerBuiltinId,
-    model: info.model ?? trace?.model
+    model: info.model ?? trace?.model,
+    executionPath: info.executionPath ?? trace?.executionPath
   }
 }
 
@@ -90,7 +92,8 @@ export function setLastDebugInfo(msgId: string, info: RequestDebugInfo): void {
     debugInfo,
     providerId: merged.providerId,
     providerBuiltinId: merged.providerBuiltinId,
-    model: merged.model
+    model: merged.model,
+    executionPath: merged.executionPath
   })
 }
 

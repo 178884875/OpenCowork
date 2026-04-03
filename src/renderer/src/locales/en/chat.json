@@ -69,6 +69,7 @@
     "recommendationDefaultClarify": "Predict the next sharp question I would ask to fully pin down the request.",
     "recommendationDefaultCowork": "Predict the next collaborative action I would naturally type.",
     "recommendationDefaultCode": "Predict the next concrete code change request I would naturally type.",
+    "recommendationDefaultAcp": "Predict the next ACP scoping or design question I would naturally type.",
     "recommendationInitWorkspace": "No AGENTS.md found in the current working folder. Predict the natural next step, likely /init to initialize the project context.",
     "startAcp": "Start an ACP session",
     "startAcpDesc": "First clarify the goal, background, constraints, and acceptance criteria. Then design the architecture and delegate tasks before writing code.",

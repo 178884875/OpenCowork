@@ -69,6 +69,7 @@
     "recommendationDefaultClarify": "预测我会继续追问的下一个尖锐问题，直到把需求完全问透。",
     "recommendationDefaultCowork": "预测我接下来最自然会输入的协作动作。",
     "recommendationDefaultCode": "预测我接下来最自然会输入的代码修改请求。",
+    "recommendationDefaultAcp": "预测我接下来最自然会输入的 ACP 目标澄清或设计问题。",
     "recommendationInitWorkspace": "当前工作目录还没有 AGENTS.md。预测自然下一步，大概率是先执行 /init 初始化项目上下文。",
     "startAcp": "开始 ACP 会话",
     "startAcpDesc": "先澄清目标、背景、约束和验收标准，再做架构设计与任务分派，最后再进入实现。",

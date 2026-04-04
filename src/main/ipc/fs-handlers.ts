@@ -639,21 +639,17 @@ export function registerFsHandlers(): void {
         }
         await assertFileSize(args.path, MAX_FILE_READ_BYTES)
         const content = await fs.promises.readFile(args.path, 'utf-8')
-        const lines = content.split('\n')
+        const normalized = content.replace(/\r\n/g, '\n')
+        const lines = normalized.split('\n')
         const MAX_READ_LINES = 2000
         const start = Math.max(0, (args.offset ?? 1) - 1)
-        const end = args.limit ? start + args.limit : start + MAX_READ_LINES
-        const clampedEnd = Math.min(end, start + MAX_READ_LINES, lines.length)
-        if (args.offset !== undefined || args.limit !== undefined) {
-          return lines
-            .slice(start, clampedEnd)
-            .map((line, i) => `${start + i + 1}\t${line}`)
-            .join('\n')
-        }
-        if (lines.length > MAX_READ_LINES) {
-          return lines.slice(0, MAX_READ_LINES).join('\n')
-        }
-        return content
+        const count = Math.max(0, Math.min(args.limit ?? MAX_READ_LINES, MAX_READ_LINES))
+        const clampedEnd = Math.min(start + count, lines.length)
+        const lineNoWidth = Math.max(6, String(clampedEnd).length)
+        return lines
+          .slice(start, clampedEnd)
+          .map((line, i) => `${String(start + i + 1).padStart(lineNoWidth)}\t${line}`)
+          .join('\n')
       } catch (err) {
         return { error: String(err) }
       }
@@ -928,7 +924,7 @@ export function registerFsHandlers(): void {
             const stats = await fs.promises.stat(filePath)
             if (stats.size > GREP_MAX_FILE_SIZE || stats.size === 0) return false
             if (gitIgnoreMatcher && (await gitIgnoreMatcher.ignores(filePath, false))) return false
-            if (isBinaryFile(filePath)) return false
+            if (await isBinaryFile(filePath)) return false
 
             const status = await scanFileForMatches(filePath, regex, collector, startTime)
             if (status === 'timeout') {

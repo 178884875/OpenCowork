@@ -1992,16 +1992,16 @@ export function registerSshHandlers(): void {
           )
         })
 
-        if (args.offset !== undefined || args.limit !== undefined) {
-          const lines = content.split('\n')
-          const start = (args.offset ?? 1) - 1
-          const end = args.limit ? start + args.limit : lines.length
-          return lines
-            .slice(start, end)
-            .map((line, i) => `${start + i + 1}\t${line}`)
-            .join('\n')
-        }
-        return content
+        const normalized = content.replace(/\r\n/g, '\n')
+        const lines = normalized.split('\n')
+        const start = Math.max(0, (args.offset ?? 1) - 1)
+        const count = Math.max(0, Math.min(args.limit ?? 2000, 2000))
+        const end = Math.min(start + count, lines.length)
+        const lineNoWidth = Math.max(6, String(end).length)
+        return lines
+          .slice(start, end)
+          .map((line, i) => `${String(start + i + 1).padStart(lineNoWidth)}\t${line}`)
+          .join('\n')
       } catch (err) {
         return { error: String(err) }
       }

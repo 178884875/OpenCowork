@@ -235,7 +235,8 @@ interface UIStore {
   openSubAgentsPanel: (toolUseId?: string | null) => void
   subAgentExecutionDetailOpen: boolean
   subAgentExecutionDetailToolUseId: string | null
-  openSubAgentExecutionDetail: (toolUseId: string) => void
+  subAgentExecutionDetailInlineText: string | null
+  openSubAgentExecutionDetail: (toolUseId: string, inlineText?: string | null) => void
   closeSubAgentExecutionDetail: () => void
 
   /** Session-scoped UI state */
@@ -708,6 +709,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setSelectedSubAgentToolUseId: (toolUseId) => set({ selectedSubAgentToolUseId: toolUseId }),
   subAgentExecutionDetailOpen: false,
   subAgentExecutionDetailToolUseId: null,
+  subAgentExecutionDetailInlineText: null,
   openSubAgentsPanel: (toolUseId) =>
     set({
       selectedSubAgentToolUseId: toolUseId ?? null,
@@ -718,20 +720,27 @@ export const useUIStore = create<UIStore>((set, get) => ({
       detailPanelOpen: false,
       detailPanelContent: null,
       subAgentExecutionDetailOpen: false,
-      subAgentExecutionDetailToolUseId: null
+      subAgentExecutionDetailToolUseId: null,
+      subAgentExecutionDetailInlineText: null
     }),
-  openSubAgentExecutionDetail: (toolUseId) =>
+  openSubAgentExecutionDetail: (toolUseId, inlineText) =>
     set({
       selectedSubAgentToolUseId: toolUseId,
       subAgentExecutionDetailOpen: true,
       subAgentExecutionDetailToolUseId: toolUseId,
+      subAgentExecutionDetailInlineText: inlineText?.trim() ? inlineText : null,
+      rightPanelTab: 'subagents',
+      rightPanelSection: 'collaboration',
+      rightPanelOpen: true,
+      leftSidebarOpen: false,
       detailPanelOpen: false,
       detailPanelContent: null
     }),
   closeSubAgentExecutionDetail: () =>
     set({
       subAgentExecutionDetailOpen: false,
-      subAgentExecutionDetailToolUseId: null
+      subAgentExecutionDetailToolUseId: null,
+      subAgentExecutionDetailInlineText: null
     }),
 
   planMode: false,

@@ -8,6 +8,9 @@ services:
       NODE_ENV: production
       PORT: 3000
       HOSTNAME: 0.0.0.0
+      OPENCOWORK_RELEASE_REPO: AIDotNet/OpenCowork
+      OPENCOWORK_RELEASE_TAG: latest
+      OPENCOWORK_RELEASE_SYNC_INTERVAL_MS: 3600000
     ports:
       - '3000:3000'
     restart: unless-stopped

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.FileSystemGlobbing;
 
 namespace OpenCowork.Agent.Tools.Fs;
@@ -8,30 +9,134 @@ namespace OpenCowork.Agent.Tools.Fs;
 /// </summary>
 public static class FsOperations
 {
+    public const int MaxReadLines = 2000;
+
     public static async Task<string> ReadFileAsync(string path, int? offset = null,
         int? limit = null, CancellationToken ct = default)
     {
         if (!File.Exists(path))
             throw new FileNotFoundException($"File not found: {path}");
 
-        if (offset is null && limit is null)
-            return await File.ReadAllTextAsync(path, ct);
+        var content = await File.ReadAllTextAsync(path, ct);
+        return FormatReadOutput(content, offset, limit);
+    }
 
-        var lines = await File.ReadAllLinesAsync(path, ct);
+    public static string FormatReadOutput(string content, int? offset = null, int? limit = null)
+    {
+        var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var lines = normalized.Split('\n');
         var start = Math.Max(0, (offset ?? 1) - 1);
-        var count = limit ?? (lines.Length - start);
-        count = Math.Min(count, lines.Length - start);
+        var maxCount = limit ?? MaxReadLines;
+        var count = Math.Max(0, Math.Min(maxCount, MaxReadLines));
 
         if (start >= lines.Length)
-            return "";
+            return string.Empty;
 
+        var end = Math.Min(start + count, lines.Length);
+        var width = Math.Max(6, end.ToString().Length);
         var sb = new StringBuilder();
-        for (var i = start; i < start + count && i < lines.Length; i++)
+        for (var i = start; i < end; i++)
         {
-            var lineNum = (i + 1).ToString().PadLeft(6);
-            sb.Append(lineNum).Append('|').AppendLine(lines[i]);
+            sb.Append((i + 1).ToString().PadLeft(width))
+              .Append('\t')
+              .Append(lines[i]);
+            if (i < end - 1)
+                sb.Append('\n');
         }
         return sb.ToString();
+    }
+
+    public static string ReadFileRaw(string path)
+    {
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"File not found: {path}");
+
+        return File.ReadAllText(path);
+    }
+
+    public static bool HasAnyPriorRead(string path, IDictionary<string, DateTimeOffset>? readHistory)
+    {
+        if (readHistory is null) return false;
+        return readHistory.ContainsKey(Path.GetFullPath(path));
+    }
+
+    public static void RecordRead(string path, IDictionary<string, DateTimeOffset>? readHistory)
+    {
+        if (readHistory is null) return;
+        readHistory[Path.GetFullPath(path)] = DateTimeOffset.UtcNow;
+    }
+
+    public static string ReplaceExact(string content, string oldString, string newString, bool replaceAll)
+    {
+        if (string.IsNullOrEmpty(oldString))
+            throw new InvalidOperationException("old_string must be non-empty");
+
+        var occurrences = CountOccurrences(content, oldString);
+        if (occurrences == 0)
+            throw new InvalidOperationException("old_string not found in file");
+
+        if (!replaceAll && occurrences > 1)
+            throw new InvalidOperationException("old_string is not unique in file");
+
+        return replaceAll
+            ? content.Replace(oldString, newString, StringComparison.Ordinal)
+            : ReplaceFirst(content, oldString, newString);
+    }
+
+    public static IReadOnlyList<(string Text, string Eol)> BuildOldStringVariants(string oldString, string fileContent)
+    {
+        var variants = new List<(string Text, string Eol)>
+        {
+            (oldString, DetectEolStyle(oldString))
+        };
+
+        var fileHasCrlf = fileContent.Contains("\r\n", StringComparison.Ordinal);
+        var fileHasOnlyLf = !fileHasCrlf;
+
+        if (oldString.Contains('\n') && !oldString.Contains('\r') && fileHasCrlf)
+        {
+            variants.Add((oldString.Replace("\n", "\r\n", StringComparison.Ordinal), "\r\n"));
+        }
+        else if (oldString.Contains("\r\n", StringComparison.Ordinal) && fileHasOnlyLf)
+        {
+            variants.Add((oldString.Replace("\r\n", "\n", StringComparison.Ordinal), "\n"));
+        }
+
+        return variants;
+    }
+
+    public static string DetectEolStyle(string value)
+    {
+        if (value.Contains("\r\n", StringComparison.Ordinal)) return "\r\n";
+        if (value.Contains('\r')) return "\r";
+        return "\n";
+    }
+
+    public static string ApplyEolStyle(string value, string eol)
+    {
+        var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal);
+        return eol == "\n" ? normalized : normalized.Replace("\n", eol, StringComparison.Ordinal);
+    }
+
+    public static JsonObject BuildReadMetadata(string path, string content, int? offset = null, int? limit = null)
+    {
+        var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var lines = normalized.Split('\n');
+        var start = Math.Max(0, (offset ?? 1) - 1);
+        var maxCount = limit ?? MaxReadLines;
+        var count = Math.Max(0, Math.Min(maxCount, MaxReadLines));
+        var end = Math.Min(start + count, lines.Length);
+
+        return new JsonObject
+        {
+            ["path"] = Path.GetFullPath(path),
+            ["line_count"] = lines.Length,
+            ["offset"] = offset ?? 1,
+            ["limit"] = count,
+            ["returned_first_line"] = end > start ? start + 1 : null,
+            ["returned_last_line"] = end > start ? end : null
+        };
     }
 
     public static async Task WriteFileAsync(string path, string content,
@@ -42,6 +147,32 @@ public static class FsOperations
             Directory.CreateDirectory(dir);
 
         await File.WriteAllTextAsync(path, content, ct);
+    }
+
+    private static int CountOccurrences(string content, string value)
+    {
+        if (string.IsNullOrEmpty(value)) return 0;
+
+        var count = 0;
+        var index = 0;
+        while (true)
+        {
+            index = content.IndexOf(value, index, StringComparison.Ordinal);
+            if (index < 0) break;
+            count++;
+            index += value.Length;
+        }
+
+        return count;
+    }
+
+    private static string ReplaceFirst(string content, string oldString, string newString)
+    {
+        var index = content.IndexOf(oldString, StringComparison.Ordinal);
+        if (index < 0)
+            throw new InvalidOperationException("old_string not found in file");
+
+        return string.Concat(content.AsSpan(0, index), newString, content.AsSpan(index + oldString.Length));
     }
 
     public static List<FsEntry> ListDirectory(string path, bool showHidden = false, IEnumerable<string>? ignore = null)

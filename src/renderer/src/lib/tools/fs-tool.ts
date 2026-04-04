@@ -41,6 +41,43 @@ function buildOldStringVariants(
   return variants
 }
 
+function normalizeReadHistoryPath(filePath: string): string {
+  return filePath.replace(/\\/g, '/').toLowerCase()
+}
+
+function recordRead(ctx: ToolContext, filePath: string): void {
+  if (!ctx.readFileHistory) ctx.readFileHistory = new Map<string, number>()
+  ctx.readFileHistory.set(normalizeReadHistoryPath(filePath), Date.now())
+}
+
+function hasPriorRead(ctx: ToolContext, filePath: string): boolean {
+  return ctx.readFileHistory?.has(normalizeReadHistoryPath(filePath)) ?? false
+}
+
+function buildEditNotFoundMessage(content: string, oldStr: string): string {
+  const normalizedContent = normalizeToLf(content)
+  const normalizedOld = normalizeToLf(oldStr)
+
+  if (normalizedContent.includes(normalizedOld)) {
+    return 'old_string not found in file (line endings differ; use the exact text from Read output)'
+  }
+
+  const probeLine = normalizedOld
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+
+  if (probeLine) {
+    const lines = normalizedContent.split('\n')
+    const index = lines.findIndex((line) => line.includes(probeLine))
+    if (index >= 0) {
+      return `old_string not found in file (closest match near line ${index + 1}; ensure indentation and context match Read output exactly)`
+    }
+  }
+
+  return 'old_string not found in file'
+}
+
 // ── SSH routing helper ──
 
 function isSsh(ctx: ToolContext): boolean {
@@ -177,6 +214,7 @@ const readHandler: ToolHandler = {
         })
       )
       if (isErrorResult(result)) throw new Error(`Read failed: ${result.error}`)
+      recordRead(ctx, resolvedPath)
       return String(result)
     }
     const result = await ctx.ipc.invoke(IPC.FS_READ_FILE, {
@@ -185,6 +223,7 @@ const readHandler: ToolHandler = {
       limit: input.limit
     })
     if (isErrorResult(result)) throw new Error(`Read failed: ${result.error}`)
+    recordRead(ctx, resolvedPath)
     // IPC returns { type: 'image', mediaType, data } for image files
     if (
       result &&
@@ -298,57 +337,60 @@ const editHandler: ToolHandler = {
   },
   execute: async (input, ctx) => {
     const resolvedPath = resolveToolPath(input.file_path, ctx.workingFolder)
-    // Read file, perform replacement, write back
+    const oldStr = String(input.old_string ?? '')
+    const newStr = String(input.new_string ?? '')
+    const replaceAll = Boolean(input.replace_all)
+
+    if (!hasPriorRead(ctx, resolvedPath)) {
+      return encodeToolError('You must use the Read tool before using Edit on this file')
+    }
+
+    if (!oldStr) {
+      return encodeToolError('old_string must be non-empty')
+    }
+
+    if (oldStr === newStr) {
+      return encodeToolError('new_string must be different from old_string')
+    }
+
     const readCh = isSsh(ctx) ? IPC.SSH_FS_READ_FILE : IPC.FS_READ_FILE
     const readArgs = isSsh(ctx) ? sshArgs(ctx, { path: resolvedPath }) : { path: resolvedPath }
     const contentResult = await ctx.ipc.invoke(readCh, readArgs)
     if (isErrorResult(contentResult)) {
       return encodeToolError(`Read failed: ${contentResult.error}`)
     }
-    const content = String(contentResult)
-    const oldStr = String(input.old_string)
-    const newStr = String(input.new_string)
-    const replaceAll = Boolean(input.replace_all)
 
+    const content = String(contentResult)
     const oldStringVariants = buildOldStringVariants(oldStr, content)
     const matchedVariant = oldStringVariants.find(
       (variant) => variant.text.length > 0 && content.includes(variant.text)
     )
+
     if (!matchedVariant) {
-      if (replaceAll) {
-        return encodeToolError('old_string not found in file')
-      }
-      const idxFallback = content.indexOf(oldStr)
-      if (idxFallback === -1) {
-        return encodeToolError('old_string not found in file')
-      }
-      const replacement = applyEolStyle(newStr, detectEolStyle(oldStr))
-      const updatedFallback =
-        content.slice(0, idxFallback) + replacement + content.slice(idxFallback + oldStr.length)
-      const writeChFallback = isSsh(ctx) ? IPC.SSH_FS_WRITE_FILE : IPC.FS_WRITE_FILE
-      const writeArgsFallback = isSsh(ctx)
-        ? sshWriteArgs(ctx, resolvedPath, updatedFallback, 'Edit')
-        : localWriteArgs(ctx, resolvedPath, updatedFallback, 'Edit')
-      await ctx.ipc.invoke(writeChFallback, writeArgsFallback)
-      return encodeStructuredToolResult({ success: true })
+      return encodeToolError(buildEditNotFoundMessage(content, oldStr))
     }
 
     const replacementText = applyEolStyle(newStr, matchedVariant.eol)
-    let updated: string
-    if (replaceAll) {
-      updated = content.split(matchedVariant.text).join(replacementText)
-    } else {
-      const idx = content.indexOf(matchedVariant.text)
-      updated =
-        content.slice(0, idx) + replacementText + content.slice(idx + matchedVariant.text.length)
+    const occurrences = content.split(matchedVariant.text).length - 1
+    if (!replaceAll && occurrences > 1) {
+      return encodeToolError('old_string is not unique in file')
     }
+
+    const updated = replaceAll
+      ? content.split(matchedVariant.text).join(replacementText)
+      : content.replace(matchedVariant.text, replacementText)
 
     const writeCh = isSsh(ctx) ? IPC.SSH_FS_WRITE_FILE : IPC.FS_WRITE_FILE
     const writeArgs = isSsh(ctx)
       ? sshWriteArgs(ctx, resolvedPath, updated, 'Edit')
       : localWriteArgs(ctx, resolvedPath, updated, 'Edit')
-    await ctx.ipc.invoke(writeCh, writeArgs)
-    return encodeStructuredToolResult({ success: true })
+    const writeResult = await ctx.ipc.invoke(writeCh, writeArgs)
+    if (isErrorResult(writeResult)) {
+      return encodeToolError(`Write failed: ${writeResult.error}`)
+    }
+
+    recordRead(ctx, resolvedPath)
+    return encodeStructuredToolResult({ success: true, path: resolvedPath, replaceAll })
   },
   requiresApproval: (input, ctx) => {
     if (isSsh(ctx)) return false // SSH sessions: trust working folder

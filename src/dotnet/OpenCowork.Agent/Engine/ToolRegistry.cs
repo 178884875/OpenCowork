@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -30,6 +31,7 @@ public class ToolContext
     public Func<string, Dictionary<string, JsonElement>, ToolContext, CancellationToken, Task<bool>>? RendererToolRequiresApprovalAsync { get; init; }
     public Dictionary<string, ToolHandler>? InlineToolHandlers { get; init; }
     public Dictionary<string, ToolHandler>? LocalToolHandlers { get; init; }
+    public ConcurrentDictionary<string, DateTimeOffset>? ReadFileHistory { get; init; }
 }
 
 public class ToolResultContent

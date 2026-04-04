@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using OpenCowork.Agent.Engine;
@@ -14,6 +15,7 @@ public sealed class AgentRuntimeService
     private readonly LlmHttpClientFactory _httpClientFactory = new();
     private readonly ToolRegistry _toolRegistry = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeRuns = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _readFileHistory = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly string[] SupportedCapabilities =
     [
@@ -98,7 +100,8 @@ public sealed class AgentRuntimeService
                     AgentRunId = runId,
                     ElectronInvokeAsync = CreateElectronInvokeHandler(runCts.Token),
                     RendererToolInvokeAsync = CreateRendererToolInvokeHandler(runId, runCts.Token),
-                    RendererToolRequiresApprovalAsync = CreateRendererToolRequiresApprovalHandler(runId, runCts.Token)
+                    RendererToolRequiresApprovalAsync = CreateRendererToolRequiresApprovalHandler(runId, runCts.Token),
+                    ReadFileHistory = _readFileHistory
                 };
 
                 var loopConfig = new AgentLoopRunConfig
@@ -198,8 +201,10 @@ public sealed class AgentRuntimeService
                 var path = ResolvePath(GetFilePath(input, required: true), ctx.WorkingFolder);
                 var offset = GetOptionalInt(input, "offset");
                 var limit = GetOptionalInt(input, "limit");
-                var content = await FsOperations.ReadFileAsync(path, offset, limit, token);
-                return new ToolResultContent { Content = content };
+                var rawContent = FsOperations.ReadFileRaw(path);
+                var formatted = FsOperations.FormatReadOutput(rawContent, offset, limit);
+                FsOperations.RecordRead(path, ctx.ReadFileHistory);
+                return new ToolResultContent { Content = formatted };
             },
             RequiresApproval = (_, _) => false
         });
@@ -265,13 +270,26 @@ public sealed class AgentRuntimeService
                 var newString = GetString(input, "new_string", required: true);
                 var replaceAll = GetOptionalBool(input, "replace_all") ?? false;
 
+                if (!FsOperations.HasAnyPriorRead(path, ctx.ReadFileHistory))
+                    throw new InvalidOperationException("You must use the Read tool before using Edit on this file");
+
+                if (string.IsNullOrEmpty(oldString))
+                    throw new InvalidOperationException("old_string must be non-empty");
+
                 if (string.Equals(oldString, newString, StringComparison.Ordinal))
                     throw new InvalidOperationException("new_string must be different from old_string");
 
-                var content = await FsOperations.ReadFileAsync(path, null, null, token);
-                var replacement = ApplyEolStyle(newString, DetectEolStyle(oldString));
-                var updated = ReplaceExact(content, oldString, replacement, replaceAll);
+                var content = FsOperations.ReadFileRaw(path);
+                var matchedVariant = FsOperations.BuildOldStringVariants(oldString, content)
+                    .FirstOrDefault(variant => !string.IsNullOrEmpty(variant.Text) && content.Contains(variant.Text, StringComparison.Ordinal));
+
+                if (string.IsNullOrEmpty(matchedVariant.Text))
+                    throw new InvalidOperationException(BuildEditNotFoundMessage(content, oldString));
+
+                var replacement = FsOperations.ApplyEolStyle(newString, matchedVariant.Eol);
+                var updated = FsOperations.ReplaceExact(content, matchedVariant.Text, replacement, replaceAll);
                 await FsOperations.WriteFileAsync(path, updated, token);
+                FsOperations.RecordRead(path, ctx.ReadFileHistory);
 
                 return new ToolResultContent
                 {
@@ -852,57 +870,40 @@ public sealed class AgentRuntimeService
         return Path.GetFullPath(Path.Combine(string.IsNullOrWhiteSpace(workingFolder) ? Environment.CurrentDirectory : workingFolder, rawPath));
     }
 
-    private static string DetectEolStyle(string value)
+    private static string BuildEditNotFoundMessage(string content, string oldString)
     {
-        if (value.Contains("\r\n", StringComparison.Ordinal)) return "\r\n";
-        if (value.Contains('\r')) return "\r";
-        return "\n";
-    }
+        var normalizedContent = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var normalizedOld = oldString.Replace("\r\n", "\n", StringComparison.Ordinal);
 
-    private static string ApplyEolStyle(string value, string eol)
-    {
-        var normalized = value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\r", "\n", StringComparison.Ordinal);
-        return eol == "\n" ? normalized : normalized.Replace("\n", eol, StringComparison.Ordinal);
-    }
-
-    private static string ReplaceExact(string content, string oldString, string newString, bool replaceAll)
-    {
-        var occurrences = CountOccurrences(content, oldString);
-        if (occurrences == 0)
-            throw new InvalidOperationException("old_string not found in file");
-
-        if (!replaceAll && occurrences > 1)
-            throw new InvalidOperationException("old_string is not unique in file");
-
-        return replaceAll
-            ? content.Replace(oldString, newString, StringComparison.Ordinal)
-            : ReplaceFirst(content, oldString, newString);
-    }
-
-    private static int CountOccurrences(string content, string value)
-    {
-        if (string.IsNullOrEmpty(value)) return 0;
-
-        var count = 0;
-        var index = 0;
-        while (true)
+        if (normalizedContent.Contains(normalizedOld, StringComparison.Ordinal))
         {
-            index = content.IndexOf(value, index, StringComparison.Ordinal);
-            if (index < 0) break;
-            count++;
-            index += value.Length;
+            return "old_string not found in file (line endings differ; try using the exact text from Read output)";
         }
 
-        return count;
+        var lineIndex = FindBestMatchingLineIndex(normalizedContent, normalizedOld);
+        if (lineIndex >= 0)
+        {
+            return $"old_string not found in file (closest match near line {lineIndex + 1}; ensure indentation and surrounding context match Read output exactly)";
+        }
+
+        return "old_string not found in file";
     }
 
-    private static string ReplaceFirst(string content, string oldString, string newString)
+    private static int FindBestMatchingLineIndex(string content, string oldString)
     {
-        var index = content.IndexOf(oldString, StringComparison.Ordinal);
-        if (index < 0)
-            throw new InvalidOperationException("old_string not found in file");
+        var probeLine = oldString.Split('\n').Select(static line => line.Trim())
+            .FirstOrDefault(static line => line.Length > 0);
+        if (string.IsNullOrWhiteSpace(probeLine))
+            return -1;
 
-        return string.Concat(content.AsSpan(0, index), newString, content.AsSpan(index + oldString.Length));
+        var lines = content.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].Contains(probeLine, StringComparison.Ordinal))
+                return i;
+        }
+
+        return -1;
     }
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> ExecuteShellCommandAsync(

@@ -434,7 +434,8 @@ public static class AgentLoop
             RendererToolInvokeAsync = config.ToolContext.RendererToolInvokeAsync,
             RendererToolRequiresApprovalAsync = config.ToolContext.RendererToolRequiresApprovalAsync,
             InlineToolHandlers = config.ToolContext.InlineToolHandlers,
-            LocalToolHandlers = config.ToolContext.LocalToolHandlers
+            LocalToolHandlers = config.ToolContext.LocalToolHandlers,
+            ReadFileHistory = config.ToolContext.ReadFileHistory
         };
 
         // Check if approval is needed

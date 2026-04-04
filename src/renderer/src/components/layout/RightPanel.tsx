@@ -114,6 +114,7 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
   const selectedSubAgentToolUseId = useUIStore((s) => s.selectedSubAgentToolUseId)
   const subAgentExecutionDetailOpen = useUIStore((s) => s.subAgentExecutionDetailOpen)
   const subAgentExecutionDetailToolUseId = useUIStore((s) => s.subAgentExecutionDetailToolUseId)
+  const subAgentExecutionDetailInlineText = useUIStore((s) => s.subAgentExecutionDetailInlineText)
   const setTab = useUIStore((s) => s.setRightPanelTab)
   const setSection = useUIStore((s) => s.setRightPanelSection)
   const setRightPanelWidth = useUIStore((s) => s.setRightPanelWidth)
@@ -301,6 +302,7 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
                           <SubAgentExecutionDetail
                             embedded
                             toolUseId={subAgentExecutionDetailToolUseId ?? selectedSubAgentToolUseId}
+                            inlineText={subAgentExecutionDetailInlineText ?? undefined}
                             onClose={() => useUIStore.getState().closeSubAgentExecutionDetail()}
                           />
                         ) : (

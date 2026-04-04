@@ -121,7 +121,7 @@ function SubAgentCardInner({
   }, [previewSource, isRunning])
 
   const handleOpenPanel = (): void => {
-    useUIStore.getState().openSubAgentsPanel(toolUseId)
+    useUIStore.getState().openSubAgentExecutionDetail(toolUseId, histText || previewSource)
   }
 
   return (

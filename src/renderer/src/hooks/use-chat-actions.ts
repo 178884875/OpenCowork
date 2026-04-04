@@ -2333,11 +2333,20 @@ export function useChatActions(): {
           if (!useSidecar) {
             const requestedToolNames = [...new Set(sidecarRequest.tools.map((tool) => tool.name))]
             const unsupportedToolNames = getUnsupportedSidecarToolNames(requestedToolNames)
-            throw new Error(
-              unsupportedToolNames.length > 0
-                ? `Sidecar does not yet support tools: ${unsupportedToolNames.join(', ')}`
-                : 'Sidecar agent execution is required but capability gating failed'
-            )
+            if (unsupportedToolNames.length > 0) {
+              throw new Error(
+                `Sidecar does not yet support tools: ${unsupportedToolNames.join(', ')}`
+              )
+            }
+            console.warn('[ChatActions] Proceeding with sidecar after capability gating failure', {
+              sessionId,
+              providerType: sidecarRequest.provider.type,
+              requestedToolNames,
+              isPlanMode,
+              sessionMode: mode,
+              hasChannels: scopedActiveChannels.length > 0,
+              hasMcps: activeMcps.length > 0
+            })
           }
 
           setRequestTraceInfo(assistantMsgId, {

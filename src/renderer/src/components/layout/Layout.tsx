@@ -153,6 +153,7 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
   const closePreviewPanel = useUIStore((s) => s.closePreviewPanel)
   const subAgentExecutionDetailOpen = useUIStore((s) => s.subAgentExecutionDetailOpen)
   const subAgentExecutionDetailToolUseId = useUIStore((s) => s.subAgentExecutionDetailToolUseId)
+  const subAgentExecutionDetailInlineText = useUIStore((s) => s.subAgentExecutionDetailInlineText)
   const closeSubAgentExecutionDetail = useUIStore((s) => s.closeSubAgentExecutionDetail)
   const toolbarCollapsedByDefault = useSettingsStore((s) => s.toolbarCollapsedByDefault)
   const chatView = useUIStore((s) => s.chatView)
@@ -1179,6 +1180,7 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
           </DialogHeader>
           <SubAgentExecutionDetail
             toolUseId={subAgentExecutionDetailToolUseId}
+            inlineText={subAgentExecutionDetailInlineText ?? undefined}
             onClose={closeSubAgentExecutionDetail}
           />
         </DialogContent>

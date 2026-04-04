@@ -419,7 +419,8 @@ export async function* runAgentLoop(
       try {
         output = await executeTool(tc.name, tc.input, {
           ...toolCtx,
-          currentToolUseId: tc.id
+          currentToolUseId: tc.id,
+          readFileHistory: toolCtx.readFileHistory
         })
       } catch (toolErr) {
         if (config.signal.aborted) {

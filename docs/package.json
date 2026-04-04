@@ -5,7 +5,8 @@
   "scripts": {
     "build": "node scripts/generate-skills-index.mjs && next build",
     "dev": "node scripts/generate-skills-index.mjs && next dev",
-    "start": "next start",
+    "start": "node scripts/start-runtime.mjs",
+    "start:next": "next start",
     "types:check": "fumadocs-mdx && next typegen && tsc --noEmit",
     "postinstall": "fumadocs-mdx"
   },

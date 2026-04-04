@@ -9,6 +9,8 @@ export interface ToolContext {
   sshConnectionId?: string
   signal: AbortSignal
   ipc: IPCClient
+  /** Files read during this run, keyed by normalized resolved path. */
+  readFileHistory?: Map<string, number>
   /** Per-run inline tool handlers that should shadow the global registry. */
   inlineToolHandlers?: Record<string, ToolHandler>
   /** The tool_use block id currently being executed (set by agent-loop) */

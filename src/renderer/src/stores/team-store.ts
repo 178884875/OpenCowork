@@ -231,7 +231,21 @@ export const useTeamStore = create<TeamStore>()(
                 ...(previousMember?.usage ? { usage: previousMember.usage } : {})
               }
             }),
-            tasks: previous?.tasks ?? [],
+            tasks: snapshot.team.tasks.map((task) => {
+              const previousTask = previous?.tasks.find((item) => item.id === task.id)
+              return {
+                id: task.id,
+                subject: task.subject,
+                description: task.description,
+                status: task.status,
+                owner: task.owner,
+                dependsOn: [...task.dependsOn],
+                ...(task.activeForm ? { activeForm: task.activeForm } : {}),
+                ...(task.report ?? previousTask?.report
+                  ? { report: task.report ?? previousTask?.report }
+                  : {})
+              }
+            }),
             messages: snapshot.recentMessages.map((msg) => ({
               id: msg.id,
               from: msg.from,

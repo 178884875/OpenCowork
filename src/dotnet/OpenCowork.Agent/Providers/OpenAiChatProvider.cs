@@ -83,17 +83,43 @@ public sealed class OpenAiChatProvider : ILlmProvider
         var toolArgs = new Dictionary<string, StringBuilder>();
         var toolExtraContents = new Dictionary<string, ToolCallExtraContent>();
         var startedToolKeys = new HashSet<string>();
+        var toolKeysByIndex = new Dictionary<int, string>();
+        var toolKeysById = new Dictionary<string, string>(StringComparer.Ordinal);
+        var syntheticToolKeyCounter = 0;
         string? lastGoogleThinkingSignature = null;
 
-        static string GetToolKey(OpenAiToolCallDelta toolCall)
+        string GetToolKey(OpenAiToolCallDelta toolCall)
         {
             if (!string.IsNullOrWhiteSpace(toolCall.Id))
-                return $"id:{toolCall.Id}";
+            {
+                if (toolKeysById.TryGetValue(toolCall.Id, out var existingById))
+                    return existingById;
+
+                if (toolCall.Index.HasValue && toolKeysByIndex.TryGetValue(toolCall.Index.Value, out var existingByIndex))
+                {
+                    toolKeysById[toolCall.Id] = existingByIndex;
+                    return existingByIndex;
+                }
+
+                var keyById = $"id:{toolCall.Id}";
+                toolKeysById[toolCall.Id] = keyById;
+                if (toolCall.Index.HasValue)
+                    toolKeysByIndex[toolCall.Index.Value] = keyById;
+                return keyById;
+            }
 
             if (toolCall.Index.HasValue)
-                return $"index:{toolCall.Index.Value}";
+            {
+                if (toolKeysByIndex.TryGetValue(toolCall.Index.Value, out var existingByIndex))
+                    return existingByIndex;
 
-            return $"synthetic:{Guid.NewGuid():N}";
+                var keyByIndex = $"index:{toolCall.Index.Value}";
+                toolKeysByIndex[toolCall.Index.Value] = keyByIndex;
+                return keyByIndex;
+            }
+
+            syntheticToolKeyCounter++;
+            return $"synthetic:{syntheticToolKeyCounter}";
         }
         var isOpenAi = baseUrl.StartsWith("https://api.openai.com", StringComparison.OrdinalIgnoreCase)
             || baseUrl.StartsWith("http://api.openai.com", StringComparison.OrdinalIgnoreCase);
@@ -272,16 +298,17 @@ public sealed class OpenAiChatProvider : ILlmProvider
 
                             if (tc.Function?.Arguments is not null)
                             {
-                                if (!toolIds.TryGetValue(toolKey, out toolId))
-                                    continue;
-
                                 toolArgs[toolKey].Append(tc.Function.Arguments);
-                                yield return new StreamEvent
+
+                                if (toolIds.TryGetValue(toolKey, out toolId))
                                 {
-                                    Type = "tool_call_delta",
-                                    ToolCallId = toolId,
-                                    ArgumentsDelta = tc.Function.Arguments
-                                };
+                                    yield return new StreamEvent
+                                    {
+                                        Type = "tool_call_delta",
+                                        ToolCallId = toolId,
+                                        ArgumentsDelta = tc.Function.Arguments
+                                    };
+                                }
                             }
                         }
                     }
@@ -302,6 +329,8 @@ public sealed class OpenAiChatProvider : ILlmProvider
                     toolArgs.Clear();
                     toolExtraContents.Clear();
                     startedToolKeys.Clear();
+                    toolKeysByIndex.Clear();
+                    toolKeysById.Clear();
 
                     if (chunk.Usage is null)
                         ScheduleCompatTerminalClose();

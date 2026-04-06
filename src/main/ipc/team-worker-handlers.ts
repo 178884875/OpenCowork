@@ -53,8 +53,11 @@ export async function spawnIsolatedTeamWorker(
     memberId: args.memberId
   })
 
-  workerWindow.on('closed', () => {
-    workerWindows.delete(workerId)
+  const completion = new Promise<SpawnIsolatedTeamWorkerResult>((resolve) => {
+    workerWindow.on('closed', () => {
+      workerWindows.delete(workerId)
+      resolve({ success: true, workerId })
+    })
   })
 
   const target = buildWorkerUrl(args)
@@ -64,7 +67,7 @@ export async function spawnIsolatedTeamWorker(
     await workerWindow.loadURL(target)
   }
 
-  return { success: true, workerId }
+  return completion
 }
 
 export async function stopIsolatedTeamWorker(args: StopIsolatedTeamWorkerArgs): Promise<{ success: true }> {

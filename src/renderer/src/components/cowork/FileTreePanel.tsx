@@ -355,7 +355,7 @@ function TreeItem({
           </span>
           {!isDir && (
             <span className="rounded-full border border-border/50 bg-background/70 px-1.5 py-0.5 text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
-              拖动引用
+              {t('fileTree.dragToReference')}
             </span>
           )}
         </div>
@@ -820,7 +820,7 @@ export function FileTreePanel(): React.JSX.Element {
                   {workingFolder.split(/[\\/]/).pop()}
                 </div>
                 <span className="rounded-full border border-primary/15 bg-primary/8 px-1.5 py-0.5 text-[10px] text-primary/80">
-                  拖到输入框可引用
+                  {t('fileTree.dragToReference')}
                 </span>
               </div>
               <div className="mt-1 truncate text-[11px] text-muted-foreground" title={workingFolder}>
@@ -862,7 +862,7 @@ export function FileTreePanel(): React.JSX.Element {
             </span>
             {isSearching && (
               <span className="rounded-full border border-primary/20 bg-primary/8 px-2 py-1 text-primary/80">
-                {searchResults.length} 个结果
+                {searchResults.length} {t('unit.matches', { ns: 'common' })}
               </span>
             )}
           </div>

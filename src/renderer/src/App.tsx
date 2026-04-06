@@ -623,27 +623,6 @@ function App(): React.JSX.Element {
                ) : (
                   <>
                      <Loader2 className="h-5 w-5 animate-spin" />
-                     <div className="text-sm font-medium">Running background teammate...</div>
-                     <div className="text-xs text-muted-foreground">{teamWorkerParams.memberName}</div>
-                  </>
-               )}
-            </div>
-         </div>
-      )
-   }
-
-   if (teamWorkerParams) {
-      return (
-         <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-            <div className="flex max-w-md flex-col items-center gap-3 px-6 text-center">
-               {workerBootError ? (
-                  <>
-                     <div className="text-sm font-medium">Team worker failed to start</div>
-                     <div className="text-xs text-muted-foreground">{workerBootError}</div>
-                  </>
-               ) : (
-                  <>
-                     <Loader2 className="h-5 w-5 animate-spin" />
                      <div className="text-sm font-medium">Running background teammate…</div>
                      <div className="text-xs text-muted-foreground">{workerMemberName}</div>
                   </>

@@ -226,6 +226,30 @@ export const codexOAuthPreset: BuiltinProviderPreset = {
       type: 'openai-responses'
     },
     {
+      id: 'gpt-5.4-mini',
+      name: 'GPT 5.4 Mini',
+      icon: 'openai',
+      enabled: true,
+      serviceTier: 'priority',
+      contextLength: 400_000,
+      maxOutputTokens: 128_000,
+      supportsVision: true,
+      supportsFunctionCall: false,
+      inputPrice: 0.75,
+      outputPrice: 4.5,
+      cacheHitPrice: 0.075,
+      supportsThinking: true,
+      thinkingConfig: {
+        bodyParams: {},
+        reasoningEffortLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
+        defaultReasoningEffort: 'medium'
+      },
+      responseSummary: 'detailed',
+      enablePromptCache: true,
+      enableSystemPromptCache: true,
+      type: 'openai-responses'
+    },
+    {
       id: 'gpt-5.4',
       name: 'GPT 5.4',
       icon: 'openai',

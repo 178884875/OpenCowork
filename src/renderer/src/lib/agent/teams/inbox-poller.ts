@@ -96,7 +96,7 @@ async function handleLeadMessage(message: TeamMessage): Promise<void> {
     return
   }
 
-  if (message.type === 'team_permission_update') {
+  if (message.type === 'team_permission_update' || message.type === 'mode_set_request') {
     const payload = parsePermissionUpdate(message.content)
     if (!payload) return
 

@@ -10,12 +10,13 @@ import { ipcClient } from '../../ipc/ipc-client'
 import { MessageQueue } from '../types'
 import type { AgentLoopConfig } from '../types'
 import type { UnifiedMessage, ProviderConfig, TokenUsage } from '../../api/types'
+import type { TeamRuntimeTaskStatus } from '../../../../../shared/team-runtime-types'
 import type { TeamMessage, TeamTask } from './types'
 import { buildRuntimeCompression } from '../context-compression-runtime'
 import { subAgentRegistry } from '../sub-agents/registry'
 import { resolveSubAgentTools } from '../sub-agents/resolve-tools'
 import { runSharedAgentRuntime } from '../shared-runtime'
-import { appendTeamRuntimeMessage, updateTeamRuntimeMember } from './runtime-client'
+import { appendTeamRuntimeMessage, updateTeamRuntimeManifest, updateTeamRuntimeMember } from './runtime-client'
 import { requestTeammatePermission, stopWorkerPermissionPoller } from './permission-bridge'
 import { requestPlanApproval, stopWorkerPlanApprovalPoller } from './plan-approval-bridge'
 import { buildTeammateAddendum } from './prompts'
@@ -46,6 +47,25 @@ async function syncRuntimeMemberState(
     })
   } catch (error) {
     console.error('[TeamRuntime] Failed to sync teammate runtime member state:', error)
+  }
+}
+
+async function syncRuntimeTaskState(
+  taskId: string,
+  patch: Partial<{ status: TeamRuntimeTaskStatus; owner: string | null; report: string }>
+): Promise<void> {
+  const team = useTeamStore.getState().activeTeam
+  if (!team?.name) return
+
+  try {
+    await updateTeamRuntimeManifest({
+      teamName: team.name,
+      patch: {
+        tasks: team.tasks.map((task) => (task.id === taskId ? { ...task, ...patch } : task))
+      }
+    })
+  } catch (error) {
+    console.error('[TeamRuntime] Failed to sync teammate runtime task state:', error)
   }
 }
 
@@ -580,6 +600,7 @@ async function runSingleTaskLoop(opts: {
                 taskId,
                 patch: { status: 'completed' }
               })
+              await syncRuntimeTaskState(taskId, { status: 'completed' })
               taskCompleted = true
             }
             if (taskCompleted) {

@@ -1,6 +1,7 @@
 import type { ToolHandler } from '../../../tools/tool-types'
 import { encodeStructuredToolResult, encodeToolError } from '../../../tools/tool-result-format'
 import { teamEvents } from '../events'
+import { updateTeamRuntimeManifest } from '../runtime-client'
 import { useTeamStore } from '../../../../stores/team-store'
 import type { TeamTaskStatus } from '../types'
 
@@ -64,6 +65,15 @@ export const taskUpdateTool: ToolHandler = {
     if (input.report !== undefined && patch.status === 'completed') {
       patch.report = String(input.report)
     }
+
+    await updateTeamRuntimeManifest({
+      teamName: team.name,
+      patch: {
+        tasks: team.tasks.map((item) =>
+          item.id === taskId ? { ...item, ...patch } : item
+        )
+      }
+    })
 
     teamEvents.emit({ type: 'team_task_update', taskId, patch })
 

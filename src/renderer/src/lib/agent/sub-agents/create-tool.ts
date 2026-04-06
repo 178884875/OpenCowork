@@ -6,6 +6,7 @@ import { runSubAgent } from './runner'
 import { subAgentEvents } from './events'
 import { subAgentRegistry } from './registry'
 import type { ProviderConfig, TokenUsage, ToolResultContent } from '../../api/types'
+import type { TeamRuntimeTaskStatus } from '../../../../../shared/team-runtime-types'
 import { encodeStructuredToolResult, encodeToolError } from '../../tools/tool-result-format'
 import { useAgentStore } from '../../../stores/agent-store'
 import { useSettingsStore } from '../../../stores/settings-store'
@@ -14,7 +15,7 @@ import { teamEvents } from '../teams/events'
 import { useTeamStore } from '../../../stores/team-store'
 import { runTeammate, findNextClaimableTask } from '../teams/teammate-runner'
 import { spawnIsolatedTeamWorker } from '../teams/backend-client'
-import { updateTeamRuntimeMember } from '../teams/runtime-client'
+import { updateTeamRuntimeManifest, updateTeamRuntimeMember } from '../teams/runtime-client'
 import type { TeamMember } from '../teams/types'
 
 /** Global concurrency limiter: at most 2 SubAgents run simultaneously. */
@@ -87,6 +88,22 @@ function getTeamContext(teamName: string): TeamContext {
 /** Clean up context when a team is deleted. */
 export function removeTeamLimiter(teamName: string): void {
   teamContexts.delete(teamName)
+}
+
+async function syncRuntimeTaskPatch(
+  teamName: string,
+  taskId: string,
+  patch: Partial<{ status: TeamRuntimeTaskStatus; owner: string | null; report: string }>
+): Promise<void> {
+  const team = useTeamStore.getState().activeTeam
+  if (!team || team.name !== teamName) return
+
+  await updateTeamRuntimeManifest({
+    teamName,
+    patch: {
+      tasks: team.tasks.map((task) => (task.id === taskId ? { ...task, ...patch } : task))
+    }
+  })
 }
 
 /**
@@ -292,6 +309,12 @@ async function executeBackgroundTeammate(
       type: 'team_task_update',
       taskId: assignedTaskId,
       patch: { status: 'in_progress', owner: memberName }
+    })
+    void syncRuntimeTaskPatch(teamName, assignedTaskId, {
+      status: 'in_progress',
+      owner: memberName
+    }).catch((error) => {
+      console.error('[TeamRuntime] Failed to sync assigned task state:', error)
     })
   }
 

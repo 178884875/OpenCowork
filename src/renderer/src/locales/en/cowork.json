@@ -81,6 +81,9 @@
   },
   "fileTree": {
     "selectFolder": "Select a working folder to view files",
+    "searchPlaceholder": "Search file names or paths",
+    "searching": "Searching files...",
+    "noSearchResults": "No matching files",
     "newFile": "New File",
     "newFolder": "New Folder",
     "deleteConfirm": "Delete {{type}} \"{{name}}\"?",
@@ -89,6 +92,7 @@
     "copyPath": "Copy path",
     "insertPath": "Insert path into chat",
     "closePreview": "Close preview",
+    "dragToReference": "Drag to input to reference",
     "unableToRead": "(Unable to read file)",
     "empty": "Empty folder",
     "stats": "{{folders}} folders · {{files}} files"

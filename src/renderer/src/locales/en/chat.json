@@ -26,6 +26,21 @@
       "xhigh": "Maximum depth"
     },
     "selectFolder": "Select working folder",
+    "selectSshFolder": "Select SSH folder",
+    "selectProject": "Select project",
+    "newProject": "New project",
+    "projectName": "Project name",
+    "projectNameHint": "Selecting a folder uses the folder name as the project name.",
+    "projectNamePlaceholder": "For example: OpenCoWork",
+    "createProject": "Create project",
+    "currentWorkingFolder": "Current working folder",
+    "noWorkingFolderSelected": "No folder selected",
+    "defaultProjectDirectory": "Default project location",
+    "defaultProjectDirectoryHint": "Use custom path or remember the last used location.",
+    "useCustomDirectory": "Custom",
+    "defaultProjectDirectoryPlaceholder": "Leave empty to use last used directory",
+    "browseDefaultDirectory": "Browse",
+    "defaultProjectDirectoryFallback": "Fallback: system Documents directory",
     "clearConversation": "Clear conversation",
     "clearConfirmTitle": "Clear all messages?",
     "clearConfirmDesc": "This will remove all messages in this conversation. This action cannot be undone.",
@@ -201,7 +216,20 @@
     "other": "Other",
     "answerPlaceholder": "Type your answer…",
     "answeredTitle": "Questions answered",
-    "answeredSubtitle": "Your selections and notes have been recorded"
+    "answeredSubtitle": "Your selections and notes have been recorded",
+    "recommended": "Recommended",
+    "previewBadge": "Preview",
+    "previewTitle": "Option preview",
+    "notesTitle": "Notes (optional)",
+    "notesPlaceholder": "Add constraints, preferences, or context…",
+    "autoAnswered": "Auto-answered",
+    "completedTitle": "Questions processed",
+    "completedSubtitle": "This run did not enter the interactive answer UI.",
+    "canceledTitle": "Question canceled",
+    "canceledSubtitle": "This question was stopped before an answer was collected.",
+    "errorTitle": "Question failed",
+    "errorSubtitle": "This run did not reach the waiting-for-answer state.",
+    "sourceLabel": "Source"
   },
   "permission": {
     "title": "Permission Required",
@@ -427,6 +455,12 @@
     "exportImageFailed": "Export image failed"
   },
   "projectHome": {
+    "noProjectSelected": "No project selected",
+    "noProjectSelectedDesc": "Return to the home page to select or create a project before continuing.",
+    "backHome": "Back Home",
+    "heroDesc": "Continue working around the current project. New sessions default to this project's working folder.",
+    "openArchive": "Project Archive",
+    "openChannels": "Channels",
     "openGit": "Git"
   },
   "skills": {

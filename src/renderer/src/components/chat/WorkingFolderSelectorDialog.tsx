@@ -40,6 +40,7 @@ interface WorkingFolderSelectorDialogProps {
   sshConnectionId?: string | null
   projectName?: string
   createMode?: boolean
+  preferredSection?: 'local' | 'ssh'
   onSelectLocalFolder: (folderPath: string) => void | Promise<void>
   onSelectSshFolder: (folderPath: string, connectionId: string) => void | Promise<void>
 }
@@ -51,6 +52,7 @@ export function WorkingFolderSelectorDialog({
   sshConnectionId,
   projectName,
   createMode = false,
+  preferredSection = 'local',
   onSelectLocalFolder,
   onSelectSshFolder
 }: WorkingFolderSelectorDialogProps): React.JSX.Element {
@@ -68,6 +70,7 @@ export function WorkingFolderSelectorDialog({
   const [defaultDirectoryInput, setDefaultDirectoryInput] = React.useState('')
   const [sshDirInputs, setSshDirInputs] = React.useState<Record<string, string>>({})
   const [sshDirEditingId, setSshDirEditingId] = React.useState<string | null>(null)
+  const [activeSection, setActiveSection] = React.useState<'local' | 'ssh'>(preferredSection)
 
   const loadDesktopDirectories = React.useCallback(async (): Promise<void> => {
     setDesktopDirectoriesLoading(true)
@@ -97,7 +100,8 @@ export function WorkingFolderSelectorDialog({
     if (!open) return
     void loadDesktopDirectories()
     if (!sshLoaded) void useSshStore.getState().loadAll()
-  }, [loadDesktopDirectories, open, sshLoaded])
+    setActiveSection(preferredSection)
+  }, [loadDesktopDirectories, open, preferredSection, sshLoaded])
 
   React.useEffect(() => {
     if (!open) return
@@ -111,6 +115,8 @@ export function WorkingFolderSelectorDialog({
       ? projectDefaultDirectory.trim()
       : lastProjectDirectory.trim()
   const suggestedProjectName = projectName?.trim() || 'New Project'
+  const showLocalSection = activeSection === 'local'
+  const showSshSection = activeSection === 'ssh'
 
   const deriveBaseDirectoryFromSelectedFolder = React.useCallback((folderPath: string): string => {
     const normalized = folderPath.trim().replace(/[\\/]+$/, '')
@@ -208,46 +214,61 @@ export function WorkingFolderSelectorDialog({
       <DialogContent className="p-4 sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="text-sm">
-            {createMode
-              ? t('input.createProject', { defaultValue: 'Create project' })
-              : t('input.selectFolder', {
-                  defaultValue: 'Select working folder'
-                })}
+            {createMode ? t('input.createProject') : t('input.selectFolder')}
           </DialogTitle>
         </DialogHeader>
 
         <div className="-mt-1 rounded-xl border bg-background/60 p-3">
           {createMode ? (
-            <div className="mb-3 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
-              <p className="text-[10px] text-muted-foreground/70">
-                {t('input.projectName', {
-                  defaultValue: 'Project name'
-                })}
-              </p>
-              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <FolderOpen className="size-3 shrink-0" />
-                <span className="truncate">{suggestedProjectName}</span>
+            <>
+              <div className="mb-3 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
+                <p className="text-[10px] text-muted-foreground/70">
+                  {t('input.projectName')}
+                </p>
+                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <FolderOpen className="size-3 shrink-0" />
+                  <span className="truncate">{suggestedProjectName}</span>
+                </div>
+                <p className="mt-1 text-[10px] text-muted-foreground/60">
+                  {t('input.projectNameHint')}
+                </p>
               </div>
-              <p className="mt-1 text-[10px] text-muted-foreground/60">
-                {t('input.projectNameHint', {
-                  defaultValue: 'Selecting a folder uses the folder name as the project name.'
-                })}
-              </p>
-            </div>
+
+              <div className="mb-3 flex gap-2">
+                <button
+                  className={cn(
+                    'flex-1 rounded-md border px-2 py-1 text-[11px] transition-colors',
+                    showLocalSection
+                      ? 'border-primary/60 bg-primary/10 text-primary'
+                      : 'border-border/70 bg-muted/20 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                  )}
+                  onClick={() => setActiveSection('local')}
+                >
+                  {t('input.selectFolder')}
+                </button>
+                <button
+                  className={cn(
+                    'flex-1 rounded-md border px-2 py-1 text-[11px] transition-colors',
+                    showSshSection
+                      ? 'border-primary/60 bg-primary/10 text-primary'
+                      : 'border-border/70 bg-muted/20 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                  )}
+                  onClick={() => setActiveSection('ssh')}
+                >
+                  {t('input.selectSshFolder')}
+                </button>
+              </div>
+            </>
           ) : (
             <div className="mb-2 rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
               <p className="text-[10px] text-muted-foreground/70">
-                {t('input.currentWorkingFolder', {
-                  defaultValue: 'Current working folder'
-                })}
+                {t('input.currentWorkingFolder')}
               </p>
               <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <FolderOpen className="size-3 shrink-0" />
                 <span className="truncate">
                   {workingFolder ??
-                    t('input.noWorkingFolderSelected', {
-                      defaultValue: 'No folder selected'
-                    })}
+                    t('input.noWorkingFolderSelected')}
                 </span>
               </div>
             </div>
@@ -258,21 +279,15 @@ export function WorkingFolderSelectorDialog({
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-medium text-muted-foreground/80">
-                    {t('input.defaultProjectDirectory', {
-                      defaultValue: 'Default project location'
-                    })}
+                    {t('input.defaultProjectDirectory')}
                   </p>
                   <p className="text-[10px] text-muted-foreground/60">
-                    {t('input.defaultProjectDirectoryHint', {
-                      defaultValue: 'Use custom path or remember the last used location.'
-                    })}
+                    {t('input.defaultProjectDirectoryHint')}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                   <span>
-                    {t('input.useCustomDirectory', {
-                      defaultValue: 'Custom'
-                    })}
+                    {t('input.useCustomDirectory')}
                   </span>
                   <Switch
                     size="sm"
@@ -286,9 +301,7 @@ export function WorkingFolderSelectorDialog({
                   value={defaultDirectoryInput}
                   onChange={(event) => setDefaultDirectoryInput(event.target.value)}
                   onBlur={handleDefaultDirectoryInputBlur}
-                  placeholder={t('input.defaultProjectDirectoryPlaceholder', {
-                    defaultValue: 'Leave empty to use last used directory'
-                  })}
+                  placeholder={t('input.defaultProjectDirectoryPlaceholder')}
                   className="h-7 text-[11px]"
                   disabled={!customDefaultDirectoryEnabled}
                 />
@@ -297,18 +310,14 @@ export function WorkingFolderSelectorDialog({
                   onClick={() => void handlePickDefaultDirectory()}
                   disabled={!customDefaultDirectoryEnabled}
                 >
-                  {t('input.browseDefaultDirectory', {
-                    defaultValue: 'Browse'
-                  })}
+                  {t('input.browseDefaultDirectory')}
                 </button>
               </div>
               <p className="mt-1 truncate text-[10px] text-muted-foreground/60">
                 {(customDefaultDirectoryEnabled
                   ? defaultDirectoryInput.trim()
                   : preferredDirectory) ||
-                  t('input.defaultProjectDirectoryFallback', {
-                    defaultValue: 'Fallback: system Documents directory'
-                  })}
+                  t('input.defaultProjectDirectoryFallback')}
               </p>
             </div>
           ) : null}
@@ -318,16 +327,14 @@ export function WorkingFolderSelectorDialog({
               className="text-[10px] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
               onClick={() => void loadDesktopDirectories()}
             >
-              {tLayout('refresh', { defaultValue: 'Refresh' })}
+              {tLayout('refresh')}
             </button>
           </div>
 
           <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto pr-1">
             {desktopDirectoriesLoading ? (
               <span className="text-[11px] text-muted-foreground/60">
-                {t('input.loadingFolders', {
-                  defaultValue: 'Loading folders...'
-                })}
+                {t('input.loadingFolders')}
               </span>
             ) : desktopDirectories.length > 0 ? (
               desktopDirectories.map((directory) => {
@@ -351,9 +358,7 @@ export function WorkingFolderSelectorDialog({
               })
             ) : (
               <span className="text-[11px] text-muted-foreground/60">
-                {t('input.noDesktopFolders', {
-                  defaultValue: 'No folders found on Desktop'
-                })}
+                {t('input.noDesktopFolders')}
               </span>
             )}
 
@@ -362,18 +367,14 @@ export function WorkingFolderSelectorDialog({
               onClick={() => void handleSelectOtherFolder()}
             >
               <FolderOpen className="size-3 shrink-0" />
-              {t('input.selectOtherFolder', {
-                defaultValue: 'Select other folder'
-              })}
+              {t('input.selectOtherFolder')}
             </button>
           </div>
 
           <div className="mt-3 border-t pt-3">
             <p className="mb-2 flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground/70">
               <Monitor className="size-3" />
-              {t('input.sshConnections', {
-                defaultValue: 'SSH Connections'
-              })}
+              {t('input.sshConnections')}
             </p>
             {sshConnections.length > 0 ? (
               <div className="space-y-1.5">

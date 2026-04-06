@@ -90,7 +90,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 type SessionListItem = ReturnType<typeof mapSession>
 type BucketKey = 'today' | 'recentThreeDays' | 'recentWeek' | 'oneMonth' | 'older'
 type FolderPickerTarget =
-  | { type: 'create'; projectName: string }
+  | { type: 'create'; projectName: string; preferredSection?: 'local' | 'ssh' }
   | { type: 'project'; projectId: string }
 
 function mapSession(session: ReturnType<typeof useChatStore.getState>['sessions'][number]): {
@@ -233,6 +233,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function WorkspaceSidebar(): React.JSX.Element {
   const { t, i18n } = useTranslation('layout')
   const { t: tCommon } = useTranslation('common')
+  const { t: tChat } = useTranslation('chat')
   const chatView = useUIStore((state) => state.chatView)
   const settingsPageOpen = useUIStore((state) => state.settingsPageOpen)
   const skillsPageOpen = useUIStore((state) => state.skillsPageOpen)
@@ -504,9 +505,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
           throw new Error('invalid-session-file')
         }
         importSession(payload.session as Session, activeProjectId)
-        toast.success(t('sidebar.importSuccess', { defaultValue: '导入成功' }))
+        toast.success(t('sidebar.importSuccess'))
       } catch {
-        toast.error(t('sidebar.importFailed', { defaultValue: '导入失败' }))
+        toast.error(t('sidebar.importFailed'))
       }
     },
     [activeProjectId, importSession, t]
@@ -533,9 +534,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
           project: payload.project as Project,
           sessions: payload.sessions as Session[]
         })
-        toast.success(t('sidebar.importSuccess', { defaultValue: '导入成功' }))
+        toast.success(t('sidebar.importSuccess'))
       } catch {
-        toast.error(t('sidebar.importFailed', { defaultValue: '导入失败' }))
+        toast.error(t('sidebar.importFailed'))
       }
     },
     [importProjectArchive, t]
@@ -568,17 +569,21 @@ export function WorkspaceSidebar(): React.JSX.Element {
     setActiveProject(projectId)
     useUIStore.getState().navigateToProject()
     setCreateProjectDialogOpen(false)
-    toast.success(t('sidebar_toast.projectCreated', { defaultValue: '项目已创建' }))
+    toast.success(t('sidebar_toast.projectCreated'))
   }, [createProject, newProjectName, setActiveProject, t])
 
-  const openCreateProjectFolderPicker = useCallback(() => {
-    const trimmedName = newProjectName.trim()
-    setFolderPickerTarget({
-      type: 'create',
-      projectName: trimmedName || 'New Project'
-    })
-    setCreateProjectDialogOpen(false)
-  }, [newProjectName])
+  const openCreateProjectFolderPicker = useCallback(
+    (preferredSection: 'local' | 'ssh' = 'local') => {
+      const trimmedName = newProjectName.trim()
+      setFolderPickerTarget({
+        type: 'create',
+        projectName: trimmedName || 'New Project',
+        preferredSection
+      })
+      setCreateProjectDialogOpen(false)
+    },
+    [newProjectName]
+  )
 
   const handleCreateProjectWithDirectory = useCallback(
     async (workingFolder: string, sshConnectionId: string | null) => {
@@ -589,7 +594,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
       })
       setActiveProject(projectId)
       useUIStore.getState().navigateToProject()
-      toast.success(t('sidebar_toast.projectCreated', { defaultValue: '项目已创建' }))
+      toast.success(t('sidebar_toast.projectCreated'))
     },
     [createProject, setActiveProject, t]
   )
@@ -602,15 +607,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
   }, [activeProject?.id, scopedProjectId, setActiveProject])
 
   const handleOpenDocs = useCallback(() => {
-    useUIStore
-      .getState()
-      .openMarkdownPreview(t('sidebar.docsTitle', { defaultValue: '使用文档' }), readmeZh)
+    useUIStore.getState().openMarkdownPreview(t('sidebar.docsTitle'), readmeZh)
   }, [t])
 
   const handleOpenChangelog = useCallback(() => {
-    useUIStore
-      .getState()
-      .openMarkdownPreview(t('sidebar.changelogTitle', { defaultValue: '更新日志' }), changelogMd)
+    useUIStore.getState().openMarkdownPreview(t('sidebar.changelogTitle'), changelogMd)
   }, [t])
 
   const handleToggleLanguage = useCallback(() => {
@@ -643,7 +644,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
       if (useChatStore.getState().activeProjectId === deleteTarget.id) {
         useUIStore.getState().navigateToHome()
       }
-      toast.success(t('sidebar_toast.projectDeleted', { defaultValue: '项目已删除' }))
+      toast.success(t('sidebar_toast.projectDeleted'))
     } else {
       const hasRunning =
         runningSessions[deleteTarget.id] === 'running' ||
@@ -684,22 +685,22 @@ export function WorkspaceSidebar(): React.JSX.Element {
       { key: 'today', label: t('sidebar.today') },
       {
         key: 'recentThreeDays',
-        label: t('sidebar.recentThreeDays', { defaultValue: '最近3天' })
+        label: t('sidebar.recentThreeDays')
       },
       {
         key: 'recentWeek',
-        label: t('sidebar.recentWeek', { defaultValue: '最近1周' })
+        label: t('sidebar.recentWeek')
       },
       {
         key: 'oneMonth',
-        label: t('sidebar.oneMonth', { defaultValue: '最近1个月' })
+        label: t('sidebar.oneMonth')
       },
       { key: 'older', label: t('sidebar.older') }
     ],
     [t]
   )
   const projectSections = useMemo(
-    () => [{ key: 'projects', label: t('sidebar.projects', { defaultValue: '项目' }), items: filteredProjects }],
+    () => [{ key: 'projects', label: t('sidebar.projects'), items: filteredProjects }],
     [filteredProjects, t]
   )
   const virtualProjectItems = useMemo(() => buildVirtualListItems(projectSections), [projectSections])
@@ -759,42 +760,42 @@ export function WorkspaceSidebar(): React.JSX.Element {
   const navItems = [
     {
       key: 'home',
-      label: t('sidebar.homeLabel', { defaultValue: '首页' }),
+      label: t('sidebar.homeLabel'),
       icon: <Home className="size-4" />,
       active: chatView === 'home',
       onClick: openHome
     },
     {
       key: 'tasks',
-      label: t('sidebar.tasksLabel', { defaultValue: '任务' }),
+      label: t('sidebar.tasksLabel'),
       icon: <CalendarDays className="size-4" />,
       active: useUIStore.getState().tasksPageOpen,
       onClick: () => useUIStore.getState().openTasksPage()
     },
     {
       key: 'resources',
-      label: t('sidebar.resourcesLabel', { defaultValue: '资源' }),
+      label: t('sidebar.resourcesLabel'),
       icon: <FolderOpen className="size-4" />,
       active: useUIStore.getState().resourcesPageOpen,
       onClick: () => useUIStore.getState().openResourcesPage()
     },
     {
       key: 'skills',
-      label: t('sidebar.skillsLabel', { defaultValue: '技能' }),
+      label: t('sidebar.skillsLabel'),
       icon: <Wand2 className="size-4" />,
       active: useUIStore.getState().skillsPageOpen,
       onClick: () => useUIStore.getState().openSkillsPage()
     },
     {
       key: 'draw',
-      label: t('sidebar.drawLabel', { defaultValue: '绘图' }),
+      label: t('sidebar.drawLabel'),
       icon: <Image className="size-4" />,
       active: useUIStore.getState().drawPageOpen,
       onClick: () => useUIStore.getState().openDrawPage()
     },
     {
       key: 'ssh',
-      label: t('sidebar.sshLabel', { defaultValue: 'SSH' }),
+      label: t('sidebar.sshLabel'),
       icon: <Monitor className="size-4" />,
       active: useUIStore.getState().sshPageOpen,
       onClick: () => useUIStore.getState().openSshPage()
@@ -830,7 +831,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                     {activeProject.name}
                   </div>
                   <div className="truncate text-[10px] text-muted-foreground">
-                    {t('sidebar.projectLabel', { defaultValue: '项目' })}
+                    {t('sidebar.projectLabel')}
                   </div>
                 </div>
               </button>
@@ -859,7 +860,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                   size="icon"
                   className="size-8 shrink-0"
                   onClick={() => importSessionInputRef.current?.click()}
-                  title={t('sidebar.importSession', { defaultValue: '导入会话' })}
+                  title={t('sidebar.importSession')}
                 >
                   <Upload className="size-4" />
                 </Button>
@@ -870,7 +871,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                 onClick={openArchive}
               >
                 <BookOpen className="size-4" />
-                {t('sidebar.projectArchive', { defaultValue: '项目档案' })}
+                {t('sidebar.projectArchive')}
               </Button>
               <Button
                 variant={chatView === 'channels' ? 'secondary' : 'ghost'}
@@ -878,7 +879,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                 onClick={openChannels}
               >
                 <MessageSquare className="size-4" />
-                {t('sidebar.projectChannels', { defaultValue: '聊天频道' })}
+                {t('sidebar.projectChannels')}
               </Button>
               <Button
                 variant={chatView === 'git' ? 'secondary' : 'ghost'}
@@ -886,7 +887,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                 onClick={openGit}
               >
                 <GitBranch className="size-4" />
-                {t('sidebar.projectGit', { defaultValue: 'Git' })}
+                {t('sidebar.projectGit')}
               </Button>
               <Button
                 variant="ghost"
@@ -894,7 +895,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                 onClick={openHome}
               >
                 <Home className="size-4" />
-                {t('sidebar.backHome', { defaultValue: '返回首页' })}
+                {t('sidebar.backHome')}
               </Button>
             </div>
 
@@ -904,7 +905,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                   ref={searchRef}
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder={t('sidebar.searchSessions', { defaultValue: '搜索会话...' })}
+                  placeholder={t('sidebar.searchSessions')}
                   className="h-7.5 rounded-xl border-border/60 bg-muted/20 pr-8 text-[12px]"
                 />
               </div>
@@ -919,7 +920,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                 <div className="rounded-2xl border border-dashed border-border/60 px-4 py-6 text-center text-sm text-muted-foreground">
                   {searchQuery
                     ? t('sidebar.noMatches')
-                    : t('sidebar.noProjectSessions', { defaultValue: '当前项目还没有会话' })}
+                    : t('sidebar.noProjectSessions')}
                 </div>
               ) : (
                 <div style={{ height: sessionOffsets.total, position: 'relative' }}>
@@ -977,7 +978,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                           <ContextMenuContent className="w-52">
                             <ContextMenuItem onClick={() => openSession(session.id)}>
                               <MessageSquare className="size-4" />
-                              {t('sidebar.openSession', { defaultValue: '打开会话' })}
+                              {t('sidebar.openSession')}
                             </ContextMenuItem>
                             <ContextMenuItem
                               onSelect={() =>
@@ -1040,11 +1041,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
                                   type: 'session',
                                   session: snapshot
                                 } satisfies ExportedSessionPayload)
-                                toast.success(t('sidebar.exportedAsJson', { defaultValue: '已导出为 JSON' }))
+                                toast.success(t('sidebar.exportedAsJson'))
                               }}
                             >
                               <Download className="size-4" />
-                              {t('sidebar.exportAsJson', { defaultValue: '导出为 JSON' })}
+                              {t('sidebar.exportAsJson')}
                             </ContextMenuItem>
                             {session.messageCount > 0 && (
                               <ContextMenuItem
@@ -1095,7 +1096,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                         {userName || t('titleBar.defaultName', { defaultValue: 'OpenCoWork' })}
                       </div>
                       <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                        {t('sidebar.profileMenu', { defaultValue: '个人菜单' })}
+                        {t('sidebar.profileMenu')}
                         <ChevronDown className="size-3" />
                       </div>
                     </div>
@@ -1116,23 +1117,23 @@ export function WorkspaceSidebar(): React.JSX.Element {
                     onClick={() => useUIStore.getState().openSettingsPage('memory')}
                   >
                     <BookOpen className="size-4" />
-                    {t('sidebar.memoryLabel', { defaultValue: '记忆' })}
+                    {t('sidebar.memoryLabel')}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => useUIStore.getState().openSettingsPage('analytics')}
                   >
                     <BarChart3 className="size-4" />
-                    {t('sidebar.analyticsLabel', { defaultValue: '数据统计' })}
+                    {t('sidebar.analyticsLabel')}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleToggleLanguage}>
                     <Languages className="size-4" />
                     {language === 'zh'
-                      ? t('sidebar.switchToEnglish', { defaultValue: '切换到 English' })
-                      : t('sidebar.switchToChinese', { defaultValue: '切换到中文' })}
+                      ? t('sidebar.switchToEnglish')
+                      : t('sidebar.switchToChinese')}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => useUIStore.getState().openSettingsPage('about')}>
                     <Info className="size-4" />
-                    {t('sidebar.aboutLabel', { defaultValue: '关于' })}
+                    {t('sidebar.aboutLabel')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1168,7 +1169,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
 
             <div className="flex items-center justify-between px-2 pb-1 pt-1">
               <div className="text-[10px] font-medium text-muted-foreground">
-                {t('sidebar.projects', { defaultValue: '项目' })}
+                {t('sidebar.projects')}
               </div>
               <div className="flex items-center gap-1">
                 <Button
@@ -1176,7 +1177,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                   size="icon"
                   className="size-6"
                   onClick={() => importProjectInputRef.current?.click()}
-                  title={t('sidebar.importProject', { defaultValue: '导入项目' })}
+                  title={t('sidebar.importProject')}
                 >
                   <Upload className="size-3.5" />
                 </Button>
@@ -1185,7 +1186,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                   size="icon"
                   className="size-6"
                   onClick={() => void handleCreateProject()}
-                  title={t('sidebar.newProject', { defaultValue: '新建项目' })}
+                  title={t('sidebar.newProject')}
                 >
                   <FolderPlus className="size-3.5" />
                 </Button>
@@ -1197,7 +1198,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                 ref={searchRef}
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder={t('sidebar.searchProjects', { defaultValue: '搜索项目...' })}
+                placeholder={t('sidebar.searchProjects')}
                 className="h-7 rounded-lg border-border/60 bg-muted/20 text-[12px]"
               />
             </div>
@@ -1211,7 +1212,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                 <div className="rounded-2xl border border-dashed border-border/60 px-4 py-6 text-center text-sm text-muted-foreground">
                   {searchQuery
                     ? t('sidebar.noMatches')
-                    : t('sidebar.noProjects', { defaultValue: '还没有项目' })}
+                    : t('sidebar.noProjects')}
                 </div>
               ) : (
                 <div style={{ height: virtualProjectItems.length * PROJECT_ROW_HEIGHT, position: 'relative' }}>
@@ -1283,7 +1284,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                               <DropdownMenuContent align="end" className="w-44">
                                 <DropdownMenuItem onClick={() => openProject(project.id)}>
                                   <FolderOpen className="size-4" />
-                                  {t('sidebar.openProject', { defaultValue: '打开项目' })}
+                                  {t('sidebar.openProject')}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onSelect={() =>
@@ -1303,7 +1304,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
                                   }
                                 >
                                   <FolderInput className="size-4" />
-                                  {t('sidebar.changeWorkingFolder', { defaultValue: '工作目录' })}
+                                  {t('sidebar.changeWorkingFolder')}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onClick={async () => {
@@ -1322,19 +1323,19 @@ export function WorkspaceSidebar(): React.JSX.Element {
                                       project,
                                       sessions: snapshotSessions
                                     } satisfies ExportedProjectPayload)
-                                    toast.success(t('sidebar.exportedAsJson', { defaultValue: '已导出为 JSON' }))
+                                    toast.success(t('sidebar.exportedAsJson'))
                                   }}
                                 >
                                   <Download className="size-4" />
-                                  {t('sidebar.exportProjectAsJson', { defaultValue: '导出项目为 JSON' })}
+                                  {t('sidebar.exportProjectAsJson')}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onClick={() => {
                                     togglePinProject(project.id)
                                     toast.success(
                                       project.pinned
-                                        ? t('sidebar_toast.projectUnpinned', { defaultValue: '项目已取消置顶' })
-                                        : t('sidebar_toast.projectPinned', { defaultValue: '项目已置顶' })
+                                        ? t('sidebar_toast.projectUnpinned')
+                                        : t('sidebar_toast.projectPinned')
                                     )
                                   }}
                                 >
@@ -1382,11 +1383,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
               <DropdownMenuContent side="top" align="start" className="w-44">
                 <DropdownMenuItem onSelect={() => deferDropdownAction(handleOpenDocs)}>
                   <BookOpen className="size-4" />
-                  {t('sidebar.docsTitle', { defaultValue: '使用文档' })}
+                  {t('sidebar.docsTitle')}
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => deferDropdownAction(handleOpenChangelog)}>
                   <History className="size-4" />
-                  {t('sidebar.changelogTitle', { defaultValue: '更新日志' })}
+                  {t('sidebar.changelogTitle')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1446,19 +1447,17 @@ export function WorkspaceSidebar(): React.JSX.Element {
       <Dialog open={createProjectDialogOpen} onOpenChange={setCreateProjectDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{t('sidebar.newProject', { defaultValue: '新建项目' })}</DialogTitle>
+            <DialogTitle>{t('sidebar.newProject')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
               <div className="text-[12px] font-medium text-foreground">
-                {t('input.projectName', { defaultValue: '项目名' })}
+                {tChat('input.projectName')}
               </div>
               <Input
                 value={newProjectName}
                 onChange={(event) => setNewProjectName(event.target.value)}
-                placeholder={t('input.projectNamePlaceholder', {
-                  defaultValue: '例如 OpenCoWork'
-                })}
+                placeholder={tChat('input.projectNamePlaceholder')}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') void confirmCreateProject()
                 }}
@@ -1466,13 +1465,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
             </div>
             <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
               <div className="font-medium text-foreground/80">
-                {t('input.defaultProjectDirectory', { defaultValue: '默认项目位置' })}
+                {tChat('input.defaultProjectDirectory')}
               </div>
               <div className="mt-1 break-all">
                 {effectiveDefaultProjectDirectory ||
-                  t('input.defaultProjectDirectoryFallback', {
-                    defaultValue: '系统 Documents 目录'
-                  })}
+                  tChat('input.defaultProjectDirectoryFallback')}
               </div>
             </div>
           </div>
@@ -1481,10 +1478,10 @@ export function WorkspaceSidebar(): React.JSX.Element {
               {tCommon('action.cancel')}
             </Button>
             <Button variant="outline" onClick={() => void openCreateProjectFolderPicker()}>
-              {t('input.selectFolder', { defaultValue: '选择目录' })}
+              {tChat('input.selectFolder')}
             </Button>
             <Button onClick={() => void confirmCreateProject()}>
-              {t('input.createProject', { defaultValue: '创建项目' })}
+              {tChat('input.createProject')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1514,6 +1511,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
         sshConnectionId={folderPickerProject?.sshConnectionId}
         projectName={folderPickerTarget?.type === 'create' ? folderPickerTarget.projectName : undefined}
         createMode={folderPickerTarget?.type === 'create'}
+        preferredSection={folderPickerTarget?.type === 'create' ? folderPickerTarget.preferredSection : undefined}
         onSelectLocalFolder={async (folderPath) => {
           if (folderPickerTarget?.type === 'create') {
             await handleCreateProjectWithDirectory(folderPath, null)
@@ -1525,9 +1523,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
             sshConnectionId: null
           })
           toast.success(
-            t('sidebar_toast.projectWorkingFolderUpdated', {
-              defaultValue: '项目工作目录已更新'
-            })
+            t('sidebar_toast.projectWorkingFolderUpdated')
           )
         }}
         onSelectSshFolder={async (folderPath, connectionId) => {
@@ -1541,9 +1537,7 @@ export function WorkspaceSidebar(): React.JSX.Element {
             sshConnectionId: connectionId
           })
           toast.success(
-            t('sidebar_toast.projectWorkingFolderUpdated', {
-              defaultValue: '项目工作目录已更新'
-            })
+            t('sidebar_toast.projectWorkingFolderUpdated')
           )
         }}
       />
@@ -1555,10 +1549,6 @@ export function WorkspaceSidebar(): React.JSX.Element {
             <AlertDialogDescription>
               {deleteTarget?.type === 'project'
                 ? t('sidebar.deleteProjectConfirm', {
-                    defaultValue:
-                      deleteTarget.sessionCount > 0
-                        ? `确定删除项目「${deleteTarget.name}」及其 ${deleteTarget.sessionCount} 个会话吗？`
-                        : `确定删除项目「${deleteTarget.name}」吗？`,
                     projectName: deleteTarget.name,
                     count: deleteTarget.sessionCount
                   })

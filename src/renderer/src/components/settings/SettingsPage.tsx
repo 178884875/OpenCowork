@@ -589,10 +589,10 @@ function GeneralPanel(): React.JSX.Element {
 
       <section className="space-y-3 rounded-lg border border-border/60 bg-muted/30 p-4">
         <div className="flex flex-col gap-1 text-sm">
-          <span className="font-medium">Update status</span>
+          <span className="font-medium">{t('general.update.status')}</span>
           <span className="text-xs text-muted-foreground">
-            Current v{currentVersion}
-            {latestVersion && <> · Latest v{latestVersion}</>}
+            {t('general.update.currentVersion', { version: currentVersion })}
+            {latestVersion && <> · {t('general.update.latestVersion', { version: latestVersion })}</>}
           </span>
         </div>
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/70 px-3 py-2">
@@ -614,7 +614,7 @@ function GeneralPanel(): React.JSX.Element {
             disabled={checkingUpdate}
           >
             {checkingUpdate && <Loader2 className="mr-1 size-3 animate-spin" />}
-            {checkingUpdate ? 'Checking…' : 'Check for updates'}
+            {checkingUpdate ? t('general.update.checking') : t('general.update.checkForUpdates')}
           </Button>
           {updateAvailable && (
             <Button
@@ -624,32 +624,37 @@ function GeneralPanel(): React.JSX.Element {
               disabled={downloadingUpdate}
             >
               {downloadingUpdate && <Loader2 className="mr-1 size-3 animate-spin" />}
-              {downloadingUpdate ? 'Updating…' : 'Update now'}
+              {downloadingUpdate ? t('general.update.updating') : t('general.update.updateNow')}
             </Button>
           )}
         </div>
         {updateError && (
-          <p className="text-xs text-destructive">Failed to check updates: {updateError}</p>
+          <p className="text-xs text-destructive">
+            {t('general.update.failedToCheck', { error: updateError })}
+          </p>
         )}
         {!updateError && !updateAvailable && latestVersion && !checkingUpdate && (
           <p className="rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-500">
-            You are up to date.
+            {t('general.update.upToDate')}
           </p>
         )}
         {updateAvailable && !downloadingUpdate && (
           <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
-            A newer version (v{latestVersion}) is available.
+            {t('general.update.newVersionAvailable', { version: latestVersion })}
           </p>
         )}
         {downloadingUpdate && (
           <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
-            Downloading update
-            {typeof downloadProgress === 'number' ? `… ${Math.round(downloadProgress)}%` : '…'}
+            {typeof downloadProgress === 'number'
+              ? t('general.update.downloadingWithProgress', {
+                  progress: Math.round(downloadProgress)
+                })
+              : t('general.update.downloading')}
           </p>
         )}
         {downloadedVersion && (
           <p className="rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-500">
-            Update v{downloadedVersion} downloaded. Restarting to install…
+            {t('general.update.downloadedRestarting', { version: downloadedVersion })}
           </p>
         )}
       </section>
@@ -714,15 +719,19 @@ function GeneralPanel(): React.JSX.Element {
 
       <section className="space-y-3">
         <div>
-          <label className="text-sm font-medium">默认项目目录</label>
+          <label className="text-sm font-medium">{t('general.projectDefaultDirectory.title')}</label>
           <p className="text-xs text-muted-foreground">
-            新建项目时，输入项目名会在这里创建同名文件夹；关闭自定义后会优先使用上次使用的位置。
+            {t('general.projectDefaultDirectory.desc')}
           </p>
         </div>
         <div className="flex items-center justify-between max-w-lg">
           <div>
-            <label className="text-sm font-medium">使用自定义目录</label>
-            <p className="text-xs text-muted-foreground">关闭后优先回填上次创建项目的目录。</p>
+            <label className="text-sm font-medium">
+              {t('general.projectDefaultDirectory.useCustom')}
+            </label>
+            <p className="text-xs text-muted-foreground">
+              {t('general.projectDefaultDirectory.useCustomDesc')}
+            </p>
           </div>
           <Switch
             checked={settings.projectDefaultDirectoryMode === 'custom'}
@@ -757,11 +766,14 @@ function GeneralPanel(): React.JSX.Element {
             onClick={() => void handlePickProjectDefaultDirectory()}
             disabled={settings.projectDefaultDirectoryMode !== 'custom'}
           >
-            选择目录
+            {t('general.projectDefaultDirectory.pickDirectory')}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          当前生效：{effectiveProjectDirectory || '系统 Documents 目录'}
+          {t('general.projectDefaultDirectory.effective', {
+            path:
+              effectiveProjectDirectory || t('general.projectDefaultDirectory.effectiveFallback')
+          })}
         </p>
       </section>
 
@@ -1724,7 +1736,7 @@ function AnalyticsPanel(): React.JSX.Element {
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
-          Loading...
+          {t('analytics.loading')}
         </div>
       ) : (
         <>
@@ -2046,9 +2058,9 @@ function ModelPanel(): React.JSX.Element {
           {/* New Session Default Model */}
           <section className="space-y-3">
             <div>
-              <label className="text-sm font-medium">新建会话默认模型</label>
+              <label className="text-sm font-medium">{t('model.newSessionDefaultModel.title')}</label>
               <p className="text-xs text-muted-foreground">
-                控制新建会话默认绑定的模型；选择跟随当前活动模型时，会沿用顶部当前选择。
+                {t('model.newSessionDefaultModel.desc')}
               </p>
             </div>
             {hasAnyEnabledModel ? (
@@ -2077,11 +2089,11 @@ function ModelPanel(): React.JSX.Element {
                 }}
               >
                 <SelectTrigger className="w-80 text-xs">
-                  <SelectValue placeholder="选择默认模型" />
+                  <SelectValue placeholder={t('model.newSessionDefaultModel.placeholder')} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__global__" className="text-xs">
-                    跟随当前活动模型
+                    {t('model.newSessionDefaultModel.followGlobalActiveModel')}
                   </SelectItem>
                   {chatProviderGroups.map(({ provider, models }) => (
                     <SelectGroup key={`${provider.id}-new-session-default`}>

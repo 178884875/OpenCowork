@@ -167,7 +167,8 @@ async function createTeamRuntime(args: CreateTeamRuntimeArgs): Promise<TeamRunti
           startedAt: now,
           completedAt: null
         }
-      ]
+      ],
+      tasks: []
     }
 
     writeJsonFile(teamFilePath, manifest)

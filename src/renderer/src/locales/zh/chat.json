@@ -26,6 +26,21 @@
       "xhigh": "最大深度"
     },
     "selectFolder": "选择工作目录",
+    "selectSshFolder": "选择 SSH 目录",
+    "selectProject": "选择项目",
+    "newProject": "新建项目",
+    "projectName": "项目名",
+    "projectNameHint": "选择目录后会使用目录名作为项目名。",
+    "projectNamePlaceholder": "例如：OpenCoWork",
+    "createProject": "创建项目",
+    "currentWorkingFolder": "当前工作目录",
+    "noWorkingFolderSelected": "尚未选择目录",
+    "defaultProjectDirectory": "默认项目位置",
+    "defaultProjectDirectoryHint": "可使用自定义路径，也可回退到上次使用的位置。",
+    "useCustomDirectory": "自定义",
+    "defaultProjectDirectoryPlaceholder": "留空则使用上次使用的目录",
+    "browseDefaultDirectory": "浏览",
+    "defaultProjectDirectoryFallback": "回退到系统 Documents 目录",
     "clearConversation": "清空对话",
     "clearConfirmTitle": "清空所有消息？",
     "clearConfirmDesc": "这将删除此对话中的所有消息，此操作不可撤销。",
@@ -201,7 +216,20 @@
     "other": "其他",
     "answerPlaceholder": "输入你的回答…",
     "answeredTitle": "问题已回答",
-    "answeredSubtitle": "已记录你的选择与补充说明"
+    "answeredSubtitle": "已记录你的选择与补充说明",
+    "recommended": "推荐",
+    "previewBadge": "预览",
+    "previewTitle": "选项预览",
+    "notesTitle": "补充说明（可选）",
+    "notesPlaceholder": "补充你的约束、偏好或说明…",
+    "autoAnswered": "自动回答",
+    "completedTitle": "问题已处理",
+    "completedSubtitle": "这次没有进入交互式回答界面。",
+    "canceledTitle": "提问已取消",
+    "canceledSubtitle": "本次提问在等待回答前已中止。",
+    "errorTitle": "提问失败",
+    "errorSubtitle": "这次没有进入等待回答状态。",
+    "sourceLabel": "来源"
   },
   "permission": {
     "title": "需要权限",
@@ -427,6 +455,12 @@
     "exportImageFailed": "导出图片失败"
   },
   "projectHome": {
+    "noProjectSelected": "未选择项目",
+    "noProjectSelectedDesc": "请返回首页选择或创建一个项目后再继续。",
+    "backHome": "返回首页",
+    "heroDesc": "围绕当前项目继续推进，默认使用当前项目工作目录创建新会话。",
+    "openArchive": "项目档案",
+    "openChannels": "聊天频道",
     "openGit": "Git"
   },
   "skills": {

@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid'
 import type { ToolHandler } from '../../../tools/tool-types'
 import { encodeStructuredToolResult } from '../../../tools/tool-result-format'
 import { teamEvents } from '../events'
+import { updateTeamRuntimeManifest } from '../runtime-client'
 import { useTeamStore } from '../../../../stores/team-store'
 import type { TeamTask } from '../types'
 
@@ -32,19 +33,21 @@ export const taskCreateTool: ToolHandler = {
   },
   execute: async (input) => {
     const team = useTeamStore.getState().activeTeam
+    if (!team) {
+      return encodeStructuredToolResult({ success: false, error: 'No active team' })
+    }
+
     const subject = String(input.subject)
 
     // Guard: skip if a task with the same subject already exists
-    if (team) {
-      const existing = team.tasks.find((t) => t.subject === subject)
-      if (existing) {
-        return encodeStructuredToolResult({
-          success: true,
-          task_id: existing.id,
-          subject: existing.subject,
-          note: 'Task with this subject already exists, returning existing task.'
-        })
-      }
+    const existing = team.tasks.find((t) => t.subject === subject)
+    if (existing) {
+      return encodeStructuredToolResult({
+        success: true,
+        task_id: existing.id,
+        subject: existing.subject,
+        note: 'Task with this subject already exists, returning existing task.'
+      })
     }
 
     const task: TeamTask = {
@@ -55,6 +58,13 @@ export const taskCreateTool: ToolHandler = {
       owner: null,
       dependsOn: Array.isArray(input.depends_on) ? input.depends_on.map(String) : []
     }
+
+    await updateTeamRuntimeManifest({
+      teamName: team.name,
+      patch: {
+        tasks: [...team.tasks, task]
+      }
+    })
 
     teamEvents.emit({ type: 'team_task_add', task })
 

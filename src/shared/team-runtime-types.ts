@@ -42,6 +42,19 @@ export interface TeamRuntimeMessageRecord {
   timestamp: number
 }
 
+export type TeamRuntimeTaskStatus = 'pending' | 'in_progress' | 'completed'
+
+export interface TeamRuntimeTaskRecord {
+  id: string
+  subject: string
+  description: string
+  status: TeamRuntimeTaskStatus
+  owner: string | null
+  dependsOn: string[]
+  activeForm?: string
+  report?: string
+}
+
 export interface TeamRuntimePermissionResponsePayload {
   approved: boolean
   requestId: string
@@ -96,7 +109,9 @@ export interface UpdateTeamRuntimeMemberArgs {
 
 export interface UpdateTeamRuntimeManifestArgs {
   teamName: string
-  patch: Partial<Pick<TeamRuntimeManifest, 'permissionMode' | 'teamAllowedPaths' | 'updatedAt'>>
+  patch: Partial<
+    Pick<TeamRuntimeManifest, 'permissionMode' | 'teamAllowedPaths' | 'tasks' | 'updatedAt'>
+  >
 }
 
 export interface TeamRuntimeManifest {
@@ -112,6 +127,7 @@ export interface TeamRuntimeManifest {
   permissionMode: TeamRuntimePermissionMode
   teamAllowedPaths: string[]
   members: TeamRuntimeMemberRecord[]
+  tasks: TeamRuntimeTaskRecord[]
 }
 
 export interface TeamRuntimeSnapshot {

@@ -106,9 +106,15 @@ export function ProjectHomePage(): React.JSX.Element {
           </Button>
         )}
         <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center justify-center px-4 py-8 text-center">
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">{t('projectHome.noProjectSelected', { defaultValue: '未选择项目' })}</h1>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground">{t('projectHome.noProjectSelectedDesc', { defaultValue: '请返回首页选择或创建一个项目后再继续。' })}</p>
-          <Button className="mt-6" onClick={() => useUIStore.getState().navigateToHome()}>{t('projectHome.backHome', { defaultValue: '返回首页' })}</Button>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+            {t('projectHome.noProjectSelected')}
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+            {t('projectHome.noProjectSelectedDesc')}
+          </p>
+          <Button className="mt-6" onClick={() => useUIStore.getState().navigateToHome()}>
+            {t('projectHome.backHome')}
+          </Button>
         </div>
       </div>
     )
@@ -191,9 +197,7 @@ export function ProjectHomePage(): React.JSX.Element {
               {activeProject.name}
             </h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
-              {t('projectHome.heroDesc', {
-                defaultValue: '围绕当前项目继续推进，默认使用当前项目工作目录创建新会话。'
-              })}
+              {t('projectHome.heroDesc')}
             </p>
           </div>
 
@@ -239,7 +243,7 @@ export function ProjectHomePage(): React.JSX.Element {
                   onClick={() => useUIStore.getState().navigateToArchive()}
                 >
                   <BookOpen className="size-3.5" />
-                  {t('projectHome.openArchive', { defaultValue: '项目档案' })}
+                  {t('projectHome.openArchive')}
                 </Button>
                 <Button
                   variant="ghost"
@@ -248,7 +252,7 @@ export function ProjectHomePage(): React.JSX.Element {
                   onClick={() => useUIStore.getState().navigateToChannels()}
                 >
                   <MessageSquare className="size-3.5" />
-                  {t('projectHome.openChannels', { defaultValue: '聊天频道' })}
+                  {t('projectHome.openChannels')}
                 </Button>
                 <Button
                   variant="ghost"
@@ -257,7 +261,7 @@ export function ProjectHomePage(): React.JSX.Element {
                   onClick={() => useUIStore.getState().navigateToGit()}
                 >
                   <GitBranch className="size-3.5" />
-                  {t('projectHome.openGit', { defaultValue: 'Git' })}
+                  {t('projectHome.openGit')}
                 </Button>
               </div>
             </div>

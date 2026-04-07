@@ -7,7 +7,7 @@ import { useChatStore } from '@renderer/stores/chat-store'
 import { useTeamStore } from '@renderer/stores/team-store'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { useTranslation } from 'react-i18next'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 
 interface ProjectGroup {
   projectId: string
@@ -24,7 +24,7 @@ interface ProjectGroup {
 }
 
 function extractLastMessagePreview(content: unknown): string {
-  if (typeof content === 'string') return content.trim()
+  if (typeof content === 'string') return content.replace(/\s+/g, ' ').trim()
   if (!Array.isArray(content)) return ''
 
   const parts: string[] = []
@@ -121,6 +121,14 @@ export function RunningAgentSessionsPopover(): React.JSX.Element | null {
 
   const totalSessions = groups.reduce((sum, group) => sum + group.sessions.length, 0)
 
+  useEffect(() => {
+    const chatState = useChatStore.getState()
+    const runningIds = groups.flatMap((group) => group.sessions.map((session) => session.sessionId))
+    for (const sessionId of runningIds) {
+      void chatState.loadRecentSessionMessages(sessionId, false, 12)
+    }
+  }, [groups])
+
   return (
     <Popover>
       <Tooltip>
@@ -175,11 +183,9 @@ export function RunningAgentSessionsPopover(): React.JSX.Element | null {
                               </>
                             )}
                           </div>
-                          {session.lastMessagePreview && (
-                            <div className="mt-1 line-clamp-2 text-[10px] text-muted-foreground/85">
-                              {session.lastMessagePreview}
-                            </div>
-                          )}
+                          <div className="mt-1 line-clamp-2 text-[10px] text-muted-foreground/85">
+                            {session.lastMessagePreview || '…'}
+                          </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-1">
                           <Button

@@ -22,7 +22,8 @@ import {
   PanelLeftClose,
   FolderOpen,
   FolderPlus,
-  ChevronRight
+  ChevronRight,
+  Sparkles
 } from 'lucide-react'
 import { DynamicIcon } from 'lucide-react/dynamic'
 import {
@@ -75,6 +76,8 @@ import {
 import { sessionToMarkdown } from '@renderer/lib/utils/export-chat'
 import { cn } from '@renderer/lib/utils'
 import { WorkingFolderSelectorDialog } from '@renderer/components/chat/WorkingFolderSelectorDialog'
+import { createProvider } from '@renderer/lib/api/provider'
+import type { UnifiedMessage } from '@renderer/lib/api/types'
 import { clampLeftSidebarWidth, LEFT_SIDEBAR_DEFAULT_WIDTH } from './right-panel-defs'
 
 const modeIcons: Record<SessionMode, React.ReactNode> = {
@@ -245,6 +248,7 @@ export function SessionListPanel(): React.JSX.Element {
   } | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const [autoRenamingSessionId, setAutoRenamingSessionId] = useState<string | null>(null)
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set())
   const [expandedHistoryProjectIds, setExpandedHistoryProjectIds] = useState<Set<string>>(
     () => new Set()
@@ -642,6 +646,88 @@ export function SessionListPanel(): React.JSX.Element {
     toast.success(t('sidebar_toast.projectDeleted', { defaultValue: 'Project deleted' }))
   }, [deleteProject, projectDeleteTarget, t])
 
+  const handleAutoRenameSession = useCallback(
+    async (sessionId: string): Promise<void> => {
+      if (autoRenamingSessionId) return
+      setAutoRenamingSessionId(sessionId)
+
+      try {
+        await useChatStore.getState().loadSessionMessages(sessionId)
+        const session = getSessionSnapshot(sessionId)
+        if (!session) return
+
+        const providerConfig = session.providerId && session.modelId
+          ? useProviderStore.getState().getProviderConfigById(session.providerId, session.modelId)
+          : useProviderStore.getState().getProviderConfig()
+
+        if (!providerConfig) {
+          toast.error('当前没有可用模型')
+          return
+        }
+
+        const provider = createProvider(providerConfig)
+        const transcript = session.messages
+          .slice(0, 12)
+          .map((message) => {
+            const text =
+              typeof message.content === 'string'
+                ? message.content
+                : message.content
+                    .filter((block): block is Extract<UnifiedMessage['content'][number], { type: 'text' }> => block.type === 'text')
+                    .map((block) => block.text)
+                    .join('\n')
+            return text.trim() ? `${message.role}: ${text.trim()}` : ''
+          })
+          .filter(Boolean)
+          .join('\n\n')
+          .slice(0, 6000)
+
+        if (!transcript.trim()) {
+          toast.error('该会话没有可用于重命名的文本内容')
+          return
+        }
+
+        const messages: UnifiedMessage[] = [
+          {
+            id: crypto.randomUUID(),
+            role: 'user',
+            content:
+              '请基于下面的会话内容，生成一个简短、准确的中文会话标题。要求：1）不超过18个字；2）不要使用引号、书名号、句号；3）只输出标题本身，不要解释。\n\n' +
+              transcript,
+            createdAt: Date.now()
+          }
+        ]
+
+        let nextTitle = ''
+        for await (const event of provider.sendMessage(messages, [], {
+          ...providerConfig,
+          systemPrompt:
+            '你是一个会话标题生成器。只返回一个简短准确的中文标题，不要解释，不要使用标点包裹。'
+        })) {
+          if (event.type === 'text_delta' && event.text) {
+            nextTitle += event.text
+          }
+        }
+
+        const cleanedTitle = nextTitle.replace(/[\r\n"“”'‘’《》【】]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 18)
+        if (!cleanedTitle) {
+          toast.error('AI 未生成有效标题')
+          return
+        }
+
+        updateSessionTitle(sessionId, cleanedTitle)
+        toast.success('已自动重命名会话')
+      } catch (error) {
+        toast.error('自动重命名失败', {
+          description: error instanceof Error ? error.message : String(error)
+        })
+      } finally {
+        setAutoRenamingSessionId((current) => (current === sessionId ? null : current))
+      }
+    },
+    [autoRenamingSessionId, getSessionSnapshot, updateSessionTitle]
+  )
+
   const handleExport = async (sessionId: string): Promise<void> => {
     await useChatStore.getState().loadSessionMessages(sessionId)
     const session = getSessionSnapshot(sessionId)
@@ -940,6 +1026,19 @@ export function SessionListPanel(): React.JSX.Element {
         <ContextMenuItem onClick={() => openRenameDialog('session', session.id, session.title)}>
           <Pencil className="size-4" />
           {t('action.rename', { ns: 'common' })}
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={autoRenamingSessionId === session.id}
+          onClick={() => {
+            void handleAutoRenameSession(session.id)
+          }}
+        >
+          {autoRenamingSessionId === session.id ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Sparkles className="size-4" />
+          )}
+          自动重命名
         </ContextMenuItem>
         {session.messageCount > 0 && (
           <>

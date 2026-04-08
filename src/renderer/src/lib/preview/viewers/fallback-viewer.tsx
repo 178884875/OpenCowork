@@ -46,6 +46,3 @@ export function FallbackViewer({
     />
   )
 }
-/>
-  )
-}

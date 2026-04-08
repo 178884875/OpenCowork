@@ -575,6 +575,13 @@ app.on('before-quit', () => {
 configureChromiumCachePaths()
 configureRendererHeapLimit()
 
+// 防止dev环境和生产环境冲突，导致无法启动
+if (!app.isPackaged) {
+  app.setName('OpenCoWork-dev')
+} else {
+  app.setName('OpenCoWork')
+}
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
@@ -601,8 +608,8 @@ if (gotSingleInstanceLock) {
     })
     console.log(`[CrashLogger] Logs will be written to ${getCrashLogDir()}`)
 
+
     // Set app identity for Windows integration
-    app.setName('OpenCoWork')
     electronApp.setAppUserModelId('com.opencowork.app')
 
     // Default open or close DevTools by F12 in development
@@ -789,7 +796,7 @@ app.on('window-all-closed', () => {
   closeAllSshSessions()
   cancelAllJobs()
   stopAllIsolatedTeamWorkers()
-  getSidecarManager().stop().catch(() => {})
+  getSidecarManager().stop().catch(() => { })
   closeDb()
   if (process.platform !== 'darwin') {
     app.quit()

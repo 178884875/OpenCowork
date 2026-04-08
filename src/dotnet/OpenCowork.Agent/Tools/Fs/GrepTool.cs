@@ -1,6 +1,6 @@
-using System.IO.Pipelines;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.FileSystemGlobbing;
 
 namespace OpenCowork.Agent.Tools.Fs;
 
@@ -12,67 +12,111 @@ public static class GrepTool
 {
     public const int DefaultMaxResults = 500;
     public const int DefaultContextLines = 0;
-    public const long MaxFileSizeBytes = 5 * 1024 * 1024; // 5MB
+    public const long DefaultMaxFileSizeBytes = 10 * 1024 * 1024;
+    public const int DefaultMaxLineLength = 500;
 
     public static async Task<GrepResult> SearchAsync(
-        string directory,
+        string searchTarget,
         string pattern,
         GrepOptions? options = null,
         CancellationToken ct = default)
     {
         var opts = options ?? new GrepOptions();
-        var regex = new Regex(pattern,
-            RegexOptions.Compiled | RegexOptions.NonBacktracking |
-            (opts.CaseInsensitive ? RegexOptions.IgnoreCase : RegexOptions.None));
+        var regex = CreateRegex(pattern, opts.CaseInsensitive);
+        var searchPath = Path.GetFullPath(searchTarget);
+        var searchRoot = Directory.Exists(searchPath)
+            ? searchPath
+            : Path.GetDirectoryName(searchPath) ?? Environment.CurrentDirectory;
+        var collector = new GrepCollector(
+            opts.MaxResults ?? DefaultMaxResults,
+            opts.MaxOutputBytes,
+            opts.MaxLineLength ?? DefaultMaxLineLength);
 
-        var result = new GrepResult();
-        var files = EnumerateFiles(directory, opts);
+        using var timeoutCts = opts.TimeoutMs is > 0
+            ? new CancellationTokenSource(TimeSpan.FromMilliseconds(opts.TimeoutMs.Value))
+            : null;
+        using var linkedCts = timeoutCts is null
+            ? CancellationTokenSource.CreateLinkedTokenSource(ct)
+            : CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
-        await Parallel.ForEachAsync(files, new ParallelOptions
+        var files = EnumerateFiles(searchPath, searchRoot, opts);
+
+        try
         {
-            MaxDegreeOfParallelism = Environment.ProcessorCount,
-            CancellationToken = ct
-        }, async (filePath, token) =>
-        {
-            if (result.Matches.Count >= (opts.MaxResults ?? DefaultMaxResults))
-                return;
-
-            try
+            await Parallel.ForEachAsync(files, new ParallelOptions
             {
-                var fileInfo = new FileInfo(filePath);
-                if (fileInfo.Length > MaxFileSizeBytes) return;
-                if (IsBinaryFile(filePath)) return;
+                MaxDegreeOfParallelism = opts.MaxDegreeOfParallelism ?? Environment.ProcessorCount,
+                CancellationToken = linkedCts.Token
+            }, async (filePath, token) =>
+            {
+                if (collector.IsLimited) return;
 
-                var matches = await SearchFileAsync(filePath, regex, directory, opts, token);
-                if (matches.Count > 0)
+                try
                 {
-                    lock (result.Matches)
+                    var fileInfo = new FileInfo(filePath);
+                    if (fileInfo.Length == 0) return;
+                    if (fileInfo.Length > (opts.MaxFileSizeBytes ?? DefaultMaxFileSizeBytes)) return;
+                    if (IsBinaryFile(filePath)) return;
+
+                    await SearchFileAsync(filePath, regex, searchRoot, collector, token);
+                    if (collector.IsLimited && !linkedCts.IsCancellationRequested)
                     {
-                        result.Matches.AddRange(matches);
+                        linkedCts.Cancel();
                     }
                 }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Skip inaccessible files
-            }
-        });
-
-        result.TotalMatches = result.Matches.Count;
-        if (result.Matches.Count > (opts.MaxResults ?? DefaultMaxResults))
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                }
+            });
+        }
+        catch (OperationCanceledException) when (
+            collector.IsLimited ||
+            timeoutCts?.IsCancellationRequested == true)
         {
-            result.Matches = result.Matches.Take(opts.MaxResults ?? DefaultMaxResults).ToList();
-            result.Truncated = true;
         }
 
-        return result;
+        if (ct.IsCancellationRequested &&
+            timeoutCts?.IsCancellationRequested != true &&
+            !collector.IsLimited)
+        {
+            ct.ThrowIfCancellationRequested();
+        }
+
+        var matches = collector.Snapshot();
+        var timedOut = timeoutCts?.IsCancellationRequested == true;
+
+        return new GrepResult
+        {
+            Matches = matches,
+            TotalMatches = matches.Count,
+            Truncated = collector.IsLimited || timedOut,
+            LimitReason = timedOut ? "timeout" : collector.LimitReason
+        };
     }
 
-    private static async Task<List<GrepMatch>> SearchFileAsync(
-        string filePath, Regex regex, string baseDir,
-        GrepOptions opts, CancellationToken ct)
+    private static Regex CreateRegex(string pattern, bool caseInsensitive)
     {
-        var matches = new List<GrepMatch>();
+        var options = RegexOptions.Compiled | (caseInsensitive ? RegexOptions.IgnoreCase : RegexOptions.None);
+        try
+        {
+            return new Regex(pattern, options | RegexOptions.NonBacktracking);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            return new Regex(pattern, options);
+        }
+    }
+
+    private static async Task SearchFileAsync(
+        string filePath,
+        Regex regex,
+        string baseDir,
+        GrepCollector collector,
+        CancellationToken ct)
+    {
         var relativePath = Path.GetRelativePath(baseDir, filePath);
 
         await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read,
@@ -84,25 +128,20 @@ public static class GrepTool
         while (await reader.ReadLineAsync(ct) is { } line)
         {
             lineNumber++;
-            if (regex.IsMatch(line))
-            {
-                matches.Add(new GrepMatch
-                {
-                    File = relativePath,
-                    Line = lineNumber,
-                    Content = line.Length > 500 ? line[..500] + "..." : line
-                });
-
-                if (matches.Count >= (opts.MaxResults ?? DefaultMaxResults))
-                    break;
-            }
+            if (!regex.IsMatch(line)) continue;
+            if (!collector.TryAppend(relativePath, lineNumber, line)) return;
         }
-
-        return matches;
     }
 
-    private static IEnumerable<string> EnumerateFiles(string directory, GrepOptions opts)
+    private static IEnumerable<string> EnumerateFiles(string searchTarget, string baseDir, GrepOptions opts)
     {
+        var matcher = CreateIncludeMatcher(opts);
+
+        if (File.Exists(searchTarget))
+        {
+            return ShouldSearchFile(searchTarget, baseDir, matcher) ? [searchTarget] : [];
+        }
+
         var enumOptions = new EnumerationOptions
         {
             RecurseSubdirectories = true,
@@ -110,22 +149,77 @@ public static class GrepTool
             MatchCasing = MatchCasing.PlatformDefault
         };
 
-        IEnumerable<string> files;
-        if (!string.IsNullOrEmpty(opts.GlobPattern))
+        return Directory.EnumerateFiles(searchTarget, "*", enumOptions)
+            .Where(filePath => ShouldSearchFile(filePath, baseDir, matcher));
+    }
+
+    private static bool ShouldSearchFile(string filePath, string baseDir, Matcher? matcher)
+    {
+        if (ShouldIgnore(filePath, baseDir)) return false;
+        if (matcher is null) return true;
+
+        var relativePath = Path.GetRelativePath(baseDir, filePath)
+            .Replace(Path.DirectorySeparatorChar, '/')
+            .Replace(Path.AltDirectorySeparatorChar, '/');
+        return matcher.Match(relativePath).HasMatches;
+    }
+
+    private static Matcher? CreateIncludeMatcher(GrepOptions opts)
+    {
+        var patterns = ResolveGlobPatterns(opts);
+        if (patterns.Count == 0) return null;
+
+        var matcher = new Matcher(StringComparison.OrdinalIgnoreCase);
+        foreach (var pattern in patterns)
         {
-            var matcher = new Microsoft.Extensions.FileSystemGlobbing.Matcher();
-            matcher.AddInclude(opts.GlobPattern);
-            var matchResult = matcher.Execute(
-                new Microsoft.Extensions.FileSystemGlobbing.Abstractions.DirectoryInfoWrapper(
-                    new DirectoryInfo(directory)));
-            files = matchResult.Files.Select(f => Path.Combine(directory, f.Path));
-        }
-        else
-        {
-            files = Directory.EnumerateFiles(directory, "*", enumOptions);
+            matcher.AddInclude(NormalizeGlobPattern(pattern));
         }
 
-        return files.Where(f => !ShouldIgnore(f, directory));
+        return matcher;
+    }
+
+    private static IReadOnlyList<string> ResolveGlobPatterns(GrepOptions opts)
+    {
+        if (opts.GlobPatterns is { Count: > 0 })
+        {
+            return opts.GlobPatterns
+                .Where(static pattern => !string.IsNullOrWhiteSpace(pattern))
+                .Select(static pattern => pattern.Trim())
+                .ToArray();
+        }
+
+        if (string.IsNullOrWhiteSpace(opts.GlobPattern)) return [];
+
+        return opts.GlobPattern
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static pattern => !string.IsNullOrWhiteSpace(pattern))
+            .ToArray();
+    }
+
+    private static string NormalizeGlobPattern(string pattern)
+    {
+        var normalized = pattern.Replace('\\', '/').Trim();
+        if (normalized.StartsWith("./", StringComparison.Ordinal))
+        {
+            normalized = normalized[2..];
+        }
+
+        if (normalized.StartsWith("**/", StringComparison.Ordinal))
+        {
+            normalized = normalized[3..];
+        }
+
+        if (!normalized.Contains('/') && normalized.StartsWith("*.", StringComparison.Ordinal))
+        {
+            return $"**/{normalized}";
+        }
+
+        if (!normalized.Contains('*') && !normalized.Contains('?') && normalized.StartsWith(".", StringComparison.Ordinal))
+        {
+            return $"*{normalized}";
+        }
+
+        return normalized;
     }
 
     private static bool ShouldIgnore(string filePath, string baseDir)
@@ -168,6 +262,75 @@ public static class GrepTool
             return true;
         }
     }
+
+    private static string NormalizeLine(string text, int maxLineLength)
+    {
+        var normalized = text.Trim();
+        if (normalized.Length <= maxLineLength) return normalized;
+        return normalized[..(maxLineLength - 1)] + '…';
+    }
+
+    private sealed class GrepCollector
+    {
+        private readonly object _sync = new();
+        private readonly int _maxResults;
+        private readonly int? _maxOutputBytes;
+        private readonly int _maxLineLength;
+        private readonly List<GrepMatch> _matches = [];
+        private int _totalBytes = 2;
+
+        public GrepCollector(int maxResults, int? maxOutputBytes, int maxLineLength)
+        {
+            _maxResults = maxResults;
+            _maxOutputBytes = maxOutputBytes;
+            _maxLineLength = maxLineLength;
+        }
+
+        public string? LimitReason { get; private set; }
+
+        public bool IsLimited => LimitReason is not null;
+
+        public bool TryAppend(string file, int line, string content)
+        {
+            lock (_sync)
+            {
+                if (LimitReason is not null) return false;
+                if (_matches.Count >= _maxResults)
+                {
+                    LimitReason = "max_results";
+                    return false;
+                }
+
+                var normalized = NormalizeLine(content, _maxLineLength);
+                var candidateBytes = Encoding.UTF8.GetByteCount(file) + Encoding.UTF8.GetByteCount(normalized) + 32;
+                if (_maxOutputBytes is int maxOutputBytes && _totalBytes + candidateBytes > maxOutputBytes)
+                {
+                    LimitReason = "max_output_bytes";
+                    return false;
+                }
+
+                _matches.Add(new GrepMatch
+                {
+                    File = file,
+                    Line = line,
+                    Content = normalized
+                });
+                _totalBytes += candidateBytes + 1;
+                return true;
+            }
+        }
+
+        public List<GrepMatch> Snapshot()
+        {
+            lock (_sync)
+            {
+                return _matches
+                    .OrderBy(static match => match.File, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(static match => match.Line)
+                    .ToList();
+            }
+        }
+    }
 }
 
 public class GrepOptions
@@ -175,6 +338,12 @@ public class GrepOptions
     public bool CaseInsensitive { get; init; }
     public int? MaxResults { get; init; }
     public string? GlobPattern { get; init; }
+    public IReadOnlyList<string>? GlobPatterns { get; init; }
+    public long? MaxFileSizeBytes { get; init; }
+    public int? MaxLineLength { get; init; }
+    public int? MaxOutputBytes { get; init; }
+    public int? TimeoutMs { get; init; }
+    public int? MaxDegreeOfParallelism { get; init; }
 }
 
 public class GrepResult
@@ -182,6 +351,7 @@ public class GrepResult
     public List<GrepMatch> Matches { get; set; } = [];
     public int TotalMatches { get; set; }
     public bool Truncated { get; set; }
+    public string? LimitReason { get; set; }
 }
 
 public class GrepMatch

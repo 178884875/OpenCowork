@@ -635,6 +635,33 @@ public sealed class DesktopOperationResult
     public JsonElement? Payload { get; init; }
 }
 
+public sealed class FsGrepParams
+{
+    public string Pattern { get; init; } = "";
+    public string? Path { get; init; }
+    public string? Include { get; init; }
+    public int? MaxResults { get; init; }
+    public int? MaxLineLength { get; init; }
+    public int? MaxOutputBytes { get; init; }
+    public int? TimeoutMs { get; init; }
+}
+
+public sealed class FsGrepMatch
+{
+    public string File { get; init; } = "";
+    public int Line { get; init; }
+    public string Text { get; init; } = "";
+}
+
+public sealed class FsGrepResult
+{
+    public List<FsGrepMatch> Results { get; init; } = [];
+    public bool Truncated { get; init; }
+    public bool TimedOut { get; init; }
+    public string? LimitReason { get; init; }
+    public long SearchTime { get; init; }
+}
+
 public sealed class PingParams
 {
     public long Timestamp { get; init; }

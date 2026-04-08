@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using OpenCowork.Agent.Engine;
+using OpenCowork.Agent.Tools.Fs;
 
 namespace OpenCowork.Agent.Protocol;
 
@@ -200,6 +202,49 @@ public sealed class MessageRouter
                 Capability = capability,
                 Supported = _agentRuntime.SupportsCapability(capability)
             });
+        });
+
+        RegisterHandler<FsGrepResult>("fs/grep", async (JsonElement? @params, CancellationToken ct) =>
+        {
+            var parsed = @params.HasValue
+                ? JsonSerializer.Deserialize(@params.Value, AppJsonContext.Default.FsGrepParams)
+                : null;
+            if (parsed is null || string.IsNullOrWhiteSpace(parsed.Pattern))
+                throw new JsonRpcException(JsonRpcErrorCodes.InvalidParams, "fs/grep pattern is required");
+
+            var searchTarget = Path.GetFullPath(string.IsNullOrWhiteSpace(parsed.Path) ? "." : parsed.Path);
+            if (!Directory.Exists(searchTarget) && !File.Exists(searchTarget))
+                throw new JsonRpcException(JsonRpcErrorCodes.InvalidParams, $"Search path does not exist: {searchTarget}");
+
+            var stopwatch = Stopwatch.StartNew();
+            var result = await GrepTool.SearchAsync(searchTarget, parsed.Pattern, new GrepOptions
+            {
+                CaseInsensitive = true,
+                GlobPatterns = string.IsNullOrWhiteSpace(parsed.Include)
+                    ? null
+                    : parsed.Include
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                MaxResults = parsed.MaxResults,
+                MaxLineLength = parsed.MaxLineLength,
+                MaxOutputBytes = parsed.MaxOutputBytes,
+                TimeoutMs = parsed.TimeoutMs,
+                MaxFileSizeBytes = GrepTool.DefaultMaxFileSizeBytes
+            }, ct);
+            stopwatch.Stop();
+
+            return new FsGrepResult
+            {
+                Results = result.Matches.Select(static match => new FsGrepMatch
+                {
+                    File = match.File,
+                    Line = match.Line,
+                    Text = match.Content
+                }).ToList(),
+                Truncated = result.Truncated,
+                TimedOut = string.Equals(result.LimitReason, "timeout", StringComparison.Ordinal),
+                LimitReason = result.LimitReason,
+                SearchTime = stopwatch.ElapsedMilliseconds
+            };
         });
 
         RegisterHandler<AgentRunResult>("agent/run", async (JsonElement? @params, CancellationToken ct) =>

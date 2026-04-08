@@ -7,6 +7,7 @@ import { createInterface } from 'readline'
 import { recordLocalTextWriteChange } from './agent-change-handlers'
 import { safeSendToWindow } from '../window-ipc'
 import { createGitIgnoreMatcher } from './gitignore-utils'
+import { getSidecarManager } from './sidecar-manager'
 
 const IMAGE_EXTENSIONS = new Set([
   '.png',
@@ -476,6 +477,56 @@ async function createLocalGitIgnoreContext(
   })
 }
 
+async function runSidecarGrepSearch(args: {
+  pattern: string
+  searchTarget: string
+  include?: string
+}): Promise<{
+  results: GrepResultItem[]
+  truncated: boolean
+  timedOut: boolean
+  limitReason: GrepLimitReason
+  searchTime: number
+} | null> {
+  try {
+    const sidecar = getSidecarManager()
+    const ready = await sidecar.ensureStarted()
+    if (!ready) return null
+
+    const result = (await sidecar.request(
+      'fs/grep',
+      {
+        pattern: args.pattern,
+        path: args.searchTarget,
+        include: args.include,
+        maxResults: GREP_MAX_RESULTS,
+        maxLineLength: GREP_MAX_LINE_LENGTH,
+        maxOutputBytes: GREP_MAX_OUTPUT_BYTES,
+        timeoutMs: GREP_TIMEOUT_MS
+      },
+      GREP_TIMEOUT_MS + 5_000
+    )) as {
+      results?: GrepResultItem[]
+      truncated?: boolean
+      timedOut?: boolean
+      limitReason?: GrepLimitReason
+      searchTime?: number
+    }
+
+    if (!Array.isArray(result?.results)) return null
+
+    return {
+      results: result.results,
+      truncated: result.truncated === true,
+      timedOut: result.timedOut === true,
+      limitReason: result.limitReason ?? null,
+      searchTime: typeof result.searchTime === 'number' ? result.searchTime : 0
+    }
+  } catch {
+    return null
+  }
+}
+
 async function runRipgrepSearch(args: {
   pattern: string
   searchRoot: string
@@ -893,6 +944,17 @@ export function registerFsHandlers(): void {
 
         const searchRoot = targetStats.isDirectory() ? searchTarget : path.dirname(searchTarget)
         const includePatterns = parseIncludePatterns(args.include)
+
+        const sidecarResult = await runSidecarGrepSearch({
+          pattern: args.pattern,
+          searchTarget,
+          include: args.include
+        })
+
+        if (sidecarResult) {
+          return sidecarResult
+        }
+
         const matchesInclude = createIncludeMatcher(searchRoot, includePatterns)
         const gitIgnoreMatcher = targetStats.isDirectory()
           ? await createLocalGitIgnoreContext(searchRoot)

@@ -362,6 +362,7 @@ export function buildSidecarAgentRunRequest(args: {
   messages: UnifiedMessage[]
   provider: ProviderConfig
   tools: ToolDefinition[]
+  runId?: string
   sessionId?: string
   workingFolder?: string
   maxIterations: number

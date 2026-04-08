@@ -96,6 +96,10 @@ namespace OpenCowork.Agent;
 [JsonSerializable(typeof(RendererToolResponseResult))]
 [JsonSerializable(typeof(DesktopInputAvailableResult))]
 [JsonSerializable(typeof(DesktopOperationResult))]
+[JsonSerializable(typeof(FsGrepParams))]
+[JsonSerializable(typeof(FsGrepMatch))]
+[JsonSerializable(typeof(FsGrepResult))]
+[JsonSerializable(typeof(List<FsGrepMatch>))]
 // Protocol request/response types
 [JsonSerializable(typeof(CapabilitiesCheckParams))]
 [JsonSerializable(typeof(CapabilitiesCheckResult))]

@@ -99,6 +99,15 @@ graph TB
 - **自动化运维：** 调度智能体监控日志或系统状态，并汇报至飞书/Slack。
 - **数据调研：** 智能体可以抓取网页数据、处理本地 CSV 并生成可视化报告。
 
+## 🔗 生态搭配
+
+### Codex-Manager
+
+- 仓库地址：[qxcnm/Codex-Manager](https://github.com/qxcnm/Codex-Manager)
+- 搭配方式：使用 Codex-Manager 统一管理 Codex 相关工作流、任务入口或协作编排，再由 OpenCowork 承接本地文件操作、多 Agent 协作、消息平台接入与桌面执行能力。
+- 适合场景：当您希望把“任务管理 / 调度入口”和“本地执行 / 办公协同”拆分开时，这两个项目可以形成互补组合。
+- 推荐理解：**Codex-Manager 更偏管理与组织，OpenCowork 更偏执行与落地。**
+
 ## 📈 Star 历史
 
 [![Star History Chart](https://api.star-history.com/svg?repos=AIDotNet/OpenCowork&type=Date)](https://star-history.com/#AIDotNet/OpenCowork&Date)

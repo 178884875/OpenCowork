@@ -100,6 +100,15 @@ graph TB
 - **Automated Ops:** Schedule agents to monitor logs or system status and report to Feishu/Slack.
 - **Data Research:** Agents can scrape web data, process local CSVs, and generate visual reports.
 
+## 🔗 Ecosystem Pairing
+
+### Codex-Manager
+
+- Repository: [qxcnm/Codex-Manager](https://github.com/qxcnm/Codex-Manager)
+- Recommended pairing: use Codex-Manager as the management or orchestration entry point for Codex-centric workflows, while OpenCowork handles local file operations, multi-agent execution, workplace messaging, and desktop automation.
+- Best for: teams that want to separate task management and workflow organization from local execution and office integration.
+- A simple way to think about it: **Codex-Manager organizes the work, OpenCowork executes it in the real workspace.**
+
 ## 📈 Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=AIDotNet/OpenCowork&type=Date)](https://star-history.com/#AIDotNet/OpenCowork&Date)

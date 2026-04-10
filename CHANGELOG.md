@@ -3,6 +3,31 @@
 All notable changes to **OpenCowork** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com).
 
+## [0.8.0] - 2026-04-10
+
+### Added
+
+- Enhanced file system operations and tool integration across the agent runtime and UI surfaces.
+- Improved Task tool and sub-agent execution flow.
+
+### Changed
+
+- Reworked agent/runtime IPC and sidecar protocol plumbing to keep renderer and backend paths aligned.
+- Refined file change and tool call card rendering for the new tooling flow.
+- Updated the steps panel, chat store, and supporting agent/tool handlers to match the revised file-system workflow.
+- Updated contributor guidance, build/development commands, README links, and repository housekeeping.
+- Bumped the app version to `v0.8.0`.
+
+### Fixed
+
+- Added reduced-memory recovery after OOM.
+- Added GIF background color handling to improve export consistency.
+- Stabilized file edit operations when source strings use different quote characters.
+
+### Notes
+
+- This release focuses on file-system tooling, task/sub-agent workflow improvements, chat UI polish, runtime stability, and developer tooling/documentation updates.
+
 ## [0.7.18] - 2026-04-10
 
 ### Added

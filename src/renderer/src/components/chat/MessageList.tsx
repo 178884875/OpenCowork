@@ -210,6 +210,15 @@ export function MessageList({
   const isSessionRunning = useAgentStore((s) => s.isSessionActive(activeSessionId)) || hasStreamingMessage
   const canSessionTriggerStreamingAutoScroll = isMainChatSession && isSessionRunning
 
+  // Keep a stable snapshot of messages that only advances when NOT streaming.
+  // orchestrationState depends on complete tool_use/tool_result blocks which only
+  // appear at non-streaming boundaries — using a stale ref during streaming avoids
+  // rebuilding the orchestration tree on every incoming text token.
+  const stableMessagesRef = React.useRef(messages)
+  if (!streamingMessageId) {
+    stableMessagesRef.current = messages
+  }
+
   const listRef = React.useRef<VListHandle | null>(null)
   const containerRef = React.useRef<HTMLDivElement | null>(null)
   const lastMessageRowElementRef = React.useRef<HTMLDivElement | null>(null)
@@ -273,7 +282,7 @@ export function MessageList({
       hasSessionOrchestrationData
         ? buildOrchestrationRuns({
             sessionId: activeSessionId,
-            messages,
+            messages: stableMessagesRef.current,
             activeSubAgents,
             completedSubAgents,
             subAgentHistory,
@@ -281,13 +290,15 @@ export function MessageList({
             teamHistory
           })
         : EMPTY_ORCHESTRATION_STATE,
+    // `messages` intentionally excluded: orchestration only changes at tool
+    // boundaries (non-streaming), so stableMessagesRef.current is sufficient.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       activeSessionId,
       activeSubAgents,
       activeTeam,
       completedSubAgents,
       hasSessionOrchestrationData,
-      messages,
       subAgentHistory,
       teamHistory
     ]
@@ -515,7 +526,7 @@ export function MessageList({
       autoScrollModeRef.current = 'stream'
       requestScrollToBottom({ force: true, maxFrames: INITIAL_SCROLL_SETTLE_FRAMES })
     } else {
-      syncBottomState()
+      requestScrollToBottom({ force: true, maxFrames: INITIAL_SCROLL_SETTLE_FRAMES })
     }
 
     pendingInitialScrollSessionIdRef.current = null
@@ -606,9 +617,12 @@ export function MessageList({
     }
   }, [])
 
-  if (!activeSessionLoaded && activeSessionMessageCount > 0) {
-    // Lightweight skeleton while the initial 20-message page loads. Replaces
-    // the old blocking spinner so session switches feel instant.
+  const isAwaitingInitialMessages =
+    Boolean(activeSessionId) &&
+    messages.length === 0 &&
+    (!activeSessionLoaded || activeSessionMessageCount > 0 || loadedRangeStart > 0)
+
+  if (isAwaitingInitialMessages) {
     return (
       <div className="flex flex-1 flex-col gap-4 overflow-hidden px-4 pt-6">
         {[0, 1, 2].map((index) => (

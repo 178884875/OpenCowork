@@ -4,182 +4,46 @@ import { IPC } from '../ipc/channels'
 import { encodeStructuredToolResult, encodeToolError } from './tool-result-format'
 import type { ToolHandler, ToolContext } from './tool-types'
 
-const LEFT_SINGLE_CURLY_QUOTE = '‘'
-const RIGHT_SINGLE_CURLY_QUOTE = '’'
-const LEFT_DOUBLE_CURLY_QUOTE = '“'
-const RIGHT_DOUBLE_CURLY_QUOTE = '”'
+type EolStyle = '\n' | '\r\n' | null
 
 function countOccurrences(content: string, value: string): number {
   if (!value) return 0
   return content.split(value).length - 1
 }
 
-function normalizeQuotes(value: string): string {
-  return value
-    .replaceAll(LEFT_SINGLE_CURLY_QUOTE, "'")
-    .replaceAll(RIGHT_SINGLE_CURLY_QUOTE, "'")
-    .replaceAll(LEFT_DOUBLE_CURLY_QUOTE, '"')
-    .replaceAll(RIGHT_DOUBLE_CURLY_QUOTE, '"')
-}
-
-/**
- * Build a mapping from positions in a normalized string back to positions in the original.
- * Each entry maps a normalized-string index to the corresponding original-string index.
- */
-function buildOffsetMap(original: string): number[] {
-  const map: number[] = []
-  let oi = 0
-  for (let i = 0; i < original.length; i++) {
-    if (original[i] === '\r' && original[i + 1] === '\n') {
-      map.push(oi)
-      oi++
-      i++ // skip \n — it was merged into one \n in normalized form
-      continue
-    }
-    map.push(oi)
-    oi++
-  }
-  return map
-}
-
-function findOriginalRange(
-  original: string,
-  normalizedIdx: number,
-  normalizedLen: number
-): { start: number; end: number } {
-  const map = buildOffsetMap(original)
-  // Find the original start: the first original index whose normalized position == normalizedIdx
-  let start = -1
-  for (let i = 0; i < map.length; i++) {
-    if (map[i] === normalizedIdx) {
-      start = i
-      break
-    }
-  }
-  if (start === -1) start = original.length
-
-  // Find the original end: first original index whose normalized position == normalizedIdx + normalizedLen
-  const endNorm = normalizedIdx + normalizedLen
-  let end = original.length
-  for (let i = start; i < map.length; i++) {
-    if (map[i] === endNorm) {
-      end = i
-      break
-    }
-  }
-  return { start, end }
-}
-
-function normalizeLineEndings(value: string): string {
-  return value.replace(/\r\n/g, '\n')
-}
-
-function normalizeTrailingWhitespace(value: string): string {
-  return value.replace(/[ \t]+$/gm, '')
-}
-
-function findActualString(content: string, search: string): string | null {
-  // 1. Exact match
-  if (content.includes(search)) return search
-
-  // 2. Curly-quote normalization only
-  const qSearch = normalizeQuotes(search)
-  const qContent = normalizeQuotes(content)
-  const qIdx = qContent.indexOf(qSearch)
-  if (qIdx !== -1) return content.substring(qIdx, qIdx + search.length)
-
-  // 3. Line-ending normalization (\r\n → \n)
-  const lfSearch = normalizeLineEndings(qSearch)
-  const lfContent = normalizeLineEndings(qContent)
-  const lfIdx = lfContent.indexOf(lfSearch)
-  if (lfIdx !== -1) {
-    const { start, end } = findOriginalRange(content, lfIdx, lfSearch.length)
-    return content.substring(start, end)
-  }
-
-  // 4. Trailing-whitespace normalization (strip trailing spaces/tabs per line)
-  const twSearch = normalizeTrailingWhitespace(lfSearch)
-  const twContent = normalizeTrailingWhitespace(lfContent)
-  const twIdx = twContent.indexOf(twSearch)
-  if (twIdx !== -1) {
-    // Map back through LF-normalized content to original
-    const { start, end } = findOriginalRange(content, twIdx, twSearch.length)
-    return content.substring(start, end)
-  }
-
+function detectEolStyle(value: string): EolStyle {
+  if (value.includes('\r\n')) return '\r\n'
+  if (value.includes('\n')) return '\n'
   return null
 }
 
-function isOpeningQuoteContext(chars: string[], index: number): boolean {
-  if (index === 0) return true
-  const prev = chars[index - 1]
-  return (
-    prev === ' ' ||
-    prev === '\t' ||
-    prev === '\n' ||
-    prev === '\r' ||
-    prev === '(' ||
-    prev === '[' ||
-    prev === '{' ||
-    prev === '\u2014' ||
-    prev === '\u2013'
-  )
+function normalizeToLf(value: string): string {
+  return value.replace(/\r\n/g, '\n')
 }
 
-function applyCurlyDoubleQuotes(value: string): string {
-  const chars = [...value]
-  const result: string[] = []
-  for (let i = 0; i < chars.length; i++) {
-    if (chars[i] === '"') {
-      result.push(
-        isOpeningQuoteContext(chars, i) ? LEFT_DOUBLE_CURLY_QUOTE : RIGHT_DOUBLE_CURLY_QUOTE
-      )
-    } else {
-      result.push(chars[i]!)
-    }
+function applyEolStyle(value: string, style: EolStyle): string {
+  if (!style) return value
+  const normalized = normalizeToLf(value)
+  return style === '\n' ? normalized : normalized.replace(/\n/g, '\r\n')
+}
+
+function buildOldStringVariants(
+  oldStr: string,
+  fileContent: string
+): Array<{ text: string; eol: EolStyle }> {
+  const variants: Array<{ text: string; eol: EolStyle }> = [
+    { text: oldStr, eol: detectEolStyle(oldStr) }
+  ]
+  const fileHasCrlf = fileContent.includes('\r\n')
+  const fileHasOnlyLf = !fileHasCrlf
+
+  if (oldStr.includes('\n') && !oldStr.includes('\r') && fileHasCrlf) {
+    variants.push({ text: oldStr.replace(/\n/g, '\r\n'), eol: '\r\n' })
+  } else if (oldStr.includes('\r\n') && fileHasOnlyLf) {
+    variants.push({ text: oldStr.replace(/\r\n/g, '\n'), eol: '\n' })
   }
-  return result.join('')
-}
 
-function applyCurlySingleQuotes(value: string): string {
-  const chars = [...value]
-  const result: string[] = []
-  for (let i = 0; i < chars.length; i++) {
-    if (chars[i] === "'") {
-      const prev = i > 0 ? chars[i - 1] : undefined
-      const next = i < chars.length - 1 ? chars[i + 1] : undefined
-      const prevIsLetter = prev !== undefined && /\p{L}/u.test(prev)
-      const nextIsLetter = next !== undefined && /\p{L}/u.test(next)
-      if (prevIsLetter && nextIsLetter) {
-        result.push(RIGHT_SINGLE_CURLY_QUOTE)
-      } else {
-        result.push(
-          isOpeningQuoteContext(chars, i) ? LEFT_SINGLE_CURLY_QUOTE : RIGHT_SINGLE_CURLY_QUOTE
-        )
-      }
-    } else {
-      result.push(chars[i]!)
-    }
-  }
-  return result.join('')
-}
-
-function preserveQuoteStyle(oldString: string, actualOldString: string, newString: string): string {
-  if (oldString === actualOldString) return newString
-
-  const hasDoubleQuotes =
-    actualOldString.includes(LEFT_DOUBLE_CURLY_QUOTE) ||
-    actualOldString.includes(RIGHT_DOUBLE_CURLY_QUOTE)
-  const hasSingleQuotes =
-    actualOldString.includes(LEFT_SINGLE_CURLY_QUOTE) ||
-    actualOldString.includes(RIGHT_SINGLE_CURLY_QUOTE)
-
-  if (!hasDoubleQuotes && !hasSingleQuotes) return newString
-
-  let result = newString
-  if (hasDoubleQuotes) result = applyCurlyDoubleQuotes(result)
-  if (hasSingleQuotes) result = applyCurlySingleQuotes(result)
-  return result
+  return variants
 }
 
 function normalizeReadHistoryPath(filePath: string): string {
@@ -243,7 +107,7 @@ function sshWriteArgs(
 // ── Plugin path permission helpers ──
 
 function normalizePath(p: string): string {
-  let normalized = p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '')
+  let normalized = p.replace(/\\/g, '/').replace(/\/+ /g, '/').replace(/\/$/, '')
   if (/^[a-zA-Z]:/.test(normalized)) normalized = normalized.toLowerCase()
   return normalized
 }
@@ -470,13 +334,16 @@ const editHandler: ToolHandler = {
     }
 
     const content = String(contentResult)
-    const actualOldStr = findActualString(content, oldStr)
+    const oldStringVariants = buildOldStringVariants(oldStr, content)
+    const matchedVariant = oldStringVariants.find(
+      (variant) => variant.text.length > 0 && content.includes(variant.text)
+    )
 
-    if (!actualOldStr) {
+    if (!matchedVariant) {
       return encodeToolError(`String to replace not found in file.\nString: ${oldStr}`)
     }
 
-    const occurrences = countOccurrences(content, actualOldStr)
+    const occurrences = countOccurrences(content, matchedVariant.text)
 
     if (!replaceAll && occurrences > 1) {
       return encodeToolError(
@@ -484,10 +351,10 @@ const editHandler: ToolHandler = {
       )
     }
 
-    const nextNewStr = preserveQuoteStyle(oldStr, actualOldStr, newStr)
+    const replacementText = applyEolStyle(newStr, matchedVariant.eol)
     const updated = replaceAll
-      ? content.split(actualOldStr).join(nextNewStr)
-      : content.replace(actualOldStr, nextNewStr)
+      ? content.split(matchedVariant.text).join(replacementText)
+      : content.replace(matchedVariant.text, replacementText)
 
     const writeCh = isSsh(ctx) ? IPC.SSH_FS_WRITE_FILE : IPC.FS_WRITE_FILE
     const writeArgs = isSsh(ctx)

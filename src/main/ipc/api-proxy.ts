@@ -499,11 +499,12 @@ export function registerApiProxyHandlers(): void {
 
     const runOneAttempt = (): Promise<AttemptResult> =>
       new Promise<AttemptResult>((resolve) => {
-        const STREAM_CHUNK_FLUSH_MS = 16
+        const STREAM_CHUNK_FLUSH_MS = 32
         const STREAM_CHUNK_MAX_BUFFER_CHARS = 8_192
         let bufferedChunk = ''
         let chunkFlushTimer: ReturnType<typeof setTimeout> | null = null
         let settled = false
+        let completed = false
 
         const finish = (result: AttemptResult): void => {
           if (settled) return
@@ -652,6 +653,7 @@ export function registerApiProxyHandlers(): void {
               })
 
               res.on('end', () => {
+                completed = true
                 clearIdleTimer()
                 flushBufferedChunk()
                 const sender = getSender(event)
@@ -700,8 +702,8 @@ export function registerApiProxyHandlers(): void {
               clearIdleTimer()
               clearChunkFlushTimer()
               bufferedChunk = ''
-              // If close fires before we settled, treat as aborted fatal.
-              if (!settled) finish({ kind: 'fatal', status: 0, body: 'Connection closed' })
+              // 正常流结束后，底层连接 close 是预期行为，不应再报错。
+              if (!settled && !completed) finish({ kind: 'fatal', status: 0, body: 'Connection closed' })
             })
 
             if (bodyBuffer) httpReq.write(bodyBuffer)
@@ -840,7 +842,7 @@ export function registerApiProxyHandlers(): void {
             clearIdleTimer()
             clearChunkFlushTimer()
             bufferedChunk = ''
-            if (!settled) finish({ kind: 'fatal', status: 0, body: 'Connection closed' })
+            if (!settled && !completed) finish({ kind: 'fatal', status: 0, body: 'Connection closed' })
           })
 
           if (bodyBuffer) httpReq.write(bodyBuffer)

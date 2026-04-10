@@ -15,6 +15,7 @@ import {
   isDesktopInputAvailable
 } from './desktop-control'
 import { listAgents } from './agents-handlers'
+import { recordLocalTextWriteChange } from './agent-change-handlers'
 
 const SIDECAR_RESTART_DELAY_MS = 2000
 const SIDECAR_MAX_RESTARTS = 5
@@ -635,6 +636,47 @@ export function registerSidecarHandlers(): void {
             return isDesktopInputAvailable()
           case 'agents:list':
             return listAgents()
+          case 'fs:write-file': {
+            const writeArgs = args[0] as {
+              path: string
+              content: string
+              changeMeta?: {
+                runId?: string
+                sessionId?: string
+                toolUseId?: string
+                toolName?: string
+              }
+            }
+            if (!writeArgs?.path || typeof writeArgs.content !== 'string') {
+              throw new Error('fs:write-file requires path and content')
+            }
+            try {
+              const beforeExists = fs.existsSync(writeArgs.path)
+              let beforeText: string | undefined
+              if (beforeExists) {
+                try {
+                  beforeText = await fs.promises.readFile(writeArgs.path, 'utf-8')
+                } catch {
+                  // best-effort: skip diff if read fails
+                }
+              }
+              const dir = path.dirname(writeArgs.path)
+              if (!fs.existsSync(dir)) {
+                await fs.promises.mkdir(dir, { recursive: true })
+              }
+              await fs.promises.writeFile(writeArgs.path, writeArgs.content, 'utf-8')
+              recordLocalTextWriteChange({
+                meta: writeArgs.changeMeta,
+                filePath: writeArgs.path,
+                beforeExists,
+                beforeText,
+                afterText: writeArgs.content
+              })
+              return { success: true }
+            } catch (err) {
+              return { error: String(err) }
+            }
+          }
           default:
             throw new Error(`Unsupported electron invoke channel: ${channel}`)
         }

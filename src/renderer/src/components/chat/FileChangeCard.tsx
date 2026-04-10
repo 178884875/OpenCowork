@@ -716,14 +716,17 @@ export function FileChangeCard({
   const resolvedEdit = React.useMemo(() => resolveEditPayload(input), [input])
   const resolvedWrite = React.useMemo(() => resolveWritePayload(input), [input])
   const parsedOutput = outputStr ? decodeStructuredToolResult(outputStr) : null
+  const parsedOutputError =
+    parsedOutput && !Array.isArray(parsedOutput) && typeof parsedOutput.error === 'string'
+      ? parsedOutput.error.trim()
+      : null
   const isSuccess = !!(
     parsedOutput &&
     !Array.isArray(parsedOutput) &&
     parsedOutput.success === true
   )
   const isOutputError = outputStr
-    ? !!(parsedOutput && !Array.isArray(parsedOutput) && typeof parsedOutput.error === 'string') ||
-      (!parsedOutput && outputStr.length > 0)
+    ? Boolean(parsedOutputError) || (!parsedOutput && outputStr.length > 0)
     : false
 
   const borderColor =
@@ -950,17 +953,17 @@ export function FileChangeCard({
         </div>
       )}
 
-      {error && (
+      {(error || (parsedOutputError && !error)) && (
         <div className="border-t border-destructive/20 px-3 py-1.5 bg-destructive/5">
           <p
             className="text-[11px] text-destructive font-mono whitespace-pre-wrap break-words"
             style={{ fontFamily: MONO_FONT }}
           >
-            {error}
+            {error || parsedOutputError}
           </p>
         </div>
       )}
-      {outputStr && !error && isOutputError && !isSuccess && (
+      {outputStr && !error && !parsedOutputError && isOutputError && !isSuccess && (
         <div className="border-t border-destructive/20 px-3 py-1.5 bg-destructive/5">
           <p
             className="text-[11px] text-destructive/80 font-mono whitespace-pre-wrap break-words"

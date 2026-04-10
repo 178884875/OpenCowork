@@ -11,14 +11,56 @@ public static class FsOperations
 {
     public const int MaxReadLines = 2000;
 
+    // ── Encoding detection ──
+
+    /// <summary>
+    /// Detects the text encoding of a file by inspecting its BOM.
+    /// Returns "utf16le", "utf8bom", or "utf8".
+    /// </summary>
+    public static string DetectFileEncoding(ReadOnlySpan<byte> head)
+    {
+        if (head.Length >= 2 && head[0] == 0xFF && head[1] == 0xFE) return "utf16le";
+        if (head.Length >= 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF) return "utf8bom";
+        return "utf8";
+    }
+
+    /// <summary>
+    /// Reads raw file content with encoding detection.
+    /// Returns the decoded string (BOM stripped) and the detected encoding tag.
+    /// </summary>
+    public static (string Content, string Encoding) ReadFileRawWithEncoding(string path)
+    {
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"File not found: {path}");
+
+        var bytes = File.ReadAllBytes(path);
+        var enc = DetectFileEncoding(bytes);
+        var content = enc switch
+        {
+            "utf16le" => Encoding.Unicode.GetString(bytes.AsSpan(2)),    // skip 2-byte BOM
+            "utf8bom" => Encoding.UTF8.GetString(bytes.AsSpan(3)),       // skip 3-byte BOM
+            _         => Encoding.UTF8.GetString(bytes)
+        };
+        return (content, enc);
+    }
+
     public static async Task<string> ReadFileAsync(string path, int? offset = null,
         int? limit = null, CancellationToken ct = default)
     {
         if (!File.Exists(path))
             throw new FileNotFoundException($"File not found: {path}");
 
-        var content = await File.ReadAllTextAsync(path, ct);
-        return FormatReadOutput(content, offset, limit);
+        // Byte-level read so we can detect utf16le BOM correctly.
+        // File.ReadAllTextAsync(path) defaults to UTF-8 and silently garbles utf16le files.
+        var bytes = await File.ReadAllBytesAsync(path, ct);
+        var enc = DetectFileEncoding(bytes);
+        var rawContent = enc switch
+        {
+            "utf16le" => Encoding.Unicode.GetString(bytes.AsSpan(2)),
+            "utf8bom" => Encoding.UTF8.GetString(bytes.AsSpan(3)),
+            _         => Encoding.UTF8.GetString(bytes)
+        };
+        return FormatReadOutput(rawContent, offset, limit);
     }
 
     public static string FormatReadOutput(string content, int? offset = null, int? limit = null)
@@ -46,13 +88,7 @@ public static class FsOperations
         return sb.ToString();
     }
 
-    public static string ReadFileRaw(string path)
-    {
-        if (!File.Exists(path))
-            throw new FileNotFoundException($"File not found: {path}");
-
-        return File.ReadAllText(path);
-    }
+    public static string ReadFileRaw(string path) => ReadFileRawWithEncoding(path).Content;
     public static void RecordRead(string path, IDictionary<string, DateTimeOffset>? readHistory)
     {
         if (readHistory is null) return;
@@ -530,7 +566,7 @@ public static class FsOperations
         await File.WriteAllTextAsync(path, content, ct);
     }
 
-    private static string ReplaceFirst(string content, string oldString, string newString)
+    public static string ReplaceFirst(string content, string oldString, string newString)
     {
         var index = content.IndexOf(oldString, StringComparison.Ordinal);
         if (index < 0)

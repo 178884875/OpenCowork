@@ -32,8 +32,6 @@ public sealed class AgentRuntimeService
         "tool.Write",
         "tool.Edit",
         "tool.Bash",
-        "tool.Delete",
-        "tool.Move",
         "tool.LS",
         "tool.Glob",
         "tool.Grep",
@@ -202,9 +200,48 @@ public sealed class AgentRuntimeService
 
     private void RegisterBuiltinTools()
     {
-        RegisterRendererBridgedTool("Read", "Read a file from the filesystem", ParseSchema("""{"type":"object","properties":{"file_path":{"type":"string","description":"Absolute path or relative to the working folder"},"offset":{"type":"number","description":"Start line (1-indexed)"},"limit":{"type":"number","description":"Number of lines to read"}},"required":["file_path"]}"""));
+        // ── Read (native: direct file I/O, 0 IPC) ──
 
-        RegisterRendererBridgedTool("Write", "Write a file to the filesystem", ParseSchema("""
+        _toolRegistry.Register(new ToolHandler
+        {
+            Definition = new ToolDefinition
+            {
+                Name = "Read",
+                Description = "Read a file from the filesystem",
+                InputSchema = ParseSchema("""{"type":"object","properties":{"file_path":{"type":"string","description":"Absolute path or relative to the working folder"},"offset":{"type":"number","description":"Start line (1-indexed)"},"limit":{"type":"number","description":"Number of lines to read"}},"required":["file_path"]}""")
+            },
+            Execute = async (input, ctx, token) =>
+            {
+                var path = ResolvePath(GetString(input, "file_path", required: true), ctx.WorkingFolder);
+
+                // SSH: fall back to renderer bridge (SFTP)
+                if (ctx.SshConnectionId is not null)
+                    return await InvokeRendererToolAsync(ctx, "Read", input, token);
+
+                try
+                {
+                    var content = await FsOperations.ReadFileAsync(path,
+                        GetOptionalInt(input, "offset"), GetOptionalInt(input, "limit"), token);
+                    FsOperations.RecordRead(path, ctx.ReadFileHistory);
+                    return new ToolResultContent { Content = content };
+                }
+                catch (Exception ex)
+                {
+                    return new ToolResultContent { Content = ex.Message, IsError = true };
+                }
+            },
+            RequiresApproval = (_, _) => false
+        });
+
+        // ── Write (native validation + Electron IPC write for change tracking, 1 IPC) ──
+
+        _toolRegistry.Register(new ToolHandler
+        {
+            Definition = new ToolDefinition
+            {
+                Name = "Write",
+                Description = "Write a file to the filesystem",
+                InputSchema = ParseSchema("""
                 {
                   "type": "object",
                   "properties": {
@@ -213,9 +250,189 @@ public sealed class AgentRuntimeService
                   },
                   "required": ["file_path", "content"]
                 }
-                """));
+                """)
+            },
+            Execute = async (input, ctx, token) =>
+            {
+                var path = ResolvePath(GetString(input, "file_path", required: true), ctx.WorkingFolder);
+                var content = GetString(input, "content", required: true);
 
-        RegisterRendererBridgedTool("Edit", "Perform exact string replacements in files", ParseSchema("""{"type":"object","properties":{"file_path":{"type":"string","description":"Absolute path or relative to the working folder"},"old_string":{"type":"string","description":"The text to replace"},"new_string":{"type":"string","description":"The text to replace it with"},"replace_all":{"type":"boolean","description":"Replace all occurrences of old_string"}},"required":["file_path","old_string","new_string"]}"""));
+                // SSH: fall back to renderer bridge (SFTP)
+                if (ctx.SshConnectionId is not null)
+                    return await InvokeRendererToolAsync(ctx, "Write", input, token);
+
+                try
+                {
+                    var isNewFile = !File.Exists(path);
+                    var writeArgs = new JsonObject
+                    {
+                        ["path"] = path,
+                        ["content"] = content
+                    };
+                    if (ctx.AgentRunId is not null)
+                    {
+                        writeArgs["changeMeta"] = new JsonObject
+                        {
+                            ["runId"] = ctx.AgentRunId,
+                            ["sessionId"] = ctx.SessionId,
+                            ["toolUseId"] = ctx.CurrentToolUseId,
+                            ["toolName"] = "Write"
+                        };
+                    }
+                    await InvokeElectronAsync(ctx, "fs:write-file", new object?[] { writeArgs }, token);
+
+                    FsOperations.RecordRead(path, ctx.ReadFileHistory);
+                    return new ToolResultContent
+                    {
+                        Content = isNewFile
+                            ? $"File created successfully at: {path}"
+                            : $"The file {path} has been updated successfully."
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new ToolResultContent { Content = ex.Message, IsError = true };
+                }
+            },
+            RequiresApproval = (input, ctx) =>
+            {
+                if (ctx.SshConnectionId is not null) return false;
+                var filePath = ResolvePath(GetString(input, "file_path", required: true), ctx.WorkingFolder);
+                return !IsWithinWorkingFolder(filePath, ctx.WorkingFolder);
+            }
+        });
+
+        // ── Edit (native read + match/replace, Electron IPC write, 1 IPC) ──
+
+        _toolRegistry.Register(new ToolHandler
+        {
+            Definition = new ToolDefinition
+            {
+                Name = "Edit",
+                Description = "Perform exact string replacements in files",
+                InputSchema = ParseSchema("""{"type":"object","properties":{"file_path":{"type":"string","description":"Absolute path or relative to the working folder"},"old_string":{"type":"string","description":"The text to replace"},"new_string":{"type":"string","description":"The text to replace it with"},"replace_all":{"type":"boolean","description":"Replace all occurrences of old_string"}},"required":["file_path","old_string","new_string"]}""")
+            },
+            Execute = async (input, ctx, token) =>
+            {
+                var path = ResolvePath(GetString(input, "file_path", required: true), ctx.WorkingFolder);
+                var oldStr = GetString(input, "old_string", required: true);
+                var newStr = GetString(input, "new_string", required: true);
+                var replaceAll = GetOptionalBool(input, "replace_all") == true;
+
+                // SSH: fall back to renderer bridge (SFTP)
+                if (ctx.SshConnectionId is not null)
+                    return await InvokeRendererToolAsync(ctx, "Edit", input, token);
+
+                try
+                {
+                    if (string.IsNullOrEmpty(oldStr))
+                        return new ToolResultContent { Content = "old_string must be non-empty", IsError = true };
+
+                    if (string.Equals(oldStr, newStr, StringComparison.Ordinal))
+                        return new ToolResultContent { Content = "new_string must be different from old_string", IsError = true };
+
+                    // 1. Native read — detect encoding from BOM so we can write back correctly
+                    var (content, fileEncoding) = FsOperations.ReadFileRawWithEncoding(path);
+
+                    // 2. Build EOL variants + exact match
+                    var variants = FsOperations.BuildOldStringVariants(oldStr, content);
+                    (string Text, string Eol)? matched = null;
+                    foreach (var v in variants)
+                    {
+                        if (v.Text.Length > 0 && content.Contains(v.Text, StringComparison.Ordinal))
+                        {
+                            matched = v;
+                            break;
+                        }
+                    }
+
+                    if (matched is null)
+                        return new ToolResultContent
+                        {
+                            Content = $"String to replace not found in file.\nString: {oldStr}",
+                            IsError = true
+                        };
+
+                    // 3. Uniqueness check
+                    var occurrences = FsOperations.CountOccurrences(content, matched.Value.Text);
+                    if (!replaceAll && occurrences > 1)
+                        return new ToolResultContent
+                        {
+                            Content = $"Found {occurrences} matches of the string to replace, but replace_all is false. To replace all occurrences, set replace_all to true. To replace only one occurrence, please provide more context to uniquely identify the instance.\nString: {oldStr}",
+                            IsError = true
+                        };
+
+                    // 4. Replace (C# String.Replace has no $ special character issue)
+                    var replacement = FsOperations.ApplyEolStyle(newStr, matched.Value.Eol);
+                    var updated = replaceAll
+                        ? content.Replace(matched.Value.Text, replacement, StringComparison.Ordinal)
+                        : FsOperations.ReplaceFirst(content, matched.Value.Text, replacement);
+
+                    // 5. Write back — strategy depends on file encoding
+                    if (fileEncoding == "utf16le")
+                    {
+                        // UTF-16 LE: write directly from .NET with BOM preserved.
+                        // Node's fs:write-file always writes UTF-8 so we bypass Electron here.
+                        // Change tracking is skipped for UTF-16 files (they are uncommon).
+                        var bom = new byte[] { 0xFF, 0xFE };
+                        var body = Encoding.Unicode.GetBytes(updated);
+                        var allBytes = new byte[bom.Length + body.Length];
+                        bom.CopyTo(allBytes, 0);
+                        body.CopyTo(allBytes, bom.Length);
+                        await File.WriteAllBytesAsync(path, allBytes, token);
+                    }
+                    else
+                    {
+                        // UTF-8 / UTF-8+BOM: write via Electron IPC so change tracking works.
+                        // Prepend BOM character for utf8bom files — Node.js writeFile('utf-8')
+                        // will encode \uFEFF as the 3-byte sequence EF BB BF, restoring the BOM.
+                        var contentToWrite = fileEncoding == "utf8bom" ? "\uFEFF" + updated : updated;
+                        var writeArgs = new JsonObject
+                        {
+                            ["path"] = path,
+                            ["content"] = contentToWrite
+                        };
+                        if (ctx.AgentRunId is not null)
+                        {
+                            writeArgs["changeMeta"] = new JsonObject
+                            {
+                                ["runId"] = ctx.AgentRunId,
+                                ["sessionId"] = ctx.SessionId,
+                                ["toolUseId"] = ctx.CurrentToolUseId,
+                                ["toolName"] = "Edit"
+                            };
+                        }
+                        var writeResult = await InvokeElectronAsync(ctx, "fs:write-file", new object?[] { writeArgs }, token);
+
+                        if (writeResult.ValueKind == JsonValueKind.Object &&
+                            writeResult.TryGetProperty("error", out var errorProp) &&
+                            errorProp.ValueKind == JsonValueKind.String)
+                        {
+                            return new ToolResultContent { Content = $"Write failed: {errorProp.GetString()}", IsError = true };
+                        }
+                    }
+
+                    // 6. Record read history
+                    FsOperations.RecordRead(path, ctx.ReadFileHistory);
+                    return new ToolResultContent
+                    {
+                        Content = replaceAll
+                            ? $"The file {path} has been updated. All occurrences were successfully replaced."
+                            : $"The file {path} has been updated successfully."
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new ToolResultContent { Content = ex.Message, IsError = true };
+                }
+            },
+            RequiresApproval = (input, ctx) =>
+            {
+                if (ctx.SshConnectionId is not null) return false;
+                var filePath = ResolvePath(GetString(input, "file_path", required: true), ctx.WorkingFolder);
+                return !IsWithinWorkingFolder(filePath, ctx.WorkingFolder);
+            }
+        });
 
         _toolRegistry.Register(new ToolHandler
         {
@@ -237,6 +454,10 @@ public sealed class AgentRuntimeService
             },
             Execute = async (input, ctx, token) =>
             {
+                // SSH: bridge to renderer (executes via ssh:exec)
+                if (ctx.SshConnectionId is not null)
+                    return await InvokeRendererToolAsync(ctx, "Bash", input, token);
+
                 var command = GetString(input, "command", required: true);
                 var timeoutMs = Math.Clamp(GetOptionalInt(input, "timeout") ?? 600000, 1, 3600000);
                 var result = await AgentRuntimeService.ExecuteShellCommandAsync(command, ctx.WorkingFolder, timeoutMs, token);
@@ -251,76 +472,7 @@ public sealed class AgentRuntimeService
                     IsError = result.ExitCode != 0
                 };
             },
-            RequiresApproval = (_, _) => true
-        });
-
-        _toolRegistry.Register(new ToolHandler
-        {
-            Definition = new ToolDefinition
-            {
-                Name = "Delete",
-                Description = "Delete a file or directory",
-                InputSchema = ParseSchema("""
-                {
-                  "type": "object",
-                  "properties": {
-                    "path": { "type": "string", "description": "Absolute path or relative to the working folder" }
-                  },
-                  "required": ["path"]
-                }
-                """)
-            },
-            Execute = (input, ctx, _) =>
-            {
-                var path = ResolvePath(GetString(input, "path", required: true), ctx.WorkingFolder);
-                FsOperations.Delete(path);
-                return Task.FromResult(new ToolResultContent
-                {
-                    Content = BuildJsonObject(new Dictionary<string, JsonNode?>
-                    {
-                        ["success"] = JsonValue.Create(true),
-                        ["path"] = JsonValue.Create(path)
-                    })
-                });
-            },
-            RequiresApproval = (input, ctx) => !IsWithinWorkingFolder(ResolvePath(GetString(input, "path", required: true), ctx.WorkingFolder), ctx.WorkingFolder)
-        });
-
-        _toolRegistry.Register(new ToolHandler
-        {
-            Definition = new ToolDefinition
-            {
-                Name = "Move",
-                Description = "Move or rename a file or directory",
-                InputSchema = ParseSchema("""
-                {
-                  "type": "object",
-                  "properties": {
-                    "source": { "type": "string", "description": "Source path" },
-                    "destination": { "type": "string", "description": "Destination path" }
-                  },
-                  "required": ["source", "destination"]
-                }
-                """)
-            },
-            Execute = (input, ctx, _) =>
-            {
-                var source = ResolvePath(GetString(input, "source", required: true), ctx.WorkingFolder);
-                var destination = ResolvePath(GetString(input, "destination", required: true), ctx.WorkingFolder);
-                FsOperations.Move(source, destination);
-                return Task.FromResult(new ToolResultContent
-                {
-                    Content = BuildJsonObject(new Dictionary<string, JsonNode?>
-                    {
-                        ["success"] = JsonValue.Create(true),
-                        ["source"] = JsonValue.Create(source),
-                        ["destination"] = JsonValue.Create(destination)
-                    })
-                });
-            },
-            RequiresApproval = (input, ctx) =>
-                !IsWithinWorkingFolder(ResolvePath(GetString(input, "source", required: true), ctx.WorkingFolder), ctx.WorkingFolder) ||
-                !IsWithinWorkingFolder(ResolvePath(GetString(input, "destination", required: true), ctx.WorkingFolder), ctx.WorkingFolder)
+            RequiresApproval = (_, ctx) => ctx.SshConnectionId is null
         });
 
         _toolRegistry.Register(new ToolHandler
@@ -344,8 +496,12 @@ public sealed class AgentRuntimeService
                 }
                 """)
             },
-            Execute = (input, ctx, _) =>
+            Execute = async (input, ctx, token) =>
             {
+                // SSH: bridge to renderer (lists via SFTP)
+                if (ctx.SshConnectionId is not null)
+                    return await InvokeRendererToolAsync(ctx, "LS", input, token);
+
                 var path = ResolvePath(GetOptionalString(input, "path") ?? ".", ctx.WorkingFolder);
                 var ignore = GetOptionalStringArray(input, "ignore");
                 var entries = FsOperations.ListDirectory(path, ignore: ignore)
@@ -356,7 +512,7 @@ public sealed class AgentRuntimeService
                         path = Path.Combine(path, entry.Name)
                     })
                     .ToList();
-                return Task.FromResult(new ToolResultContent
+                return new ToolResultContent
                 {
                     Content = BuildJsonArray(entries.Select(entry => (JsonNode)BuildJsonObject(new Dictionary<string, JsonNode?>
                     {
@@ -364,7 +520,7 @@ public sealed class AgentRuntimeService
                         ["type"] = JsonValue.Create(entry.type),
                         ["path"] = JsonValue.Create(entry.path)
                     })))
-                });
+                };
             },
             RequiresApproval = (_, _) => false
         });
@@ -386,15 +542,19 @@ public sealed class AgentRuntimeService
                 }
                 """)
             },
-            Execute = (input, ctx, _) =>
+            Execute = async (input, ctx, token) =>
             {
+                // SSH: bridge to renderer (globs via SFTP)
+                if (ctx.SshConnectionId is not null)
+                    return await InvokeRendererToolAsync(ctx, "Glob", input, token);
+
                 var directory = ResolvePath(GetOptionalString(input, "path") ?? ".", ctx.WorkingFolder);
                 var pattern = GetString(input, "pattern", required: true);
                 var results = GlobTool.Search(directory, pattern);
-                return Task.FromResult(new ToolResultContent
+                return new ToolResultContent
                 {
                     Content = BuildJsonArray(results.Select(static item => JsonValue.Create(item)))
-                });
+                };
             },
             RequiresApproval = (_, _) => false
         });
@@ -419,6 +579,10 @@ public sealed class AgentRuntimeService
             },
             Execute = async (input, ctx, token) =>
             {
+                // SSH: bridge to renderer (greps via SSH exec)
+                if (ctx.SshConnectionId is not null)
+                    return await InvokeRendererToolAsync(ctx, "Grep", input, token);
+
                 var directory = ResolvePath(GetOptionalString(input, "path") ?? ".", ctx.WorkingFolder);
                 var pattern = GetString(input, "pattern", required: true);
                 var include = GetOptionalString(input, "include");

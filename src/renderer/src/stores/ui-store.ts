@@ -281,7 +281,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
     set((state) => ({
       mode,
       rightPanelOpen: mode === 'cowork' || mode === 'acp',
-      rightPanelTab: mode === 'acp' ? 'acp' : state.rightPanelTab === 'acp' ? 'steps' : state.rightPanelTab,
+      rightPanelTab: mode === 'acp' ? 'acp' : state.rightPanelTab === 'acp' ? 'files' : state.rightPanelTab,
       rightPanelSection: mode === 'acp' ? 'monitoring' : state.rightPanelSection,
       leftSidebarOpen: mode === 'cowork' || mode === 'acp' ? false : state.leftSidebarOpen
     })),
@@ -301,7 +301,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   rightPanelOpen: false,
   toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen, leftSidebarOpen: state.rightPanelOpen ? state.leftSidebarOpen : false })),
   setRightPanelOpen: (open) => set((state) => ({ rightPanelOpen: open, leftSidebarOpen: open ? false : state.leftSidebarOpen })),
-  rightPanelTab: 'steps',
+  rightPanelTab: 'files',
   setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
   rightPanelSection: 'execution',
   setRightPanelSection: (section) => set({ rightPanelSection: section }),

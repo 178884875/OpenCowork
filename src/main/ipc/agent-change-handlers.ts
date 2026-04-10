@@ -23,6 +23,7 @@ interface ChangeMeta {
 export interface FileSnapshot {
   exists: boolean
   text?: string
+  fullText?: string
   previewText?: string
   tailPreviewText?: string
   textOmitted?: boolean
@@ -93,6 +94,7 @@ export function buildFileSnapshot(exists: boolean, text?: string): FileSnapshot 
     return {
       exists: true,
       text: normalizedText,
+      fullText: normalizedText,
       hash: hashText(normalizedText),
       size,
       lineCount
@@ -101,6 +103,7 @@ export function buildFileSnapshot(exists: boolean, text?: string): FileSnapshot 
 
   return {
     exists: true,
+    fullText: normalizedText,
     previewText: normalizedText.slice(0, SNAPSHOT_PREVIEW_HEAD_CHARS),
     ...(normalizedText.length > SNAPSHOT_PREVIEW_TAIL_CHARS
       ? { tailPreviewText: normalizedText.slice(-SNAPSHOT_PREVIEW_TAIL_CHARS) }

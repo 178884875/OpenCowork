@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@renderer/components/ui/button'
 import { FadeIn } from '@renderer/components/animate-ui'
 import { useUIStore, type RightPanelTab } from '@renderer/stores/ui-store'
-import { StepsPanel } from '@renderer/components/cowork/StepsPanel'
 import { ArtifactsPanel } from '@renderer/components/cowork/ArtifactsPanel'
 import { ContextPanel } from '@renderer/components/cowork/ContextPanel'
 import { FileTreePanel } from '@renderer/components/cowork/FileTreePanel'
@@ -176,7 +175,7 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
   )
   const resolvedTab = visibleTabs.some((tabDef) => tabDef.value === tab)
     ? tab
-    : (visibleTabs[0]?.value ?? 'steps')
+    : (visibleTabs[0]?.value ?? 'files')
   const resolvedSection = availableSections.some((sectionDef) => sectionDef.value === section)
     ? section
     : (availableSections[0]?.value ?? 'execution')
@@ -266,12 +265,6 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
                 <RightPanelHeader activeTabDef={activeTabDef} onClose={() => setRightPanelOpen(false)} t={t} />
                 <div className="min-h-0 flex-1 overflow-auto bg-background/5 p-4">
                   <AnimatePresence mode="wait">
-                    {resolvedTab === 'steps' && (
-                      <FadeIn key="steps" className="h-full">
-                        <StepsPanel />
-                      </FadeIn>
-                    )}
-
                     {(resolvedTab === 'orchestration' || resolvedTab === 'team') && (
                       <FadeIn key="orchestration" className="h-full">
                         <OrchestrationConsole />

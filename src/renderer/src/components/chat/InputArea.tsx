@@ -101,6 +101,7 @@ import {
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
 import { cn } from '@renderer/lib/utils'
 import { resolveProjectMemoryTextFile } from '@renderer/lib/agent/memory-files'
+import { InlineStepsPanel } from '@renderer/components/cowork/StepsPanel'
 
 function ContextRing(): React.JSX.Element | null {
   const chatView = useUIStore((s) => s.chatView)
@@ -534,6 +535,7 @@ export function InputArea({
     return modelSupportsVision(model, activeProvider.type)
   }, [activeProvider, activeModelId])
   const webSearchEnabled = useSettingsStore((s) => s.webSearchEnabled)
+  const webSearchApiKey = useSettingsStore((s) => s.webSearchApiKey)
   const toggleWebSearch = React.useCallback(() => {
     const store = useSettingsStore.getState()
     const newEnabled = !store.webSearchEnabled
@@ -1784,6 +1786,7 @@ export function InputArea({
       )}
 
       <div className={isHomeComposer ? 'mx-auto max-w-4xl' : 'mx-auto max-w-3xl'}>
+        {mode !== 'chat' && <InlineStepsPanel sessionId={sessionId} />}
         <div
           ref={containerRef}
           className={cn(
@@ -2413,7 +2416,7 @@ export function InputArea({
               </div>
 
               {/* Web search toggle */}
-              {mode !== 'chat' && (
+              {mode !== 'chat' && !!webSearchApiKey && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button

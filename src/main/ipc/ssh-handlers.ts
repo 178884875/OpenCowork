@@ -2396,11 +2396,9 @@ export function registerSshHandlers(): void {
     'ssh:exec',
     async (_event, args: { connectionId: string; command: string; timeout?: number }) => {
       try {
-        const session = findSessionByConnection(args.connectionId)
-        if (!session) return { error: 'No active SSH session for this connection' }
-
-        const result = await sshExec(session, args.command, args.timeout)
-        return result
+        return await withFileSession(args.connectionId, async (session) => {
+          return await sshExec(session, args.command, args.timeout)
+        })
       } catch (err) {
         return { error: String(err) }
       }

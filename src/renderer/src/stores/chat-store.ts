@@ -185,6 +185,18 @@ function dbTruncateMessagesFrom(sessionId: string, fromSortOrder: number): void 
 
 const _pendingFlush = new Map<string, ReturnType<typeof setTimeout>>()
 
+// --- RAF-batched streaming delta buffer ---
+// Multiple tokens arrive per animation frame; batching them into a single
+// set() call reduces Zustand/React re-renders from ~100/s to ≤60/s.
+type StreamDelta =
+  | { kind: 'text'; sessionId: string; msgId: string; text: string }
+  | { kind: 'thinking'; sessionId: string; msgId: string; thinking: string }
+
+const _pendingStreamDeltas: StreamDelta[] = []
+let _streamDeltaRafId: number | null = null
+// Assigned after useChatStore is created (avoids temporal dead zone).
+let _scheduleStreamDeltaFlush: () => void = () => {}
+
 function stripThinkTagMarkers(text: string): string {
   return text.replace(/<\s*\/?\s*think\s*>/gi, '')
 }
@@ -527,6 +539,14 @@ function releaseDormantSessionMemory(
       delete state.generatingImageMessages[messageId]
     }
   }
+}
+
+function isToolResultOnlyUserMessage(message: UnifiedMessage): boolean {
+  return (
+    message.role === 'user' &&
+    Array.isArray(message.content) &&
+    message.content.every((block) => block.type === 'tool_result')
+  )
 }
 
 function estimateMessageWeight(message: UnifiedMessage): number {
@@ -1166,21 +1186,40 @@ export const useChatStore = create<ChatStore>()(
           MIN_INITIAL_SESSION_MESSAGE_PAGE_SIZE,
           Math.min(limit ?? INITIAL_SESSION_DISPLAY_PAGE_SIZE, knownCount)
         )
-        const offset = Math.max(0, knownCount - nextLimit)
+        let windowStart = Math.max(0, knownCount - nextLimit)
         const msgRows = (await ipcClient.invoke('db:messages:list-page', {
           sessionId,
           limit: nextLimit,
-          offset
+          offset: windowStart
         })) as MessageRow[]
-        const messages = msgRows.map(rowToMessage)
+        let messages = msgRows.map(rowToMessage)
+
+        while (
+          windowStart > 0 &&
+          messages.length > 0 &&
+          messages.every((message) => isToolResultOnlyUserMessage(message))
+        ) {
+          const prependCount = Math.min(nextLimit, windowStart)
+          const prependOffset = Math.max(0, windowStart - prependCount)
+          const prependRows = (await ipcClient.invoke('db:messages:list-page', {
+            sessionId,
+            limit: prependCount,
+            offset: prependOffset
+          })) as MessageRow[]
+          const prependMessages = prependRows.map(rowToMessage)
+          if (prependMessages.length === 0) break
+          messages = [...prependMessages, ...messages]
+          windowStart = prependOffset
+        }
+
         set((state) => {
           const target = state.sessions.find((s) => s.id === sessionId)
           if (!target) return
           target.messages = messages
           target.messagesLoaded = true
           target.messageCount = knownCount
-          target.loadedRangeStart = offset
-          target.loadedRangeEnd = offset + messages.length
+          target.loadedRangeStart = windowStart
+          target.loadedRangeEnd = knownCount
           target.lastKnownMessageCount = knownCount
         })
       } catch (err) {
@@ -2192,74 +2231,15 @@ export const useChatStore = create<ChatStore>()(
     },
 
     appendTextDelta: (sessionId, msgId, text) => {
-      set((state) => {
-        const session = state.sessions.find((s) => s.id === sessionId)
-        if (!session) return
-        const msg = session.messages.find((m) => m.id === msgId)
-        if (!msg) return
-
-        if (typeof msg.content === 'string') {
-          msg.content += text
-        } else {
-          // Find last text block or create one
-          const blocks = msg.content as ContentBlock[]
-          const lastBlock = blocks[blocks.length - 1]
-          if (lastBlock && lastBlock.type === 'text') {
-            ;(lastBlock as TextBlock).text += text
-          } else {
-            blocks.push({ type: 'text', text })
-          }
-        }
-      })
-      // Debounced persist for streaming
-      const session = get().sessions.find((s) => s.id === sessionId)
-      const msg = session?.messages.find((m) => m.id === msgId)
-      if (msg) dbFlushMessage(msg)
+      _pendingStreamDeltas.push({ kind: 'text', sessionId, msgId, text })
+      _scheduleStreamDeltaFlush()
     },
 
     appendThinkingDelta: (sessionId, msgId, thinking) => {
-      set((state) => {
-        const session = state.sessions.find((s) => s.id === sessionId)
-        if (!session) return
-        const msg = session.messages.find((m) => m.id === msgId)
-        if (!msg) return
-
-        const now = Date.now()
-        if (typeof msg.content === 'string') {
-          // Convert empty string to block array with a thinking block
-          const cleanedThinking = stripThinkTagMarkers(thinking)
-          if (!cleanedThinking) return
-          msg.content = [{ type: 'thinking', thinking: cleanedThinking, startedAt: now }]
-        } else {
-          const blocks = msg.content as ContentBlock[]
-          const cleanedThinking = stripThinkTagMarkers(thinking)
-          if (!cleanedThinking) return
-
-          // Claude interleaved-thinking may emit text between thinking deltas.
-          // Continue writing into the latest unfinished thinking block instead
-          // of always creating a new block.
-          let targetThinkingBlock: ThinkingBlock | null = null
-          for (let i = blocks.length - 1; i >= 0; i--) {
-            const block = blocks[i]
-            if (block.type === 'thinking' && !block.completedAt) {
-              targetThinkingBlock = block as ThinkingBlock
-              break
-            }
-          }
-
-          if (targetThinkingBlock) {
-            targetThinkingBlock.thinking = stripThinkTagMarkers(
-              `${targetThinkingBlock.thinking}${cleanedThinking}`
-            )
-          } else {
-            blocks.push({ type: 'thinking', thinking: cleanedThinking, startedAt: now })
-          }
-        }
-      })
-      // Debounced persist
-      const session = get().sessions.find((s) => s.id === sessionId)
-      const msg = session?.messages.find((m) => m.id === msgId)
-      if (msg) dbFlushMessage(msg)
+      const cleanedThinking = stripThinkTagMarkers(thinking)
+      if (!cleanedThinking) return
+      _pendingStreamDeltas.push({ kind: 'thinking', sessionId, msgId, thinking: cleanedThinking })
+      _scheduleStreamDeltaFlush()
     },
 
     setThinkingEncryptedContent: (sessionId, msgId, encryptedContent, provider) => {
@@ -2511,3 +2491,78 @@ export const useChatStore = create<ChatStore>()(
     }
   }))
 )
+
+// --- RAF delta flush (wired after store creation to avoid TDZ) ---
+
+function flushStreamDeltas(): void {
+  _streamDeltaRafId = null
+  if (_pendingStreamDeltas.length === 0) return
+
+  // Drain the buffer
+  const deltas = _pendingStreamDeltas.splice(0)
+  const affectedMsgIds = new Set<string>()
+
+  useChatStore.setState((state) => {
+    const now = Date.now()
+    for (const delta of deltas) {
+      const session = state.sessions.find((s) => s.id === delta.sessionId)
+      if (!session) continue
+      const msg = session.messages.find((m) => m.id === delta.msgId)
+      if (!msg) continue
+      affectedMsgIds.add(delta.msgId)
+
+      if (delta.kind === 'text') {
+        if (typeof msg.content === 'string') {
+          msg.content += delta.text
+        } else {
+          const blocks = msg.content as ContentBlock[]
+          const lastBlock = blocks[blocks.length - 1]
+          if (lastBlock?.type === 'text') {
+            ;(lastBlock as TextBlock).text += delta.text
+          } else {
+            blocks.push({ type: 'text', text: delta.text })
+          }
+        }
+      } else {
+        // thinking delta
+        if (typeof msg.content === 'string') {
+          msg.content = [{ type: 'thinking', thinking: delta.thinking, startedAt: now }]
+        } else {
+          const blocks = msg.content as ContentBlock[]
+          let target: ThinkingBlock | null = null
+          for (let i = blocks.length - 1; i >= 0; i--) {
+            const b = blocks[i]
+            if (b.type === 'thinking' && !(b as ThinkingBlock).completedAt) {
+              target = b as ThinkingBlock
+              break
+            }
+          }
+          if (target) {
+            target.thinking = stripThinkTagMarkers(`${target.thinking}${delta.thinking}`)
+          } else {
+            blocks.push({ type: 'thinking', thinking: delta.thinking, startedAt: now })
+          }
+        }
+      }
+    }
+  })
+
+  // Debounced DB persist (already debounced at 500 ms — safe to call per-frame)
+  if (affectedMsgIds.size > 0) {
+    const sessions = useChatStore.getState().sessions
+    for (const msgId of affectedMsgIds) {
+      for (const session of sessions) {
+        const msg = session.messages.find((m) => m.id === msgId)
+        if (msg) {
+          dbFlushMessage(msg)
+          break
+        }
+      }
+    }
+  }
+}
+
+_scheduleStreamDeltaFlush = () => {
+  if (_streamDeltaRafId !== null) return
+  _streamDeltaRafId = requestAnimationFrame(flushStreamDeltas)
+}

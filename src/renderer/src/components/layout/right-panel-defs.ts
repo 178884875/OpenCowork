@@ -4,7 +4,6 @@ import {
   Database,
   FileOutput,
   FolderTree,
-  ListChecks,
   Monitor,
   Users,
   Bot,
@@ -38,7 +37,6 @@ export interface RightPanelSectionDef {
 }
 
 export const RIGHT_PANEL_TAB_DEFS: RightPanelTabDef[] = [
-  { value: 'steps', labelKey: 'steps', section: 'execution', icon: ListChecks },
   { value: 'plan', labelKey: 'plan', section: 'execution', icon: ClipboardList },
   { value: 'files', labelKey: 'files', section: 'resources', icon: FolderTree },
   { value: 'preview', labelKey: 'preview', section: 'resources', icon: Monitor },
@@ -76,7 +74,7 @@ export const RIGHT_PANEL_SECTION_DEFS: RightPanelSectionDef[] = [
 ]
 
 export const RIGHT_PANEL_DEFAULT_TAB_BY_SECTION: Record<RightPanelSection, RightPanelTab> = {
-  execution: 'steps',
+  execution: 'plan',
   resources: 'files',
   collaboration: 'orchestration',
   monitoring: 'context'

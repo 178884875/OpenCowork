@@ -3737,7 +3737,7 @@ export function sendImplementPlan(planId: string): void {
   }
 
   uiStore.exitPlanMode(plan.sessionId)
-  uiStore.setRightPanelTab(isAcpSession ? 'acp' : 'steps')
+  uiStore.setRightPanelTab(isAcpSession ? 'acp' : 'plan')
 
   if (chatStore.activeSessionId === plan.sessionId) {
     uiStore.setRightPanelOpen(true)
@@ -3792,7 +3792,7 @@ export function sendImplementPlanInNewSession(planId: string): void {
     }
   }
 
-  uiStore.setRightPanelTab('steps')
+  uiStore.setRightPanelTab('plan')
   uiStore.setRightPanelOpen(true)
 
   void ipcClient

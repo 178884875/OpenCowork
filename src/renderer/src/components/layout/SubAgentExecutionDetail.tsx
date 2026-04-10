@@ -19,7 +19,7 @@ import { Button } from '@renderer/components/ui/button'
 import { TranscriptMessageList } from '@renderer/components/chat/TranscriptMessageList'
 import { useAgentStore, type SubAgentState } from '@renderer/stores/agent-store'
 import { useChatStore } from '@renderer/stores/chat-store'
-import type { ToolResultContent, UnifiedMessage } from '@renderer/lib/api/types'
+import type { ContentBlock, ToolResultContent, UnifiedMessage } from '@renderer/lib/api/types'
 import { cn } from '@renderer/lib/utils'
 import { subAgentRegistry } from '@renderer/lib/agent/sub-agents/registry'
 import { parseSubAgentMeta } from '@renderer/lib/agent/sub-agents/create-tool'
@@ -160,6 +160,33 @@ function getFallbackReportFromMessages(
   return ''
 }
 
+function findToolUseInput(
+  toolUseId: string | null | undefined,
+  messages: UnifiedMessage[]
+): Record<string, unknown> | null {
+  if (!toolUseId) return null
+
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue
+
+    const block = message.content.find(
+      (item): item is Extract<ContentBlock, { type: 'tool_use' }> =>
+        item.type === 'tool_use' && item.id === toolUseId
+    )
+    if (block) return block.input
+  }
+
+  return null
+}
+
+function getPromptText(input: Record<string, unknown> | null): string {
+  if (!input) return ''
+  return [input.prompt, input.query, input.task, input.target]
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean)
+    .join('\n\n')
+}
+
 export function SubAgentExecutionDetail({
   toolUseId,
   inlineText,
@@ -213,18 +240,107 @@ export function SubAgentExecutionDetail({
     return () => window.clearInterval(timer)
   }, [agent?.isRunning, agent?.startedAt])
 
+  const fallbackDetailText = (fallbackReportText.trim() || inlineText?.trim() || '').trim()
+  const fallbackInput = React.useMemo(
+    () => findToolUseInput(toolUseId, sessionMessages),
+    [toolUseId, sessionMessages]
+  )
+  const fallbackDisplayName = fallbackInput
+    ? String(fallbackInput.subagent_type ?? fallbackInput.name ?? 'SubAgent')
+    : 'SubAgent'
+  const fallbackDescription = fallbackInput?.description
+    ? String(fallbackInput.description)
+    : ''
+  const fallbackPrompt = getPromptText(fallbackInput)
+
   if (!agent) {
+    if (fallbackDetailText) {
+      return (
+        <div
+          className={cn('flex h-full min-h-0 flex-col', embedded ? 'bg-transparent' : 'bg-background')}
+        >
+          <div className="border-b border-border/60 px-4 py-3">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex size-8 items-center justify-center rounded-xl border border-border/60 bg-muted/25 text-foreground/80">
+                {getAgentIcon(fallbackDisplayName)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="min-w-0 truncate text-base font-semibold text-foreground/95">
+                  {fallbackDisplayName}
+                </h2>
+                {fallbackDescription ? (
+                  <p className="mt-0.5 line-clamp-2 whitespace-pre-wrap break-words text-[12px] text-muted-foreground/80">
+                    {fallbackDescription}
+                  </p>
+                ) : null}
+              </div>
+              {onClose ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 rounded-full text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  onClick={onClose}
+                >
+                  <X className="size-4" />
+                </Button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+            <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-3">
+              {(fallbackDescription || fallbackPrompt) && (
+                <section className="rounded-xl border border-border/60 bg-background/70 p-3.5">
+                  <div className="mb-3 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/65">
+                    <Bot className="size-3.5" />
+                    <span>{t('subAgentsPanel.executionInfo', { defaultValue: '执行信息' })}</span>
+                  </div>
+                  <div className="space-y-3">
+                    {fallbackDescription ? (
+                      <div>
+                        <div className="mb-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/55">
+                          {t('subAgentsPanel.description', { defaultValue: '描述' })}
+                        </div>
+                        <div className="whitespace-pre-wrap break-words text-sm leading-6 text-foreground/88">
+                          {fallbackDescription}
+                        </div>
+                      </div>
+                    ) : null}
+                    {fallbackPrompt ? (
+                      <div>
+                        <div className="mb-1 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/55">
+                          {t('subAgentsPanel.promptLabel', { defaultValue: 'Prompt' })}
+                        </div>
+                        <div className="rounded-lg border border-border/60 bg-muted/15 px-3 py-2.5 font-mono text-[12px] leading-5 text-foreground/88 whitespace-pre-wrap break-words">
+                          {fallbackPrompt}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+              )}
+
+              <section className="rounded-xl border border-border/60 bg-background/70 p-3.5">
+                <div className="mb-3 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/65">
+                  <MessageSquareText className="size-3.5" />
+                  <span>{t('subAgentsPanel.report', { defaultValue: '最终结果' })}</span>
+                </div>
+                <div className="prose prose-sm max-w-none prose-headings:text-foreground prose-p:text-foreground/90 prose-li:text-foreground/90 prose-strong:text-foreground dark:prose-invert">
+                  <Markdown remarkPlugins={[remarkGfm]}>{fallbackDetailText}</Markdown>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div className="flex h-full min-h-0 flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 bg-background/40 px-6 text-center">
         <Bot className="mb-3 size-8 text-muted-foreground/40" />
         <p className="text-sm text-muted-foreground">
           {t('detailPanel.noSubAgentRecords', { defaultValue: '暂无子代理记录' })}
         </p>
-        {inlineText ? (
-          <div className="mt-4 max-w-3xl text-left prose prose-sm max-w-none dark:prose-invert">
-            <Markdown remarkPlugins={[remarkGfm]}>{inlineText}</Markdown>
-          </div>
-        ) : null}
       </div>
     )
   }

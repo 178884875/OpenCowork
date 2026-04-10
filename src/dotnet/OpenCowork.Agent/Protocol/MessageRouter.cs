@@ -272,6 +272,12 @@ public sealed class MessageRouter
             await _transport.SendResponseAsync(id, new ShutdownResult { Ok = true }, ct);
             _shutdownCts.Cancel();
         };
+
+        // Notification from the renderer-side provider bridge: streaming events for
+        // a pending BridgedProvider call. No response — routed by streamId inside
+        // the AgentRuntimeService.
+        _handlers["provider/stream-event"] = (JsonElement? @params, JsonElement? id, CancellationToken ct) =>
+            _agentRuntime.HandleBridgedProviderStreamEventAsync(@params, ct);
     }
 }
 

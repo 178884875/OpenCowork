@@ -12,7 +12,8 @@
 
 import { useEffect } from 'react'
 import { nanoid } from 'nanoid'
-import { runAgentLoop } from '@renderer/lib/agent/agent-loop'
+import { runAgentViaSidecar } from '@renderer/lib/agent/run-agent-via-sidecar'
+import { buildSidecarAgentRunRequest } from '@renderer/lib/ipc/sidecar-protocol'
 import { toolRegistry } from '@renderer/lib/agent/tool-registry'
 import {
   buildSystemPrompt,
@@ -32,10 +33,12 @@ import { DEFAULT_PLUGIN_PERMISSIONS } from '@renderer/lib/channel/types'
 import { loadLayeredMemorySnapshot } from '@renderer/lib/agent/memory-files'
 import type { UnifiedMessage, ProviderConfig, ContentBlock } from '@renderer/lib/api/types'
 import type { Session } from '@renderer/stores/chat-store'
-import type { AgentLoopConfig } from '@renderer/lib/agent/types'
-import type { ToolContext } from '@renderer/lib/tools/tool-types'
 import { hasPendingSessionMessagesForSession } from '@renderer/hooks/use-chat-actions'
 import { recordUsageEvent } from '@renderer/lib/usage-analytics'
+import {
+  summarizeToolInputForHistory,
+  summarizeToolInputForLiveCard
+} from '@renderer/lib/tools/tool-input-sanitizer'
 
 interface PluginAutoReplyTask {
   sessionId: string
@@ -550,30 +553,11 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
     sessionId
   }
 
-  const loopConfig: AgentLoopConfig = {
-    maxIterations: 15,
-    provider: agentProviderConfig,
-    tools: effectiveToolDefs,
-    systemPrompt,
-    workingFolder: session.workingFolder,
-    signal: ac.signal
-  }
-
-  const toolCtx: ToolContext = {
-    sessionId,
-    workingFolder: session.workingFolder,
-    sshConnectionId: session.sshConnectionId,
-    signal: ac.signal,
-    ipc: ipcClient,
-    currentToolUseId: undefined,
-    pluginId,
-    pluginChatId: chatId,
-    pluginChatType: task.chatType,
-    pluginSenderId: task.senderId,
-    pluginSenderName: task.senderName,
-    channelPermissions: permissions,
-    channelHomedir: homedir
-  }
+  // Tool execution / channel permissions now live on the sidecar side. Plugin
+  // and SSH context are propagated via buildSidecarAgentRunRequest → sidecar →
+  // renderer-tool-bridge, so the static toolCtx/loopConfig are no longer needed.
+  void permissions
+  void homedir
 
   // ── Run Agent Loop ──
   const messages = await useChatStore.getState().getSessionMessagesForRequest(sessionId, {
@@ -589,11 +573,25 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
       return false
     })
 
-  const loop = runAgentLoop(
-    historyMessages, // Clean history without empty assistant turns
-    loopConfig,
-    toolCtx
-  )
+  const sidecarRequest = buildSidecarAgentRunRequest({
+    messages: historyMessages,
+    provider: agentProviderConfig,
+    tools: effectiveToolDefs,
+    sessionId,
+    workingFolder: session.workingFolder,
+    maxIterations: 15,
+    forceApproval: false,
+    pluginId,
+    pluginChatId: chatId,
+    pluginChatType: task.chatType,
+    pluginSenderId: task.senderId,
+    pluginSenderName: task.senderName,
+    sshConnectionId: session.sshConnectionId
+  })
+  if (!sidecarRequest) {
+    throw new Error('Failed to build sidecar agent request for plugin auto-reply')
+  }
+  const loop = runAgentViaSidecar(sidecarRequest, { signal: ac.signal })
 
   let fullText = ''
   let lastError: string | null = null
@@ -602,6 +600,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
   let pluginStreamUpdateInFlight: Promise<unknown> | null = null
   let pendingPluginStreamFlush = false
   const pendingToolInputs = new Map<string, Record<string, unknown>>()
+  const liveToolNames = new Map<string, string>()
   let streamFlushTimer: ReturnType<typeof setTimeout> | null = null
   const toolInputThrottle = new Map<
     string,
@@ -726,6 +725,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
         break
 
       case 'tool_use_streaming_start':
+        liveToolNames.set(event.toolCallId, event.toolName)
         // Show tool card immediately while args are still streaming
         useChatStore.getState().appendToolUse(sessionId, assistantMsgId, {
           type: 'tool_use',
@@ -742,41 +742,62 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
         })
         break
 
-      case 'tool_use_args_delta':
-        pendingToolInputs.set(event.toolCallId, event.partialInput)
+      case 'tool_use_args_delta': {
+        const toolName = liveToolNames.get(event.toolCallId) ?? ''
+        const liveCardInput = summarizeToolInputForLiveCard(toolName, event.partialInput)
+        pendingToolInputs.set(event.toolCallId, liveCardInput)
         scheduleStreamingFlush()
-        scheduleToolInputUpdate(event.toolCallId, event.partialInput)
+        scheduleToolInputUpdate(event.toolCallId, liveCardInput)
         break
+      }
 
-      case 'tool_use_generated':
+      case 'tool_use_generated': {
         flushStreamingState()
+        liveToolNames.set(event.toolUseBlock.id, event.toolUseBlock.name)
         console.log(`[PluginAutoReply] Tool call: ${event.toolUseBlock.name}`)
+        const liveCardInput = summarizeToolInputForLiveCard(
+          event.toolUseBlock.name,
+          event.toolUseBlock.input
+        )
         useChatStore
           .getState()
-          .updateToolUseInput(
-            sessionId,
-            assistantMsgId,
-            event.toolUseBlock.id,
-            event.toolUseBlock.input
-          )
+          .updateToolUseInput(sessionId, assistantMsgId, event.toolUseBlock.id, liveCardInput)
         flushToolInput(event.toolUseBlock.id)
         useAgentStore.getState().updateToolCall(event.toolUseBlock.id, {
-          input: event.toolUseBlock.input
+          input: liveCardInput
+        })
+        break
+      }
+
+      case 'tool_call_start':
+        useAgentStore.getState().addToolCall({
+          ...event.toolCall,
+          input: summarizeToolInputForLiveCard(event.toolCall.name, event.toolCall.input)
         })
         break
 
-      case 'tool_call_start':
-        useAgentStore.getState().addToolCall(event.toolCall)
-        break
-
-      case 'tool_call_result':
+      case 'tool_call_result': {
+        const settledInput =
+          event.toolCall.status === 'completed' || event.toolCall.status === 'error'
+            ? summarizeToolInputForHistory(event.toolCall.name, event.toolCall.input)
+            : undefined
+        if (settledInput) {
+          useChatStore
+            .getState()
+            .updateToolUseInput(sessionId, assistantMsgId, event.toolCall.id, settledInput)
+        }
         useAgentStore.getState().updateToolCall(event.toolCall.id, {
+          ...(settledInput ? { input: settledInput } : {}),
           status: event.toolCall.status,
           output: event.toolCall.output,
           error: event.toolCall.error,
           completedAt: event.toolCall.completedAt
         })
+        if (event.toolCall.status === 'completed' || event.toolCall.status === 'error') {
+          liveToolNames.delete(event.toolCall.id)
+        }
         break
+      }
 
       case 'message_end':
         if (event.usage) {

@@ -46,8 +46,18 @@ public static class SseStreamReader
     }
 
     /// <summary>
+    /// Max number of retry attempts for transient HTTP failures (500, 429).
+    /// Total requests sent = 1 initial + up to MaxRetryAttempts retries.
+    /// </summary>
+    private const int MaxRetryAttempts = 10;
+
+    private static readonly Random RetryJitter = new();
+
+    /// <summary>
     /// Create an HttpRequestMessage configured for SSE streaming.
     /// Uses ResponseHeadersRead to avoid buffering the response body.
+    /// Transparently retries on HTTP 429 and 500 with exponential backoff + jitter,
+    /// up to <see cref="MaxRetryAttempts"/> times. Honors the Retry-After header when present.
     /// </summary>
     public static async Task<HttpResponseMessage> SendStreamingRequestAsync(
         HttpClient client,
@@ -57,26 +67,87 @@ public static class SseStreamReader
         byte[]? body,
         CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(
-            method == "POST" ? HttpMethod.Post : HttpMethod.Get,
-            url);
-
-        foreach (var (key, value) in headers)
-            request.Headers.TryAddWithoutValidation(key, value);
-
-        if (body is not null)
+        var attempt = 0;
+        while (true)
         {
-            request.Content = new ByteArrayContent(body);
-            request.Content.Headers.TryAddWithoutValidation("Content-Type", "application/json");
+            var request = new HttpRequestMessage(
+                method == "POST" ? HttpMethod.Post : HttpMethod.Get,
+                url);
+
+            foreach (var (key, value) in headers)
+                request.Headers.TryAddWithoutValidation(key, value);
+
+            if (body is not null)
+            {
+                request.Content = new ByteArrayContent(body);
+                request.Content.Headers.TryAddWithoutValidation("Content-Type", "application/json");
+            }
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            }
+            catch (HttpRequestException ex)
+            {
+                request.Dispose();
+                throw new HttpRequestException($"Failed to send {method} {url}: {ex.Message}", ex, ex.StatusCode);
+            }
+            catch
+            {
+                request.Dispose();
+                throw;
+            }
+
+            var status = (int)response.StatusCode;
+            if ((status == 500 || status == 429) && attempt < MaxRetryAttempts)
+            {
+                var delay = ComputeRetryDelay(attempt, response);
+                response.Dispose();
+                request.Dispose();
+                attempt++;
+                await Task.Delay(delay, ct);
+                continue;
+            }
+
+            // Caller owns the response from here on. The request message must
+            // live as long as the response stream, so we deliberately do not
+            // dispose it here -- the framework will clean it up when the
+            // response is disposed.
+            return response;
+        }
+    }
+
+    private static TimeSpan ComputeRetryDelay(int attempt, HttpResponseMessage response)
+    {
+        // Honor Retry-After first (seconds or HTTP date).
+        var retryAfter = response.Headers.RetryAfter;
+        if (retryAfter is not null)
+        {
+            if (retryAfter.Delta is { } delta && delta > TimeSpan.Zero)
+                return CapDelay(delta);
+            if (retryAfter.Date is { } date)
+            {
+                var diff = date - DateTimeOffset.UtcNow;
+                if (diff > TimeSpan.Zero)
+                    return CapDelay(diff);
+            }
         }
 
-        try
+        // Exponential backoff: 1s, 2s, 4s, 8s, ... capped at 30s, with +/-25% jitter.
+        var baseMs = Math.Min(30_000d, 1000d * Math.Pow(2, attempt));
+        double jitter;
+        lock (RetryJitter)
         {
-            return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            jitter = (RetryJitter.NextDouble() * 0.5) - 0.25; // [-0.25, +0.25)
         }
-        catch (HttpRequestException ex)
-        {
-            throw new HttpRequestException($"Failed to send {method} {url}: {ex.Message}", ex, ex.StatusCode);
-        }
+        var jittered = baseMs * (1.0 + jitter);
+        return TimeSpan.FromMilliseconds(Math.Max(100, jittered));
+    }
+
+    private static TimeSpan CapDelay(TimeSpan delay)
+    {
+        var max = TimeSpan.FromSeconds(60);
+        return delay > max ? max : delay;
     }
 }

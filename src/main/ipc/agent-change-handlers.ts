@@ -23,8 +23,12 @@ interface ChangeMeta {
 export interface FileSnapshot {
   exists: boolean
   text?: string
+  previewText?: string
+  tailPreviewText?: string
+  textOmitted?: boolean
   hash: string | null
   size: number
+  lineCount?: number
 }
 
 interface TrackedFileChange {
@@ -65,6 +69,10 @@ interface SshChangeAdapter {
 const runChanges = new Map<string, RunChangeSet>()
 let sshChangeAdapter: SshChangeAdapter | null = null
 
+const INLINE_TEXT_SNAPSHOT_LIMIT_BYTES = 64 * 1024
+const SNAPSHOT_PREVIEW_HEAD_CHARS = 1200
+const SNAPSHOT_PREVIEW_TAIL_CHARS = 400
+
 function hashText(text: string): string {
   return createHash('sha256').update(text).digest('hex')
 }
@@ -79,11 +87,28 @@ export function buildFileSnapshot(exists: boolean, text?: string): FileSnapshot 
   }
 
   const normalizedText = text ?? ''
+  const size = Buffer.byteLength(normalizedText, 'utf-8')
+  const lineCount = normalizedText.length === 0 ? 0 : normalizedText.replace(/\r\n/g, '\n').split('\n').length
+  if (size <= INLINE_TEXT_SNAPSHOT_LIMIT_BYTES) {
+    return {
+      exists: true,
+      text: normalizedText,
+      hash: hashText(normalizedText),
+      size,
+      lineCount
+    }
+  }
+
   return {
     exists: true,
-    text: normalizedText,
+    previewText: normalizedText.slice(0, SNAPSHOT_PREVIEW_HEAD_CHARS),
+    ...(normalizedText.length > SNAPSHOT_PREVIEW_TAIL_CHARS
+      ? { tailPreviewText: normalizedText.slice(-SNAPSHOT_PREVIEW_TAIL_CHARS) }
+      : {}),
+    textOmitted: true,
     hash: hashText(normalizedText),
-    size: Buffer.byteLength(normalizedText, 'utf-8')
+    size,
+    lineCount
   }
 }
 
@@ -113,8 +138,12 @@ function cloneSnapshot(snapshot: FileSnapshot): FileSnapshot {
   return {
     exists: snapshot.exists,
     text: snapshot.text,
+    previewText: snapshot.previewText,
+    tailPreviewText: snapshot.tailPreviewText,
+    textOmitted: snapshot.textOmitted,
     hash: snapshot.hash,
-    size: snapshot.size
+    size: snapshot.size,
+    lineCount: snapshot.lineCount
   }
 }
 
@@ -355,6 +384,13 @@ async function applyRollback(
 
   if (current.hash !== change.after.hash) {
     const reason = 'File changed since this agent run completed'
+    change.status = 'conflicted'
+    change.conflict = reason
+    return { reverted: false, conflict: reason }
+  }
+
+  if (change.before.exists && change.before.text === undefined) {
+    const reason = 'Rollback is unavailable for large file snapshots captured in summary mode'
     change.status = 'conflicted'
     change.conflict = reason
     return { reverted: false, conflict: reason }

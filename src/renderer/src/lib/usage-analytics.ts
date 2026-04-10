@@ -282,3 +282,7 @@ export function getUsageByProvider(query: UsageAnalyticsQuery): Promise<UsageAna
 export function listUsageEvents(query: UsageAnalyticsQuery): Promise<UsageAnalyticsGroupRow[]> {
   return ipcClient.invoke(IPC.USAGE_EVENTS_LIST, query) as Promise<UsageAnalyticsGroupRow[]>
 }
+
+export function clearUsageEvents(query: UsageAnalyticsQuery): Promise<{ deleted: number }> {
+  return ipcClient.invoke(IPC.USAGE_EVENTS_CLEAR, query) as Promise<{ deleted: number }>
+}

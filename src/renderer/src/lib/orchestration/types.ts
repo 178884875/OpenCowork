@@ -29,6 +29,8 @@ export interface OrchestrationMember {
   completedAt: number | null
   currentTaskId?: string | null
   currentTaskLabel?: string | null
+  description?: string
+  prompt?: string
   summary: string
   latestAction: string
   progress: number

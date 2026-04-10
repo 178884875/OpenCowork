@@ -10,24 +10,13 @@ import { registerBashTools } from './bash-tool'
 import { registerSubAgents } from '../agent/sub-agents/builtin'
 import { registerTeamTools } from '../agent/teams/register'
 import { registerSkillTools } from './skill-tool'
-import { registerPreviewTools } from './preview-tool'
+import { registerWidgetTools } from './widget-tool'
 import { registerAskUserTools } from './ask-user-tool'
 import { registerPlanTools } from './plan-tool'
 import { registerCronTools } from './cron-tool'
 import { registerNotifyTool } from './notify-tool'
 import { updateWikiToolRegistration } from './wiki-tool'
 
-/**
- * Register all built-in tools with the global tool registry.
- * Call this once at app initialization.
- *
- * SubAgents are registered AFTER regular tools because they
- * reference tool definitions from the registry.
- * Team tools are registered last.
- *
- * This is async because SubAgent definitions are loaded from
- * .md files via IPC from the main process.
- */
 let _allToolsRegistered = false
 
 export async function registerAllTools(): Promise<void> {
@@ -41,7 +30,7 @@ export async function registerAllTools(): Promise<void> {
   // based on the webSearchEnabled setting (see web-search-tool.ts)
   registerBashTools()
   await registerSkillTools()
-  registerPreviewTools()
+  registerWidgetTools()
   registerAskUserTools()
   registerPlanTools()
   registerCronTools()
@@ -57,10 +46,6 @@ export async function registerAllTools(): Promise<void> {
   // They are NOT registered here — see plugin-tools.ts registerPluginTools/unregisterPluginTools
 }
 
-/**
- * Dynamically register or unregister the web search tool based on the web search setting.
- * This should be called when the webSearchEnabled setting changes.
- */
 export function updateWebSearchToolRegistration(enabled: boolean): void {
   const isRegistered = isWebSearchToolRegistered()
   if (enabled && !isRegistered) {

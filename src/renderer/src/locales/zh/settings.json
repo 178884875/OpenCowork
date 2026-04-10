@@ -180,7 +180,14 @@
     "hourly": "按小时",
     "chartCost": "消费趋势",
     "chartTokens": "Token 构成",
-    "chartRequests": "请求数趋势"
+    "chartRequests": "请求数趋势",
+    "clearLogs": "清理 7 天前日志",
+    "clearing": "清理中...",
+    "clearConfirmTitle": "清理 7 天前日志",
+    "clearConfirmDescription": "将永久删除 {{date}} 之前的所有日志记录，共 {{count}} 条。此操作不可撤销。",
+    "clearSuccess": "已清理 {{count}} 条日志",
+    "clearFailed": "清理日志失败",
+    "clearEmpty": "暂无 7 天前的日志可清理"
   },
   "model": {
     "title": "模型配置",
@@ -406,6 +413,50 @@
     "openFullSettings": "打开完整设置"
   },
   "provider": {
+    "accounts": {
+      "title": "OAuth 账户",
+      "addAccount": "新增账户",
+      "importJson": "粘贴 JSON",
+      "importFile": "导入文件",
+      "export": "导出",
+      "empty": "暂无账户。添加多个账户后可在限流时自动切换。",
+      "lastUsed": "{{time}} 前使用",
+      "status": {
+        "active": "活跃",
+        "idle": "空闲",
+        "expired": "令牌已过期",
+        "rateLimitedUntil": "限流中 · {{time}} 恢复"
+      },
+      "actions": {
+        "setActive": "设为活跃",
+        "refresh": "刷新令牌",
+        "clearLimit": "解除限流",
+        "delete": "删除"
+      },
+      "confirmRemove": {
+        "title": "删除账户",
+        "description": "确定要移除 {{email}} 吗？本地保存的令牌将被清除。",
+        "confirm": "删除"
+      },
+      "import": {
+        "title": "导入账户 JSON",
+        "description": "粘贴 OAuth 记录数组，每一条都必须包含 email 字段。",
+        "cancel": "取消",
+        "confirm": "导入"
+      },
+      "toasts": {
+        "addSuccess": "账户已添加",
+        "addFailed": "添加失败：{{error}}",
+        "importResult": "成功导入 {{imported}} 条，跳过 {{skipped}} 条",
+        "importFailed": "导入失败：{{error}}",
+        "fileApiMissing": "文件选择 API 不可用",
+        "exportCopied": "账户 JSON 已复制到剪贴板",
+        "exportFailed": "导出失败：{{error}}",
+        "refreshSuccess": "令牌已刷新",
+        "refreshFailed": "刷新失败：{{error}}",
+        "removeSuccess": "账户已删除"
+      }
+    },
     "title": "AI 服务商",
     "subtitle": "为每个服务商配置 API Key 和模型",
     "search": "搜索服务商...",

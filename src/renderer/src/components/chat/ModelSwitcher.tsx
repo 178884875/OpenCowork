@@ -249,18 +249,28 @@ function ModelSettingsPopover({
                   <button
                     type="button"
                     className={cn(
-                      'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors text-left',
-                      !thinkingEnabled
-                        ? 'bg-accent text-accent-foreground'
+                      'flex items-center justify-between rounded-md px-2.5 py-2 text-xs transition-colors',
+                      thinkingEnabled
+                        ? 'bg-violet-500/10 text-violet-600 dark:text-violet-400'
                         : 'hover:bg-muted/60 text-foreground/80'
                     )}
-                    onClick={() =>
-                      useSettingsStore.getState().updateSettings({ thinkingEnabled: false })
-                    }
+                    onClick={toggleThinking}
                   >
-                    <span className="font-medium">{tChat('input.thinkingOff')}</span>
+                    <span className="font-medium">
+                      {thinkingEnabled
+                        ? tChat('input.disableThinking')
+                        : tChat('input.enableThinking')}
+                    </span>
+                    <span
+                      className={cn(
+                        'size-4 rounded-full border-2 transition-colors',
+                        thinkingEnabled
+                          ? 'bg-violet-500 border-violet-500'
+                          : 'border-muted-foreground/30'
+                      )}
+                    />
                   </button>
-                  {levels.map((level) => (
+                  {thinkingEnabled && levels.map((level) => (
                     <button
                       key={level}
                       type="button"

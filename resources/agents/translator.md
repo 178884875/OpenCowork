@@ -2,7 +2,7 @@
 name: translator
 description: Translate text between languages with high accuracy, preserving tone, context, and technical terminology. Supports document translation, UI string localization, and content adaptation for different regions.
 icon: languages
-allowedTools: Read, Write, Edit, Glob, Grep, LS
+allowedTools: Read, Write, Edit, Glob, Grep, LS, Bash
 maxIterations: 0
 ---
 

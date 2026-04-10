@@ -18,11 +18,36 @@ public sealed class AgentLoopRunConfig
     public required List<ToolDefinition> Tools { get; init; }
     public required ToolRegistry ToolRegistry { get; init; }
     public required ToolContext ToolContext { get; init; }
-    public int MaxIterations { get; init; } = 25;
+    /// <summary>
+    /// 0 (default) = unlimited — the loop runs until the model stops calling
+    /// tools. Any positive value caps the number of iterations.
+    /// </summary>
+    public int MaxIterations { get; init; } = 0;
     public bool ForceApproval { get; init; }
     public CompressionConfig? Compression { get; init; }
     public bool EnableParallelToolExecution { get; init; } = true;
     public int MaxParallelTools { get; init; } = 5;
+    /// <summary>
+    /// "agent" (default) runs the full tool loop. "chat" runs a single
+    /// provider turn and returns without executing any tool calls the model
+    /// may have produced.
+    /// </summary>
+    public string? SessionMode { get; init; }
+    /// <summary>
+    /// When true, tool calls whose name is not in <see cref="PlanModeAllowedTools"/>
+    /// are intercepted and answered with an error tool_result instead of
+    /// being dispatched to the ToolRegistry.
+    /// </summary>
+    public bool PlanMode { get; init; }
+    public HashSet<string>? PlanModeAllowedTools { get; init; }
+
+    /// <summary>
+    /// Invoked once when the loop terminates for any reason, with a snapshot
+    /// of the full conversation history. Callers use this to replay the
+    /// transcript — e.g. to synthesize a fallback report when the last
+    /// assistant turn produced no text.
+    /// </summary>
+    public Action<List<UnifiedMessage>>? CaptureFinalMessages { get; init; }
 }
 
 /// <summary>
@@ -57,6 +82,14 @@ public static class AgentLoop
             TotalMessages = conversationMessages.Count
         };
 
+        // Always hand the final transcript back to the caller so it can replay
+        // the conversation (e.g. generate a fallback report when no text was
+        // produced). try/finally around the whole loop guarantees the callback
+        // fires for completed runs, errors, and early termination. Note that
+        // C# iterator methods forbid yield inside try-with-catch, but allow it
+        // inside try-with-finally.
+        try
+        {
         while (!hasLimit || iteration < config.MaxIterations)
         {
             if (ct.IsCancellationRequested)
@@ -324,6 +357,18 @@ public static class AgentLoop
                 yield break;
             }
 
+            // --- Chat mode: single provider turn, ignore tool calls ---
+            // The renderer offers a "chat" session mode that should behave like
+            // a plain chat completion: one assistant turn, no tool dispatch.
+            // We still let the provider stream any tool_use blocks through so
+            // the transcript is honest, but we don't execute them and we stop
+            // the loop immediately.
+            if (string.Equals(config.SessionMode, "chat", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return new LoopEndEvent { Reason = "chat_mode" };
+                yield break;
+            }
+
             foreach (var tc in toolCalls)
             {
                 if (tc.Input.Count == 0 && activeToolArgs.TryGetValue(tc.Id, out var finalArgBuf) && finalArgBuf.Length > 0)
@@ -463,6 +508,18 @@ public static class AgentLoop
         }
 
         yield return new LoopEndEvent { Reason = "max_iterations" };
+        }
+        finally
+        {
+            try
+            {
+                config.CaptureFinalMessages?.Invoke(conversationMessages.ToList());
+            }
+            catch (Exception captureErr)
+            {
+                Console.Error.WriteLine($"[AgentLoop] CaptureFinalMessages hook threw: {captureErr}");
+            }
+        }
     }
 
     private static async Task<ContentBlock> ExecuteToolWithApproval(
@@ -471,15 +528,39 @@ public static class AgentLoop
         ApprovalHandler? onApproval,
         CancellationToken ct)
     {
+        // --- Plan mode gate ---
+        // Mirrors the renderer's PLAN_MODE_ALLOWED_TOOLS filter: tools whose
+        // name is not in the allowed list are answered with a synthesized
+        // error result so the model can course-correct on the next turn
+        // without ever touching the filesystem or shell.
+        if (config.PlanMode && config.PlanModeAllowedTools is not null)
+        {
+            var allowed = config.PlanModeAllowedTools;
+            if (!allowed.Contains(tc.Name))
+            {
+                tc.Status = ToolCallStatus.Error;
+                tc.Error = $"Plan mode blocks tool \"{tc.Name}\". Allowed tools: {string.Join(", ", allowed)}.";
+                tc.CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                return new ToolResultBlock
+                {
+                    ToolUseId = tc.Id,
+                    Content = tc.Error,
+                    IsError = true
+                };
+            }
+        }
+
         var toolContext = new ToolContext
         {
             SessionId = config.ToolContext.SessionId,
             WorkingFolder = config.ToolContext.WorkingFolder,
             CurrentToolUseId = tc.Id,
             AgentRunId = config.ToolContext.AgentRunId,
+            ProviderConfig = config.ToolContext.ProviderConfig,
             ElectronInvokeAsync = config.ToolContext.ElectronInvokeAsync,
             RendererToolInvokeAsync = config.ToolContext.RendererToolInvokeAsync,
             RendererToolRequiresApprovalAsync = config.ToolContext.RendererToolRequiresApprovalAsync,
+            EmitAgentEventAsync = config.ToolContext.EmitAgentEventAsync,
             InlineToolHandlers = config.ToolContext.InlineToolHandlers,
             LocalToolHandlers = config.ToolContext.LocalToolHandlers,
             ReadFileHistory = config.ToolContext.ReadFileHistory

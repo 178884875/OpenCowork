@@ -455,11 +455,11 @@ export const useUIStore = create<UIStore>((set, get) => ({
   openOrchestrationPanel: (runId, memberId) => set({ selectedOrchestrationRunId: runId ?? null, selectedOrchestrationMemberId: memberId ?? null, orchestrationConsoleOpen: true, orchestrationConsoleView: memberId ? 'member' : 'overview', rightPanelTab: 'orchestration', rightPanelSection: 'collaboration', rightPanelOpen: true, leftSidebarOpen: false }),
   openOrchestrationMember: (runId, memberId) => set({ selectedOrchestrationRunId: runId, selectedOrchestrationMemberId: memberId ?? null, orchestrationConsoleOpen: true, orchestrationConsoleView: memberId ? 'member' : 'overview', rightPanelTab: 'orchestration', rightPanelSection: 'collaboration', rightPanelOpen: true, leftSidebarOpen: false }),
   closeOrchestrationPanel: () => set({ orchestrationConsoleOpen: false, selectedOrchestrationRunId: null, selectedOrchestrationMemberId: null }),
-  openSubAgentsPanel: (toolUseId) => set({ selectedSubAgentToolUseId: toolUseId ?? null, rightPanelTab: 'orchestration', rightPanelSection: 'collaboration', rightPanelOpen: true, leftSidebarOpen: false }),
+  openSubAgentsPanel: (toolUseId) => set({ selectedSubAgentToolUseId: toolUseId ?? null, rightPanelTab: 'subagents', rightPanelSection: 'collaboration', orchestrationConsoleOpen: false, rightPanelOpen: true, leftSidebarOpen: false }),
   subAgentExecutionDetailOpen: false,
   subAgentExecutionDetailToolUseId: null,
   subAgentExecutionDetailInlineText: null,
-  openSubAgentExecutionDetail: (toolUseId, inlineText) => set({ selectedSubAgentToolUseId: toolUseId, subAgentExecutionDetailOpen: true, subAgentExecutionDetailToolUseId: toolUseId, subAgentExecutionDetailInlineText: inlineText?.trim() ? inlineText : null, rightPanelTab: 'orchestration', rightPanelSection: 'collaboration', orchestrationConsoleOpen: true, rightPanelOpen: true, leftSidebarOpen: false }),
+  openSubAgentExecutionDetail: (toolUseId, inlineText) => set({ selectedSubAgentToolUseId: toolUseId, subAgentExecutionDetailOpen: true, subAgentExecutionDetailToolUseId: toolUseId, subAgentExecutionDetailInlineText: inlineText?.trim() ? inlineText : null, rightPanelTab: 'subagents', rightPanelSection: 'collaboration', orchestrationConsoleOpen: false, rightPanelOpen: true, leftSidebarOpen: false }),
   closeSubAgentExecutionDetail: () => set({ subAgentExecutionDetailOpen: false, subAgentExecutionDetailToolUseId: null, subAgentExecutionDetailInlineText: null }),
   selectedSubAgentToolUseId: null,
   setSelectedSubAgentToolUseId: (toolUseId) => set({ selectedSubAgentToolUseId: toolUseId }),
@@ -473,27 +473,27 @@ export const useUIStore = create<UIStore>((set, get) => ({
   isPlanModeEnabled: () => get().planMode,
   chatView: 'home',
   navigateToHome: () => {
-    set({ activeNavItem: 'chat', chatView: 'home' })
+    set({ activeNavItem: 'chat', chatView: 'home', settingsPageOpen: false })
     replaceChatRoute({ chatView: 'home', projectId: null, sessionId: null })
   },
   navigateToProject: (projectId) => {
     const resolvedProjectId = projectId ?? useChatStore.getState().activeProjectId ?? null
-    set({ activeNavItem: 'chat', chatView: 'project' })
+    set({ activeNavItem: 'chat', chatView: 'project', settingsPageOpen: false })
     replaceChatRoute({ chatView: 'project', projectId: resolvedProjectId, sessionId: null })
   },
   navigateToArchive: (projectId) => {
     const resolvedProjectId = projectId ?? useChatStore.getState().activeProjectId ?? null
-    set({ activeNavItem: 'chat', chatView: 'archive' })
+    set({ activeNavItem: 'chat', chatView: 'archive', settingsPageOpen: false })
     replaceChatRoute({ chatView: 'archive', projectId: resolvedProjectId, sessionId: null })
   },
   navigateToChannels: (projectId) => {
     const resolvedProjectId = projectId ?? useChatStore.getState().activeProjectId ?? null
-    set({ activeNavItem: 'chat', chatView: 'channels' })
+    set({ activeNavItem: 'chat', chatView: 'channels', settingsPageOpen: false })
     replaceChatRoute({ chatView: 'channels', projectId: resolvedProjectId, sessionId: null })
   },
   navigateToGit: (projectId) => {
     const resolvedProjectId = projectId ?? useChatStore.getState().activeProjectId ?? null
-    set({ activeNavItem: 'chat', chatView: 'git' })
+    set({ activeNavItem: 'chat', chatView: 'git', settingsPageOpen: false })
     replaceChatRoute({ chatView: 'git', projectId: resolvedProjectId, sessionId: null })
   },
   navigateToSession: (sessionId) => {
@@ -503,7 +503,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
       ? store.sessions.find((item) => item.id === resolvedSessionId)
       : null
     const resolvedProjectId = resolvedSession?.projectId ?? store.activeProjectId ?? null
-    set({ activeNavItem: 'chat', chatView: 'session' })
+    set({ activeNavItem: 'chat', chatView: 'session', settingsPageOpen: false })
     replaceChatRoute({
       chatView: resolvedSessionId ? 'session' : resolvedProjectId ? 'project' : 'home',
       projectId: resolvedProjectId,

@@ -277,6 +277,10 @@ export function registerDbHandlers(): void {
     return usageEventsDao.listUsageEvents(query)
   })
 
+  ipcMain.handle('usage-events:clear', (_event, query) => {
+    return usageEventsDao.deleteUsageEvents(query)
+  })
+
   // --- Draw Runs ---
 
   ipcMain.handle('db:draw-runs:list', () => {

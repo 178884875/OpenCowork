@@ -19,6 +19,10 @@ import { useBackgroundSessionStore } from './background-session-store'
 import { useProviderStore } from './provider-store'
 import { useSettingsStore } from './settings-store'
 import { useInputDraftStore } from './input-draft-store'
+import {
+  summarizeToolInputForHistory,
+  sanitizeMessagesForToolReplay
+} from '../lib/tools/tool-input-sanitizer'
 
 export type SessionMode = 'chat' | 'clarify' | 'cowork' | 'code' | 'acp'
 
@@ -137,13 +141,21 @@ function dbDeleteProject(id: string): void {
   ipcClient.invoke('db:projects:delete', id).catch(() => {})
 }
 
+function sanitizeMessageContentForPersistence(content: UnifiedMessage['content']): UnifiedMessage['content'] {
+  if (!Array.isArray(content)) return content
+  const [sanitized] = sanitizeMessagesForToolReplay([
+    { role: 'assistant', content }
+  ]) as Array<{ role: string; content: UnifiedMessage['content'] }>
+  return sanitized.content
+}
+
 function dbAddMessage(sessionId: string, msg: UnifiedMessage, sortOrder: number): void {
   ipcClient
     .invoke('db:messages:add', {
       id: msg.id,
       sessionId,
       role: msg.role,
-      content: JSON.stringify(msg.content),
+      content: JSON.stringify(sanitizeMessageContentForPersistence(msg.content)),
       createdAt: msg.createdAt,
       usage: msg.usage ? JSON.stringify(msg.usage) : null,
       sortOrder
@@ -152,7 +164,11 @@ function dbAddMessage(sessionId: string, msg: UnifiedMessage, sortOrder: number)
 }
 
 function dbUpdateMessage(msgId: string, content: unknown, usage?: unknown): void {
-  const patch: Record<string, unknown> = { content: JSON.stringify(content) }
+  const normalizedContent =
+    typeof content === 'string' || Array.isArray(content)
+      ? sanitizeMessageContentForPersistence(content)
+      : content
+  const patch: Record<string, unknown> = { content: JSON.stringify(normalizedContent) }
   if (usage !== undefined) patch.usage = JSON.stringify(usage)
   ipcClient.invoke('db:messages:update', { id: msgId, patch }).catch(() => {})
 }
@@ -350,7 +366,12 @@ interface MessageRow {
   sort_order: number
 }
 
-const RECENT_SESSION_MESSAGE_PAGE_SIZE = 160
+// Initial tail shown the instant the user switches into a session. Small on
+// purpose so the switch renders in ~1 frame. Older history streams in via
+// the scroll-to-top load-more row.
+const INITIAL_SESSION_DISPLAY_PAGE_SIZE = 20
+// Page size used when the user scrolls up past the top of the resident window.
+const RECENT_SESSION_MESSAGE_PAGE_SIZE = 40
 const MIN_INITIAL_SESSION_MESSAGE_PAGE_SIZE = 5
 const MESSAGE_WINDOW_MAX_SIZE = 240
 const MESSAGE_WINDOW_TAIL_PRESERVE = 80
@@ -412,6 +433,12 @@ function rowToMessage(row: MessageRow): UnifiedMessage {
     }
   } catch {
     content = row.content
+  }
+  // Defensive: older DB rows may contain un-elided Write/Edit payloads written
+  // before we lowered the inline limits. Strip them on load so the renderer
+  // never has to hold a multi-MB tool_use.input in resident state.
+  if (Array.isArray(content)) {
+    content = sanitizeMessageContentForPersistence(content)
   }
   return {
     id: row.id,
@@ -1137,7 +1164,7 @@ export const useChatStore = create<ChatStore>()(
       try {
         const nextLimit = Math.max(
           MIN_INITIAL_SESSION_MESSAGE_PAGE_SIZE,
-          Math.min(limit ?? RECENT_SESSION_MESSAGE_PAGE_SIZE, knownCount)
+          Math.min(limit ?? INITIAL_SESSION_DISPLAY_PAGE_SIZE, knownCount)
         )
         const offset = Math.max(0, knownCount - nextLimit)
         const msgRows = (await ipcClient.invoke('db:messages:list-page', {
@@ -1945,7 +1972,10 @@ export const useChatStore = create<ChatStore>()(
       if (!source) return null
       const newId = nanoid()
       const now = Date.now()
-      const clonedMessages: UnifiedMessage[] = JSON.parse(JSON.stringify(source.messages))
+      const clonedMessages: UnifiedMessage[] =
+        typeof structuredClone === 'function'
+          ? structuredClone(source.messages)
+          : JSON.parse(JSON.stringify(source.messages))
       const newSession: Session = {
         id: newId,
         title: `${source.title} (copy)`,
@@ -2329,10 +2359,14 @@ export const useChatStore = create<ChatStore>()(
         const msg = session.messages.find((m) => m.id === msgId)
         if (!msg) return
 
+        const normalizedToolUse: ToolUseBlock = {
+          ...toolUse,
+          input: summarizeToolInputForHistory(toolUse.name, toolUse.input)
+        }
         if (typeof msg.content === 'string') {
-          msg.content = [{ type: 'text', text: msg.content }, toolUse]
+          msg.content = [{ type: 'text', text: msg.content }, normalizedToolUse]
         } else {
-          ;(msg.content as ContentBlock[]).push(toolUse)
+          ;(msg.content as ContentBlock[]).push(normalizedToolUse)
         }
       })
       // Persist immediately for tool use blocks
@@ -2351,7 +2385,7 @@ export const useChatStore = create<ChatStore>()(
         const block = (msg.content as ContentBlock[]).find(
           (b) => b.type === 'tool_use' && (b as ToolUseBlock).id === toolUseId
         ) as ToolUseBlock | undefined
-        if (block) block.input = input
+        if (block) block.input = summarizeToolInputForHistory(block.name, input)
       })
       const session = get().sessions.find((s) => s.id === sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)

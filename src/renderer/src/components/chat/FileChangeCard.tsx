@@ -102,6 +102,20 @@ function lineCount(text: string): number {
   return normalized.length === 0 ? 0 : normalized.split('\n').length
 }
 
+function snapshotText(snapshot: AgentRunFileChange['before'] | AgentRunFileChange['after']): string {
+  return snapshot.text ?? snapshot.previewText ?? ''
+}
+
+function snapshotLineTotal(snapshot: AgentRunFileChange['before'] | AgentRunFileChange['after']): number {
+  return typeof snapshot.lineCount === 'number' ? snapshot.lineCount : lineCount(snapshotText(snapshot))
+}
+
+function canRenderInlineSnapshot(
+  snapshot: AgentRunFileChange['before'] | AgentRunFileChange['after']
+): boolean {
+  return typeof snapshot.text === 'string'
+}
+
 type DiffLine = DiffViewerLine
 
 function computeLargeDiff(a: string[], b: string[]): DiffLine[] {
@@ -276,16 +290,17 @@ function ChangeStats({
   const { t } = useTranslation('chat')
   const trackedStats = React.useMemo(() => {
     if (!trackedChange || trackedChange.op === 'create') return null
-    return summarizeDiff(
-      computeDiff(trackedChange.before.text ?? '', trackedChange.after.text ?? '')
-    )
+    if (!canRenderInlineSnapshot(trackedChange.before) || !canRenderInlineSnapshot(trackedChange.after)) {
+      return null
+    }
+    return summarizeDiff(computeDiff(snapshotText(trackedChange.before), snapshotText(trackedChange.after)))
   }, [trackedChange])
   const resolvedEdit = React.useMemo(() => resolveEditPayload(input), [input])
   const resolvedWrite = React.useMemo(() => resolveWritePayload(input), [input])
 
   if (trackedChange) {
     if (trackedChange.op === 'create') {
-      const lines = lineCount(trackedChange.after.text ?? '')
+      const lines = snapshotLineTotal(trackedChange.after)
       return (
         <span className="flex items-center gap-1.5 text-[10px]">
           <span className="rounded bg-green-500/15 px-1.5 py-0.5 text-green-500 font-medium">
@@ -417,6 +432,42 @@ function NewFileContent({
         >
           {t('fileChange.moreLines', { count: lines - 50 })}
         </button>
+      )}
+    </div>
+  )
+}
+
+function SnapshotSummaryNotice({
+  before,
+  after
+}: {
+  before?: AgentRunFileChange['before']
+  after: AgentRunFileChange['after']
+}): React.JSX.Element {
+  const details = [
+    typeof before?.lineCount === 'number' ? `before ${before.lineCount} lines` : null,
+    typeof after.lineCount === 'number' ? `after ${after.lineCount} lines` : null,
+    `${after.size} bytes`,
+    after.hash ? `sha ${after.hash.slice(0, 12)}` : null
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
+  return (
+    <div className="px-3 py-2 text-[11px] text-muted-foreground/65 space-y-1">
+      <p>Large file snapshot summarized to avoid storing full before/after text in memory.</p>
+      <p className="font-mono text-[10px] text-muted-foreground/45" style={{ fontFamily: MONO_FONT }}>
+        {details}
+      </p>
+      {after.previewText && (
+        <pre
+          className="overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 px-2.5 py-2 text-[11px] text-foreground/80 dark:bg-zinc-950 dark:text-zinc-300/80"
+          style={{ fontFamily: MONO_FONT, maxHeight: '180px' }}
+        >
+          {after.previewText}
+          {after.tailPreviewText ? '\n…\n' : ''}
+          {after.tailPreviewText ?? ''}
+        </pre>
       )}
     </div>
   )
@@ -642,24 +693,19 @@ export function FileChangeCard({
   trackedChange
 }: FileChangeCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  const [collapsed, setCollapsed] = React.useState(false)
+  const shouldAutoCollapse = name !== 'Write' && status === 'completed' && !error
+  const [collapsed, setCollapsed] = React.useState(shouldAutoCollapse)
   const acceptFileChange = useAgentStore((state) => state.acceptFileChange)
   const rollbackFileChange = useAgentStore((state) => state.rollbackFileChange)
   const [isAcceptingFile, setIsAcceptingFile] = React.useState(false)
   const [isRollingBackFile, setIsRollingBackFile] = React.useState(false)
 
-  const prevStatusRef = React.useRef(status)
+  const hasManualCollapseOverrideRef = React.useRef(false)
   React.useEffect(() => {
-    if (
-      name !== 'Write' &&
-      prevStatusRef.current !== 'completed' &&
-      status === 'completed' &&
-      !error
-    ) {
+    if (shouldAutoCollapse && !hasManualCollapseOverrideRef.current) {
       setCollapsed(true)
     }
-    prevStatusRef.current = status
-  }, [name, status, error])
+  }, [shouldAutoCollapse])
 
   const filePath = String(input.file_path ?? input.path ?? '')
   const elapsed =
@@ -725,7 +771,10 @@ export function FileChangeCard({
       )}
     >
       <button
-        onClick={() => setCollapsed((v) => !v)}
+        onClick={() => {
+          hasManualCollapseOverrideRef.current = true
+          setCollapsed((v) => !v)
+        }}
         className={cn(
           'flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/20',
           status === 'running' && 'bg-blue-500/[0.03]'
@@ -775,12 +824,21 @@ export function FileChangeCard({
             transition={{ duration: 0.2 }}
             className="overflow-hidden border-t border-inherit bg-muted/20 dark:bg-zinc-950"
           >
-            {name === 'Edit' && trackedChange && (
-              <InlineDiff
-                oldStr={trackedChange.before.text ?? ''}
-                newStr={trackedChange.after.text ?? ''}
-              />
-            )}
+            {name === 'Edit' &&
+              trackedChange &&
+              canRenderInlineSnapshot(trackedChange.before) &&
+              canRenderInlineSnapshot(trackedChange.after) && (
+                <InlineDiff
+                  oldStr={snapshotText(trackedChange.before)}
+                  newStr={snapshotText(trackedChange.after)}
+                />
+              )}
+            {name === 'Edit' &&
+              trackedChange &&
+              (!canRenderInlineSnapshot(trackedChange.before) ||
+                !canRenderInlineSnapshot(trackedChange.after)) && (
+                <SnapshotSummaryNotice before={trackedChange.before} after={trackedChange.after} />
+              )}
             {name === 'Edit' &&
               !trackedChange &&
               status !== 'completed' &&
@@ -801,19 +859,33 @@ export function FileChangeCard({
               (resolvedEdit.oldTruncated || resolvedEdit.newTruncated) && (
                 <PendingEditPreview input={input} />
               )}
-            {name === 'Write' && trackedChange?.op === 'modify' && (
-              <InlineDiff
-                oldStr={trackedChange.before.text ?? ''}
-                newStr={trackedChange.after.text ?? ''}
-              />
-            )}
-            {name === 'Write' && trackedChange?.op === 'create' && (
+            {name === 'Write' &&
+              trackedChange?.op === 'modify' &&
+              canRenderInlineSnapshot(trackedChange.before) &&
+              canRenderInlineSnapshot(trackedChange.after) && (
+                <InlineDiff
+                  oldStr={snapshotText(trackedChange.before)}
+                  newStr={snapshotText(trackedChange.after)}
+                />
+              )}
+            {name === 'Write' &&
+              trackedChange?.op === 'modify' &&
+              (!canRenderInlineSnapshot(trackedChange.before) ||
+                !canRenderInlineSnapshot(trackedChange.after)) && (
+                <SnapshotSummaryNotice before={trackedChange.before} after={trackedChange.after} />
+              )}
+            {name === 'Write' && trackedChange?.op === 'create' && canRenderInlineSnapshot(trackedChange.after) && (
               <NewFileContent
-                content={trackedChange.after.text ?? ''}
+                content={snapshotText(trackedChange.after)}
                 filePath={filePath}
                 isStreaming={status === 'streaming'}
               />
             )}
+            {name === 'Write' &&
+              trackedChange?.op === 'create' &&
+              !canRenderInlineSnapshot(trackedChange.after) && (
+                <SnapshotSummaryNotice after={trackedChange.after} />
+              )}
             {name === 'Write' &&
               !trackedChange &&
               (status === 'streaming' || status === 'running') && (

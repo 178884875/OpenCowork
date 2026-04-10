@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { markAccountRateLimited } from '@renderer/lib/auth/provider-auth'
+import type { AccountRateLimit } from '@renderer/lib/api/types'
 
 export interface CodexQuotaWindow {
   usedPercent?: number
@@ -65,6 +67,16 @@ function resolveQuotaKey(payload: QuotaUpdatePayload): string | null {
 
 let listenerRegistered = false
 
+interface AccountRateLimitedPayload {
+  providerId?: string
+  providerBuiltinId?: string
+  accountId?: string
+  resetAt: number
+  reason: 'http-429' | 'codex-quota'
+  windowType?: 'primary' | 'secondary'
+  message?: string
+}
+
 if (typeof window !== 'undefined' && window.electron?.ipcRenderer && !listenerRegistered) {
   listenerRegistered = true
   window.electron.ipcRenderer.on('api:quota-update', (_event, payload: QuotaUpdatePayload) => {
@@ -73,4 +85,20 @@ if (typeof window !== 'undefined' && window.electron?.ipcRenderer && !listenerRe
     if (!key) return
     useQuotaStore.getState().updateQuota(key, payload.quota)
   })
+
+  window.electron.ipcRenderer.on(
+    'api:account-rate-limited',
+    (_event, payload: AccountRateLimitedPayload) => {
+      if (!payload || !payload.accountId) return
+      const providerId = payload.providerId || payload.providerBuiltinId
+      if (!providerId) return
+      const info: Omit<AccountRateLimit, 'limitedAt'> = {
+        resetAt: payload.resetAt,
+        reason: payload.reason,
+        windowType: payload.windowType,
+        message: payload.message
+      }
+      markAccountRateLimited(providerId, payload.accountId, info)
+    }
+  )
 }

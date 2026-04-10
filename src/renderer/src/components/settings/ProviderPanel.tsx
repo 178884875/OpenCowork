@@ -70,6 +70,7 @@ import {
 } from '@renderer/lib/auth/provider-auth'
 import type { OAuthDeviceCodeInfo } from '@renderer/lib/auth/oauth'
 import { clearCopilotQuota, exchangeCopilotToken } from '@renderer/lib/auth/copilot'
+import { AccountListEditor } from './AccountListEditor'
 import type {
   ProviderType,
   AIModelConfig,
@@ -1742,6 +1743,7 @@ function ProviderConfigPanel({ provider }: { provider: AIProvider }): React.JSX.
                 )}
               </>
             )}
+            <AccountListEditor provider={provider} />
           </section>
         )}
 

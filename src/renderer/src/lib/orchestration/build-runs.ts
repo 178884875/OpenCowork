@@ -106,6 +106,8 @@ function mapSubAgentToMember(agent: SubAgentState): OrchestrationMember {
     completedAt: agent.completedAt,
     currentTaskId: null,
     currentTaskLabel: agent.description || null,
+    description: agent.description || undefined,
+    prompt: agent.prompt || undefined,
     summary,
     latestAction: getLatestAction(summary, agent.description),
     progress: computeMemberProgress({
@@ -144,6 +146,7 @@ function mapTeamMember(teamMember: NonNullable<TeamCandidate['team']>['members']
     completedAt: teamMember.completedAt,
     currentTaskId: currentTask?.id ?? teamMember.currentTaskId,
     currentTaskLabel: currentTask?.subject ?? null,
+    description: currentTask?.description || undefined,
     summary,
     latestAction: getLatestAction(summary, currentTask?.subject),
     progress: computeMemberProgress({

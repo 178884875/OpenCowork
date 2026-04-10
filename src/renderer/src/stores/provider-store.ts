@@ -1192,7 +1192,8 @@ export const useProviderStore = create<ProviderStore>()(
           ...(provider.instructionsPrompt
             ? { instructionsPrompt: provider.instructionsPrompt }
             : {}),
-          ...(accountId ? { accountId } : {})
+          ...(accountId ? { accountId } : {}),
+          ...(activeModel?.thinkingConfig ? { thinkingConfig: activeModel.thinkingConfig } : {})
         }
       },
 
@@ -1281,6 +1282,7 @@ export const useProviderStore = create<ProviderStore>()(
           apiKey: provider.apiKey,
           baseUrl: normalizedBaseUrl,
           model: resolvedModelId,
+          category: model?.category,
           providerId: provider.id,
           providerBuiltinId: provider.builtinId,
           computerUseEnabled: isModelComputerUseEnabled(model, requestType),
@@ -1297,7 +1299,8 @@ export const useProviderStore = create<ProviderStore>()(
           ...(provider.instructionsPrompt
             ? { instructionsPrompt: provider.instructionsPrompt }
             : {}),
-          ...(accountId ? { accountId } : {})
+          ...(accountId ? { accountId } : {}),
+          ...(model?.thinkingConfig ? { thinkingConfig: model.thinkingConfig } : {})
         }
       },
 
@@ -1472,10 +1475,60 @@ function syncManagedModelsWithBuiltins(): void {
 }
 
 /**
+ * Migrate legacy single-account OAuth providers to the new multi-account shape.
+ * Runs once per rehydration before we touch presets, so the rest of the store
+ * can assume `oauthAccounts`/`activeAccountId` exist whenever `authMode === 'oauth'`
+ * and a token is present.
+ */
+function migrateLegacyOAuthProviders(): void {
+  const state = useProviderStore.getState()
+  let changed = false
+  const nextProviders = state.providers.map((provider) => {
+    if (provider.authMode !== 'oauth') return provider
+    if (provider.oauthAccounts && provider.oauthAccounts.length > 0) return provider
+    const token = provider.oauth
+    if (!token?.accessToken) return provider
+
+    // Synthesize a single account from the legacy top-level token.
+    // Email fallback order: accountId → id_token email claim → placeholder.
+    let email = token.accountId?.trim() || ''
+    if (!email && token.idToken && token.idToken.split('.').length === 3) {
+      try {
+        const payload = token.idToken.split('.')[1]
+        const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'))
+        const data = JSON.parse(json) as Record<string, unknown>
+        const claim = data.email
+        if (typeof claim === 'string' && claim.trim()) email = claim.trim()
+      } catch {
+        // ignore
+      }
+    }
+    if (!email) email = 'unknown@local'
+
+    const account = {
+      id: nanoid(),
+      email,
+      oauth: { ...token },
+      createdAt: Date.now()
+    }
+    changed = true
+    return {
+      ...provider,
+      oauthAccounts: [account],
+      activeAccountId: account.id
+    }
+  })
+  if (changed) {
+    useProviderStore.setState({ providers: nextProviders })
+  }
+}
+
+/**
  * Ensure built-in presets exist and pick a default active provider.
  * Safe to call multiple times — idempotent.
  */
 function ensureBuiltinPresets(): void {
+  migrateLegacyOAuthProviders()
   syncManagedModelsWithBuiltins()
   for (const preset of builtinProviderPresets) {
     const existing = useProviderStore

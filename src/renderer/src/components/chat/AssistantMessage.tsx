@@ -120,6 +120,7 @@ const SPECIAL_TOOLS = new Set([
   'Edit',
   'Delete',
   'AskUserQuestion',
+  'visualize_show_widget',
   IMAGE_GENERATE_TOOL_NAME,
   DESKTOP_SCREENSHOT_TOOL_NAME,
   DESKTOP_CLICK_TOOL_NAME,
@@ -759,10 +760,27 @@ export function AssistantMessage({
     }
     return map
   }, [isStreaming, liveToolCalls, liveToolCallMap])
+  // Only count "generic" tool calls that render as ToolCallCard and can be hidden by
+  // the collapse button. Special tools (TaskCreate/TaskUpdate/AskUserQuestion/visualize/
+  // image/desktop) and team/subagent tools have their own dedicated cards and should
+  // always render as first-class content.
   const structuredToolCount = useMemo(
-    () => normalizedContent?.filter((block) => block.type === 'tool_use').length ?? 0,
+    () =>
+      normalizedContent?.filter(
+        (block) =>
+          block.type === 'tool_use' &&
+          !SPECIAL_TOOLS.has(block.name) &&
+          !TEAM_TOOL_NAMES.has(block.name) &&
+          block.name !== TASK_TOOL_NAME
+      ).length ?? 0,
     [normalizedContent]
   )
+  const orchestrationAnchorIndex = useMemo(() => {
+    if (!normalizedContent || !orchestrationRun) return -1
+    return normalizedContent.findIndex(
+      (block) => block.type === 'tool_use' && block.name === TASK_TOOL_NAME && !block.input.run_in_background
+    )
+  }, [normalizedContent, orchestrationRun])
   const trackedChangeByToolUseId = useMemo(() => {
     const map = new Map<string, AgentRunFileChange>()
     for (const change of runChangeSet?.changes ?? []) {
@@ -900,11 +918,16 @@ export function AssistantMessage({
 
     const renderToolBlock = (
       block: Extract<ContentBlock, { type: 'tool_use' }>,
-      key: string
+      key: string,
+      blockIndex: number
     ): React.JSX.Element | null => {
-      if (toolsCollapsed) return null
       if (hiddenToolUseIds?.has(block.id)) {
-        return null
+        const isOrchestrationAnchor =
+          orchestrationRun &&
+          block.name === TASK_TOOL_NAME &&
+          !block.input.run_in_background &&
+          blockIndex === orchestrationAnchorIndex
+        if (!isOrchestrationAnchor) return null
       }
       if (block.name === 'TaskCreate') {
         const result = toolResults?.get(block.id)
@@ -974,7 +997,14 @@ export function AssistantMessage({
           )
         }
         const result = toolResults?.get(block.id)
-        return orchestrationRun ? null : (
+        if (orchestrationRun) {
+          return blockIndex === orchestrationAnchorIndex ? (
+            <FadeIn key={key} className="w-full">
+              <OrchestrationBlock run={orchestrationRun} />
+            </FadeIn>
+          ) : null
+        }
+        return (
           <ScaleIn key={key} className="w-full origin-left">
             <SubAgentCard
               name={block.name}
@@ -1040,7 +1070,8 @@ export function AssistantMessage({
           </ScaleIn>
         )
       }
-      // Generic ToolCallCard
+      // Generic ToolCallCard — the collapse button only hides these.
+      if (toolsCollapsed) return null
       const result = toolResults?.get(block.id)
       const liveTc = effectiveLiveToolCallMap?.get(block.id)
       return (
@@ -1061,7 +1092,9 @@ export function AssistantMessage({
 
     return (
       <div className="space-y-2">
-        {orchestrationRun ? <OrchestrationBlock run={orchestrationRun} /> : null}
+        {orchestrationRun && orchestrationAnchorIndex < 0 ? (
+          <OrchestrationBlock run={orchestrationRun} />
+        ) : null}
         {structuredToolCount >= 2 && (
           <button
             onClick={() => setToolsCollapsed((v) => !v)}
@@ -1188,7 +1221,7 @@ export function AssistantMessage({
                 )
               }
               case 'tool_use':
-                return renderToolBlock(block, block.id)
+                return renderToolBlock(block, block.id, item.index)
               default:
                 return null
             }

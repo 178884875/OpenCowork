@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using OpenCowork.Agent.Engine;
@@ -6,6 +8,13 @@ namespace OpenCowork.Agent.Providers;
 
 internal static class ProviderMessageFormatter
 {
+    private const int EditPreviewChars = 800;
+    private const int WritePreviewChars = 1200;
+    private const int WriteInlineLimitChars = 32 * 1024;
+    private const int EditInlineLimitChars = 16 * 1024;
+    private const int HistoryPreviewHeadChars = 800;
+    private const int HistoryPreviewTailChars = 320;
+
     public static List<UnifiedMessage> NormalizeMessagesForToolReplay(List<UnifiedMessage> messages)
     {
         var normalized = new List<UnifiedMessage>(messages.Count);
@@ -55,6 +64,16 @@ internal static class ProviderMessageFormatter
                 ToolUseBlock toolUse => pairedToolUseIds.Contains(toolUse.Id),
                 ToolResultBlock toolResult => validToolUseIds.Contains(toolResult.ToolUseId),
                 _ => true
+            }).Select(block => block switch
+            {
+                ToolUseBlock toolUse => new ToolUseBlock
+                {
+                    Id = toolUse.Id,
+                    Name = toolUse.Name,
+                    Input = SummarizeToolInputForHistory(toolUse.Name, toolUse.Input),
+                    ExtraContent = toolUse.ExtraContent
+                },
+                _ => block
             }).ToList();
 
             if (sanitizedBlocks.Count == 0)
@@ -244,7 +263,7 @@ internal static class ProviderMessageFormatter
                         ["function"] = new JsonObject
                         {
                             ["name"] = toolUse.Name,
-                            ["arguments"] = SerializeInput(toolUse.Input)
+                            ["arguments"] = SerializeInput(toolUse.Name, toolUse.Input)
                         }
                     };
 
@@ -491,7 +510,7 @@ internal static class ProviderMessageFormatter
                     ["type"] = "tool_use",
                     ["id"] = toolUse.Id,
                     ["name"] = toolUse.Name,
-                    ["input"] = JsonNode.Parse(SerializeInput(toolUse.Input))
+                    ["input"] = JsonNode.Parse(SerializeInput(toolUse.Name, toolUse.Input))
                 };
                 return true;
             case ToolResultBlock toolResult:
@@ -565,7 +584,9 @@ internal static class ProviderMessageFormatter
             JsonElement element => FormatAnthropicToolResultContent(element),
             JsonNode node => FormatAnthropicToolResultContent(node),
             IEnumerable<ContentBlock> blocks => FormatAnthropicToolResultContent(blocks.ToList()),
-            _ => ParseJsonString(JsonSerializer.Serialize(content))
+            // Fallback: stringify unknown content types. Reflection-based serialization is
+            // disabled in this app, so unknown objects fall back to ToString().
+            _ => ParseJsonString(content.ToString() ?? string.Empty)
         };
     }
 
@@ -743,7 +764,7 @@ internal static class ProviderMessageFormatter
                     ["functionCall"] = new JsonObject
                     {
                         ["name"] = toolUse.Name,
-                        ["args"] = JsonNode.Parse(SerializeInput(toolUse.Input))
+                        ["args"] = JsonNode.Parse(SerializeInput(toolUse.Name, toolUse.Input))
                     },
                     ["thoughtSignature"] = toolUse.ExtraContent?.Google?.ThoughtSignature
                 };
@@ -834,6 +855,249 @@ internal static class ProviderMessageFormatter
                     ThoughtSignature = signature
                 }
             };
+    }
+
+    private static Dictionary<string, JsonElement> SummarizeToolInputForHistory(
+        string? toolName,
+        Dictionary<string, JsonElement> input)
+    {
+        if (input.Count == 0 || string.IsNullOrWhiteSpace(toolName))
+            return input;
+
+        if (toolName == "Write" && TryGetString(input, "content", out var content) && content is not null)
+        {
+            if (content.Length <= WriteInlineLimitChars)
+                return input;
+
+            var compact = CompactStreamingToolInput(input);
+            compact["content_omitted"] = CreateBoolElement(true);
+            compact["content_hash"] = CreateStringElement(HashText(content));
+            compact["content_bytes"] = CreateIntElement(Encoding.UTF8.GetByteCount(content));
+            compact["content_lines"] = CreateIntElement(LineCount(content));
+            compact["content_preview"] = CreateStringElement(content[..Math.Min(content.Length, HistoryPreviewHeadChars)]);
+            if (content.Length > HistoryPreviewTailChars)
+                compact["content_preview_tail"] = CreateStringElement(content[^Math.Min(content.Length, HistoryPreviewTailChars)..]);
+            compact["content_truncated"] = CreateBoolElement(true);
+            compact["full_content_available_in_history"] = CreateBoolElement(false);
+            return compact;
+        }
+
+        if (toolName == "Edit")
+        {
+            var hasOld = TryGetString(input, "old_string", out var oldString);
+            var hasNew = TryGetString(input, "new_string", out var newString);
+            if (!hasOld && !hasNew)
+                return input;
+
+            if ((oldString?.Length ?? 0) <= EditInlineLimitChars && (newString?.Length ?? 0) <= EditInlineLimitChars)
+                return input;
+
+            var compact = CompactStreamingToolInput(input);
+            if (hasOld && oldString is not null && oldString.Length > EditInlineLimitChars)
+            {
+                compact["old_string_omitted"] = CreateBoolElement(true);
+                compact["old_string_hash"] = CreateStringElement(HashText(oldString));
+                compact["old_string_bytes"] = CreateIntElement(Encoding.UTF8.GetByteCount(oldString));
+                compact["old_string_lines"] = CreateIntElement(LineCount(oldString));
+                compact["old_string_preview"] = CreateStringElement(BuildEditPreviewPair(oldString, newString ?? string.Empty).oldPreview);
+                if (oldString.Length > HistoryPreviewTailChars)
+                    compact["old_string_preview_tail"] = CreateStringElement(oldString[^Math.Min(oldString.Length, HistoryPreviewTailChars)..]);
+                compact["old_string_truncated"] = CreateBoolElement(true);
+            }
+            if (hasNew && newString is not null && newString.Length > EditInlineLimitChars)
+            {
+                compact["new_string_omitted"] = CreateBoolElement(true);
+                compact["new_string_hash"] = CreateStringElement(HashText(newString));
+                compact["new_string_bytes"] = CreateIntElement(Encoding.UTF8.GetByteCount(newString));
+                compact["new_string_lines"] = CreateIntElement(LineCount(newString));
+                compact["new_string_preview"] = CreateStringElement(BuildEditPreviewPair(oldString ?? string.Empty, newString).newPreview);
+                if (newString.Length > HistoryPreviewTailChars)
+                    compact["new_string_preview_tail"] = CreateStringElement(newString[^Math.Min(newString.Length, HistoryPreviewTailChars)..]);
+                compact["new_string_truncated"] = CreateBoolElement(true);
+            }
+            compact["full_content_available_in_history"] = CreateBoolElement(false);
+            return compact;
+        }
+
+        return input;
+    }
+
+    private static Dictionary<string, JsonElement> CompactStreamingToolInput(Dictionary<string, JsonElement> input)
+    {
+        var compact = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        if (input.TryGetValue("file_path", out var filePath)) compact["file_path"] = filePath.Clone();
+        if (input.TryGetValue("path", out var path)) compact["path"] = path.Clone();
+        if (input.TryGetValue("explanation", out var explanation)) compact["explanation"] = explanation.Clone();
+        if (input.TryGetValue("replace_all", out var replaceAll)) compact["replace_all"] = replaceAll.Clone();
+        if (input.TryGetValue("title", out var title)) compact["title"] = title.Clone();
+        if (input.TryGetValue("loading_messages", out var loadingMessages)) compact["loading_messages"] = loadingMessages.Clone();
+
+        var hasOld = TryGetString(input, "old_string", out var oldString);
+        var hasNew = TryGetString(input, "new_string", out var newString);
+        if (hasOld || hasNew)
+        {
+            var pair = BuildEditPreviewPair(oldString ?? string.Empty, newString ?? string.Empty);
+            if (oldString is not null)
+            {
+                compact["old_string_preview"] = CreateStringElement(pair.oldPreview);
+                compact["old_string_chars"] = CreateIntElement(oldString.Length);
+                if (oldString.Length > EditPreviewChars) compact["old_string_truncated"] = CreateBoolElement(true);
+            }
+            if (newString is not null)
+            {
+                compact["new_string_preview"] = CreateStringElement(pair.newPreview);
+                compact["new_string_chars"] = CreateIntElement(newString.Length);
+                if (newString.Length > EditPreviewChars) compact["new_string_truncated"] = CreateBoolElement(true);
+            }
+        }
+
+        if (TryGetString(input, "content", out var content) && content is not null)
+        {
+            compact["content_preview"] = CreateStringElement(content[..Math.Min(content.Length, WritePreviewChars)]);
+            compact["content_lines"] = CreateIntElement(LineCount(content));
+            compact["content_chars"] = CreateIntElement(content.Length);
+            if (content.Length > WritePreviewChars) compact["content_truncated"] = CreateBoolElement(true);
+        }
+
+        if (TryGetString(input, "widget_code", out var widgetCode) && widgetCode is not null)
+        {
+            compact["widget_code_preview"] = CreateStringElement(widgetCode[..Math.Min(widgetCode.Length, WritePreviewChars)]);
+            compact["widget_code_chars"] = CreateIntElement(widgetCode.Length);
+            compact["widget_kind"] = CreateStringElement(widgetCode.TrimStart().StartsWith("<svg", StringComparison.OrdinalIgnoreCase) ? "svg" : "html");
+            if (widgetCode.Length > WritePreviewChars) compact["widget_code_truncated"] = CreateBoolElement(true);
+        }
+
+        return compact.Count == 0 ? input : compact;
+    }
+
+    private static (string oldPreview, string newPreview) BuildEditPreviewPair(string oldString, string newString)
+    {
+        if (oldString == newString)
+        {
+            var preview = ExcerptAroundRange(oldString, 0, Math.Min(oldString.Length, EditPreviewChars), EditPreviewChars);
+            return (preview, preview);
+        }
+
+        var prefixLength = SharedPrefixLength(oldString, newString);
+        var suffixLength = SharedSuffixLength(oldString, newString, prefixLength);
+        var oldEnd = Math.Max(prefixLength, oldString.Length - suffixLength);
+        var newEnd = Math.Max(prefixLength, newString.Length - suffixLength);
+        return (
+            ExcerptAroundRange(oldString, prefixLength, oldEnd, EditPreviewChars),
+            ExcerptAroundRange(newString, prefixLength, newEnd, EditPreviewChars));
+    }
+
+    private static string ExcerptAroundRange(string text, int start, int end, int maxChars)
+    {
+        if (text.Length <= maxChars)
+            return text;
+
+        var safeStart = Math.Max(0, Math.Min(start, text.Length));
+        var safeEnd = Math.Max(safeStart, Math.Min(end, text.Length));
+        var span = Math.Max(1, safeEnd - safeStart);
+        if (span >= maxChars - 6)
+        {
+            var budget = Math.Max(1, maxChars - 6);
+            var head = (int)Math.Ceiling(budget / 2d);
+            var tail = Math.Max(0, budget - head);
+            var builder = new StringBuilder();
+            if (safeStart > 0) builder.Append("…\n");
+            builder.Append(text[safeStart..Math.Min(safeStart + head, safeEnd)]);
+            if (tail > 0 && safeEnd - safeStart > head)
+            {
+                builder.Append("\n…\n");
+                builder.Append(text[Math.Max(safeEnd - tail, safeStart + head)..safeEnd]);
+            }
+            if (safeEnd < text.Length) builder.Append("\n…");
+            return builder.ToString();
+        }
+
+        var remaining = maxChars - span;
+        var before = Math.Min(safeStart, remaining / 2);
+        var after = Math.Min(text.Length - safeEnd, remaining - before);
+        var leftover = remaining - before - after;
+        if (leftover > 0)
+        {
+            var extraBefore = Math.Min(safeStart - before, (int)Math.Ceiling(leftover / 2d));
+            before += extraBefore;
+            after += Math.Min(text.Length - safeEnd - after, leftover - extraBefore);
+        }
+
+        var from = safeStart - before;
+        var to = safeEnd + after;
+        var excerpt = text[from..to];
+        if (from > 0) excerpt = $"…\n{excerpt}";
+        if (to < text.Length) excerpt = $"{excerpt}\n…";
+        return excerpt;
+    }
+
+    private static int SharedPrefixLength(string a, string b)
+    {
+        var limit = Math.Min(a.Length, b.Length);
+        var index = 0;
+        while (index < limit && a[index] == b[index])
+            index += 1;
+        return index;
+    }
+
+    private static int SharedSuffixLength(string a, string b, int prefixLength)
+    {
+        var limit = Math.Min(a.Length, b.Length) - prefixLength;
+        var count = 0;
+        while (count < limit && a[a.Length - 1 - count] == b[b.Length - 1 - count])
+            count += 1;
+        return count;
+    }
+
+    private static int LineCount(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return 0;
+        return text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').Length;
+    }
+
+    private static string HashText(string text)
+    {
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+    }
+
+    private static string SerializeInput(string? toolName, Dictionary<string, JsonElement> input)
+    {
+        return JsonSerializer.Serialize(
+            SummarizeToolInputForHistory(toolName, input),
+            AppJsonContext.Default.DictionaryStringJsonElement);
+    }
+
+    private static string SerializeInput(Dictionary<string, JsonElement> input)
+    {
+        return JsonSerializer.Serialize(input, AppJsonContext.Default.DictionaryStringJsonElement);
+    }
+
+    private static bool TryGetString(Dictionary<string, JsonElement> input, string key, out string? value)
+    {
+        if (input.TryGetValue(key, out var element) && element.ValueKind == JsonValueKind.String)
+        {
+            value = element.GetString();
+            return value is not null;
+        }
+
+        value = null;
+        return false;
+    }
+
+    private static JsonElement CreateStringElement(string value)
+    {
+        return JsonDocument.Parse(JsonSerializer.Serialize(value, AppJsonContext.Default.String)).RootElement.Clone();
+    }
+
+    private static JsonElement CreateIntElement(int value)
+    {
+        return JsonDocument.Parse(value.ToString(System.Globalization.CultureInfo.InvariantCulture)).RootElement.Clone();
+    }
+
+    private static JsonElement CreateBoolElement(bool value)
+    {
+        return JsonDocument.Parse(value ? "true" : "false").RootElement.Clone();
     }
 
     public static Dictionary<string, JsonElement> ParseToolInputObject(string? raw)
@@ -944,11 +1208,6 @@ internal static class ProviderMessageFormatter
         return key is "args" or "arguments" or "input";
     }
 
-    private static string SerializeInput(Dictionary<string, JsonElement> input)
-    {
-        return JsonSerializer.Serialize(input, AppJsonContext.Default.DictionaryStringJsonElement);
-    }
-
     private static string SerializeToolResultContent(object? content)
     {
         return content switch
@@ -958,7 +1217,8 @@ internal static class ProviderMessageFormatter
             JsonElement element => element.GetRawText(),
             JsonNode node => node.ToJsonString(),
             IEnumerable<ContentBlock> blocks => JsonSerializer.Serialize(blocks.ToList(), AppJsonContext.Default.ListContentBlock),
-            _ => JsonSerializer.Serialize(content)
+            // Fallback: reflection serialization is disabled; use ToString() for unknown types.
+            _ => content.ToString() ?? string.Empty
         };
     }
 
@@ -971,7 +1231,8 @@ internal static class ProviderMessageFormatter
             string text => ParseJsonString(text),
             JsonElement element => JsonNode.Parse(element.GetRawText()),
             IEnumerable<ContentBlock> blocks => JsonNode.Parse(JsonSerializer.Serialize(blocks.ToList(), AppJsonContext.Default.ListContentBlock)),
-            _ => JsonNode.Parse(JsonSerializer.Serialize(value))
+            // Fallback: stringify unknown content types (reflection serialization is disabled).
+            _ => JsonValue.Create(value.ToString() ?? string.Empty)
         };
     }
 

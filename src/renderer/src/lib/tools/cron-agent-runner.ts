@@ -6,7 +6,8 @@
  */
 
 import { nanoid } from 'nanoid'
-import { runAgentLoop } from '../agent/agent-loop'
+import { runAgentViaSidecar } from '../agent/run-agent-via-sidecar'
+import { buildSidecarAgentRunRequest } from '../ipc/sidecar-protocol'
 import { toolRegistry } from '../agent/tool-registry'
 import { subAgentRegistry } from '../agent/sub-agents/registry'
 import { registerPluginTools, isPluginToolsRegistered } from '../channel/plugin-tools'
@@ -31,8 +32,6 @@ import type {
   ImageBlock,
   ImageErrorBlock
 } from '../api/types'
-import type { AgentLoopConfig } from '../agent/types'
-import type { ToolContext } from './tool-types'
 import { recordUsageEvent } from '../usage-analytics'
 
 const DEFAULT_AGENT = 'CronAgent'
@@ -373,17 +372,12 @@ async function _runCronAgentAsync(
   const definition =
     subAgentRegistry.get(agentName) ?? subAgentRegistry.get(DEFAULT_AGENT) ?? FALLBACK_CRON_AGENT
 
-  const toolCtx: ToolContext = {
-    sessionId: deliveryTarget ?? undefined,
-    workingFolder: effectiveWorkingFolder ?? undefined,
-    signal: ac.signal,
-    ipc: ipcClient,
-    currentToolUseId: undefined,
-    callerAgent: agentName,
-    pluginId: channelsId ?? undefined,
-    pluginChatId: channelsChatId ?? undefined,
-    sharedState: { deliveryUsed: false }
-  }
+  // Plugin/SSH/caller-agent context is now carried on the sidecar request and
+  // re-hydrated in the renderer tool bridge; see buildSidecarAgentRunRequest
+  // below. callerAgent is not yet propagated through the sidecar bridge and
+  // currently only affects Notify/delivery behavior, which cron wraps with
+  // explicit delivery instructions in the prompt.
+  void agentName
 
   if (!isPluginToolsRegistered()) {
     registerPluginTools()
@@ -502,13 +496,19 @@ Begin working on this task now.`
 
   await flushTranscript()
 
-  const loopConfig: AgentLoopConfig = {
-    maxIterations: maxIter ?? definition.maxTurns,
+  const sidecarCronRequest = buildSidecarAgentRunRequest({
+    messages: [loopUserMessage],
     provider: innerProvider,
     tools: innerTools,
-    systemPrompt: definition.systemPrompt,
+    sessionId: deliveryTarget ?? undefined,
     workingFolder: effectiveWorkingFolder ?? undefined,
-    signal: ac.signal
+    maxIterations: maxIter ?? definition.maxTurns,
+    forceApproval: false,
+    pluginId: channelsId ?? undefined,
+    pluginChatId: channelsChatId ?? undefined
+  })
+  if (!sidecarCronRequest) {
+    throw new Error('Failed to build sidecar agent request for cron job')
   }
 
   let output = ''
@@ -561,7 +561,7 @@ Begin working on this task now.`
     await appendLog('start', prompt.slice(0, 200))
     emitProgress('initializing')
 
-    const loop = runAgentLoop([loopUserMessage], loopConfig, toolCtx, async () => true)
+    const loop = runAgentViaSidecar(sidecarCronRequest, { signal: ac.signal })
 
     for await (const event of loop) {
       if (ac.signal.aborted) break

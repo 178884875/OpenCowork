@@ -277,16 +277,10 @@ const exitPlanModeHandler: ToolHandler = {
       plan_id: plan.id,
       plan_file_path: plan.filePath,
       title,
-      message:
-        'Plan mode exited. STOP HERE — wait for the user to review and approve the plan in the panel.'
+      message: 'Plan finalized and ready for user review. Wait for approval before implementing.'
     })
   },
   requiresApproval: () => false
-}
-
-export function registerPlanTools(): void {
-  toolRegistry.register(enterPlanModeHandler)
-  toolRegistry.register(exitPlanModeHandler)
 }
 
 export const PLAN_MODE_ALLOWED_TOOLS = new Set([
@@ -304,7 +298,7 @@ export const PLAN_MODE_ALLOWED_TOOLS = new Set([
   'TaskUpdate',
   'TaskList',
   'Task',
-  'OpenPreview'
+  'visualize_show_widget'
 ])
 
 export const ACP_MODE_ALLOWED_TOOLS = new Set([
@@ -320,5 +314,10 @@ export const ACP_MODE_ALLOWED_TOOLS = new Set([
   'TaskUpdate',
   'TaskList',
   'Task',
-  'OpenPreview'
+  'visualize_show_widget'
 ])
+
+export function registerPlanTools(): void {
+  toolRegistry.register(enterPlanModeHandler)
+  toolRegistry.register(exitPlanModeHandler)
+}

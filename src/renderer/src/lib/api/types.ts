@@ -103,6 +103,25 @@ export interface ToolUseBlock {
   extraContent?: ToolCallExtraContent
 }
 
+/**
+ * Placeholder stored in a persisted Write/Edit tool_use input field when the
+ * original string was too large to keep resident in renderer memory. The full
+ * payload is still present in the SQLite message row and can be rehydrated on
+ * demand (see loadRequestContextMessages in chat-store.ts).
+ */
+export interface ElidedToolInput {
+  __elided: true
+  bytes: number
+}
+
+export function isElidedToolInput(value: unknown): value is ElidedToolInput {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { __elided?: unknown }).__elided === true
+  )
+}
+
 export type ToolResultContent = string | Array<TextBlock | ImageBlock>
 
 export interface ToolResultBlock {
@@ -304,6 +323,33 @@ export interface OAuthToken {
   copilotTelemetry?: string
 }
 
+export interface AccountRateLimit {
+  /** When the rate-limit was first observed (epoch ms) */
+  limitedAt: number
+  /** When the rate-limit window is expected to reset (epoch ms). Accounts auto-revive once now >= resetAt. */
+  resetAt: number
+  /** Origin of the rate-limit marker */
+  reason: 'http-429' | 'codex-quota'
+  /** For Codex quota markers, which window saturated */
+  windowType?: 'primary' | 'secondary'
+  /** Human-readable detail (shown in UI tooltip) */
+  message?: string
+}
+
+export interface ProviderOAuthAccount {
+  /** Stable UUID used as the account key */
+  id: string
+  /** Required — primary display label and dedup key on import */
+  email: string
+  /** Optional user-friendly nickname */
+  label?: string
+  oauth: OAuthToken
+  /** Set when the account is temporarily rate-limited; cleared once resetAt elapses */
+  rateLimit?: AccountRateLimit
+  createdAt: number
+  lastUsedAt?: number
+}
+
 export interface ChannelConfig {
   vcodeUrl: string
   tokenUrl: string
@@ -411,8 +457,16 @@ export interface AIProvider {
   defaultModel?: string
   /** Authentication mode for this provider */
   authMode?: AuthMode
-  /** OAuth token payload (if authMode === 'oauth') */
+  /**
+   * OAuth token payload (if authMode === 'oauth').
+   * When multi-account mode is active, this mirrors the currently selected account's token
+   * so legacy consumers can keep reading `provider.oauth` directly.
+   */
   oauth?: OAuthToken
+  /** Multi-account list. Priority order = array order. First entry is the default. */
+  oauthAccounts?: ProviderOAuthAccount[]
+  /** Currently selected account id. Falls back to the first usable entry in oauthAccounts. */
+  activeAccountId?: string
   /** OAuth configuration for this provider */
   oauthConfig?: OAuthConfig
   /** Channel auth data (if authMode === 'channel') */

@@ -210,6 +210,14 @@
   scroll-behavior: auto !important;
 }
 
+:root[data-animations='disabled'] .animate-spin {
+  animation: var(--animate-spin) !important;
+}
+
+:root[data-animations='disabled'] .animate-pulse {
+  animation: var(--animate-pulse) !important;
+}
+
 /* Title bar drag region */
 .titlebar-drag {
   -webkit-app-region: drag;

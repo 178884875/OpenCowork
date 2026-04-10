@@ -30,7 +30,7 @@ function toDefinition(info: AgentInfo): SubAgentDefinition {
     name: info.name,
     description: info.description,
     icon: info.icon,
-    tools: info.tools ?? info.allowedTools ?? ['Read', 'Glob', 'Grep', 'LS'],
+    tools: info.tools ?? info.allowedTools ?? ['Read', 'Glob', 'Grep', 'LS', 'Bash'],
     disallowedTools: info.disallowedTools ?? [],
     maxTurns: info.maxTurns ?? info.maxIterations ?? 0,
     initialPrompt: info.initialPrompt,

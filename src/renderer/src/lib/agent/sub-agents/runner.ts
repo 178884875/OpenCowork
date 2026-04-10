@@ -5,9 +5,19 @@ import type { SubAgentRunConfig, SubAgentResult } from './types'
 import { createSubAgentPromptMessage } from './input-message'
 import { buildRuntimeCompression } from '../context-compression-runtime'
 import { resolveSubAgentTools } from './resolve-tools'
-import { buildToolResultMessage, runSharedAgentRuntime } from '../shared-runtime'
+import { buildToolResultMessage, requestFallbackReport, runSharedAgentRuntime } from '../shared-runtime'
+import { createSubmitReportTool, SUBMIT_REPORT_TOOL_NAME } from './submit-report-tool'
 
-const READ_ONLY_SET = new Set(['Read', 'LS', 'Glob', 'Grep', 'TaskList', 'TaskGet', 'Skill'])
+const READ_ONLY_SET = new Set([
+  'Read',
+  'LS',
+  'Glob',
+  'Grep',
+  'TaskList',
+  'TaskGet',
+  'Skill',
+  SUBMIT_REPORT_TOOL_NAME
+])
 
 /**
  * Run a SubAgent — executes an inner agent loop with a focused system prompt
@@ -33,10 +43,19 @@ export async function runSubAgent(config: SubAgentRunConfig): Promise<SubAgentRe
     promptMessage
   })
 
-  const { tools: innerTools, invalidTools } = resolveSubAgentTools(
+  const { tools: resolvedInnerTools, invalidTools } = resolveSubAgentTools(
     definition,
     toolRegistry.getDefinitions()
   )
+
+  // Inject the SubmitReport tool so the sub-agent can explicitly end its own
+  // session with a report payload. Without this, some models keep calling
+  // tools indefinitely after the task is logically done, or stop emitting
+  // tool calls without ever producing visible text — both leave the parent
+  // agent with no usable result.
+  const submitReportTool = createSubmitReportTool()
+  const innerTools =
+    resolvedInnerTools.length > 0 ? [...resolvedInnerTools, submitReportTool.definition] : []
 
   const innerProvider = {
     ...parentProvider,
@@ -60,7 +79,11 @@ export async function runSubAgent(config: SubAgentRunConfig): Promise<SubAgentRe
   const loopToolContext = {
     ...toolContext,
     signal: innerAbort.signal,
-    callerAgent: definition.name
+    callerAgent: definition.name,
+    inlineToolHandlers: {
+      ...(toolContext.inlineToolHandlers ?? {}),
+      [submitReportTool.name]: submitReportTool.handler
+    }
   }
 
   const invalidToolsSuffix = invalidTools.length
@@ -256,6 +279,17 @@ export async function runSubAgent(config: SubAgentRunConfig): Promise<SubAgentRe
                 toolUseId,
                 toolCall: event.toolCall
               })
+              // If SubmitReport has just completed, stop immediately — we
+              // don't need to wait for any other tools in the same batch or
+              // for the iteration wrap-up. This is what flips the card from
+              // "in progress" to "done" as soon as the report is submitted.
+              if (
+                event.type === 'tool_call_result' &&
+                event.toolCall.name === SUBMIT_REPORT_TOOL_NAME &&
+                submitReportTool.getReport() !== null
+              ) {
+                return { stop: true, reason: 'completed' }
+              }
               break
 
             case 'iteration_end':
@@ -267,15 +301,47 @@ export async function runSubAgent(config: SubAgentRunConfig): Promise<SubAgentRe
                   message: buildToolResultMessage(event.toolResults)
                 })
               }
+              // Safety net: if SubmitReport fired but we missed the early
+              // exit (e.g. hook ordering), stop here before the next iteration.
+              if (submitReportTool.getReport() !== null) {
+                return { stop: true, reason: 'completed' }
+              }
               break
           }
+          return undefined
         }
       }
     })
 
     const error = runtime.error ? `${runtime.error}${invalidToolsSuffix}` : undefined
     const success = runtime.reason !== 'error' && runtime.reason !== 'aborted'
-    const result = buildResult(success, runtime, error)
+
+    // Primary path: the model called SubmitReport and gave us an explicit
+    // report payload — always prefer this over scraped assistant text.
+    const submittedReport = submitReportTool.getReport()
+    let effectiveRuntime = runtime
+    if (submittedReport && submittedReport.trim()) {
+      effectiveRuntime = { ...runtime, finalOutput: submittedReport.trim() }
+    } else if (
+      !runtime.finalOutput.trim() &&
+      runtime.finalMessages.length > 0 &&
+      !innerAbort.signal.aborted
+    ) {
+      // Fallback: the loop ended without a submitted report and without any
+      // assistant text. Replay the transcript with a synthetic "generate a
+      // detailed report" user message so the caller always gets a usable
+      // summary instead of an empty string.
+      const fallback = await requestFallbackReport({
+        capturedMessages: runtime.finalMessages,
+        loopConfig,
+        toolContext: loopToolContext
+      })
+      if (fallback) {
+        effectiveRuntime = { ...runtime, finalOutput: fallback }
+      }
+    }
+
+    const result = buildResult(success, effectiveRuntime, error)
     onEvent?.({ type: 'sub_agent_end', subAgentName: definition.name, toolUseId, result })
     return result
   } catch (err) {

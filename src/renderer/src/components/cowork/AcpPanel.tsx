@@ -24,8 +24,13 @@ export function AcpPanel(): React.JSX.Element {
     if (!activeSessionId) return undefined
     return Object.values(s.plans).find((item) => item.sessionId === activeSessionId)
   })
-  const tasks = useTaskStore((s) =>
-    activeSessionId ? s.getTasksBySession(activeSessionId) : []
+  // NOTE: select the raw tasks array (stable reference) and filter with useMemo.
+  // Returning a freshly-computed array from the selector breaks
+  // useSyncExternalStore's snapshot equality and causes an infinite render loop.
+  const allTasks = useTaskStore((s) => s.tasks)
+  const tasks = useMemo(
+    () => (activeSessionId ? allTasks.filter((task) => task.sessionId === activeSessionId) : []),
+    [allTasks, activeSessionId]
   )
 
   const progress = useMemo(() => {

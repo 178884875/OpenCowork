@@ -489,12 +489,8 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
           ui.setRightPanelOpen(true)
           return
         }
-        const activeSession = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)
-        const visibleTabs = RIGHT_PANEL_TAB_ORDER.filter(
-          (tab) => (activeSession?.mode ?? ui.mode) === 'acp' || tab !== 'acp'
-        )
-        const tabs = visibleTabs.filter((tab) => tab !== 'acp')
-        const idx = tabs.indexOf(ui.rightPanelTab === 'acp' ? 'steps' : ui.rightPanelTab)
+        const tabs = [...RIGHT_PANEL_TAB_ORDER]
+        const idx = tabs.indexOf(ui.rightPanelTab)
         ui.setRightPanelTab(tabs[((idx >= 0 ? idx : 0) + 1) % tabs.length])
         return
       }

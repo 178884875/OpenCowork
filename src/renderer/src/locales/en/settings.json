@@ -180,7 +180,14 @@
     "hourly": "Hourly",
     "chartCost": "Cost Trend",
     "chartTokens": "Token Composition",
-    "chartRequests": "Request Trend"
+    "chartRequests": "Request Trend",
+    "clearLogs": "Purge Logs > 7d",
+    "clearing": "Clearing...",
+    "clearConfirmTitle": "Purge Logs Older Than 7 Days",
+    "clearConfirmDescription": "Permanently delete {{count}} log entries created before {{date}}. This cannot be undone.",
+    "clearSuccess": "Cleared {{count}} log entries",
+    "clearFailed": "Failed to clear logs",
+    "clearEmpty": "No logs older than 7 days to clear"
   },
   "model": {
     "title": "Model Configuration",
@@ -406,6 +413,50 @@
     "openFullSettings": "Open Full Settings"
   },
   "provider": {
+    "accounts": {
+      "title": "OAuth Accounts",
+      "addAccount": "Add Account",
+      "importJson": "Paste JSON",
+      "importFile": "Import File",
+      "export": "Export",
+      "empty": "No accounts yet. Add one to enable multi-account failover.",
+      "lastUsed": "used {{time}} ago",
+      "status": {
+        "active": "Active",
+        "idle": "Idle",
+        "expired": "Token expired",
+        "rateLimitedUntil": "Rate-limited until {{time}}"
+      },
+      "actions": {
+        "setActive": "Set as active",
+        "refresh": "Refresh token",
+        "clearLimit": "Clear rate limit",
+        "delete": "Delete"
+      },
+      "confirmRemove": {
+        "title": "Remove account",
+        "description": "Remove {{email}} from this provider? Tokens will be revoked locally.",
+        "confirm": "Remove"
+      },
+      "import": {
+        "title": "Import accounts from JSON",
+        "description": "Paste an array of OAuth records. Each record must include an email field.",
+        "cancel": "Cancel",
+        "confirm": "Import"
+      },
+      "toasts": {
+        "addSuccess": "Account added",
+        "addFailed": "Failed to add account: {{error}}",
+        "importResult": "Imported {{imported}} account(s), skipped {{skipped}}",
+        "importFailed": "Import failed: {{error}}",
+        "fileApiMissing": "File picker API is not available",
+        "exportCopied": "Accounts JSON copied to clipboard",
+        "exportFailed": "Export failed: {{error}}",
+        "refreshSuccess": "Token refreshed",
+        "refreshFailed": "Refresh failed: {{error}}",
+        "removeSuccess": "Account removed"
+      }
+    },
     "title": "AI Providers",
     "subtitle": "Configure API keys and models for each provider",
     "search": "Search providers...",

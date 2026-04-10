@@ -10,6 +10,7 @@ import { ipcStreamRequest, maskHeaders } from '../ipc/api-stream'
 import { useProviderStore } from '@renderer/stores/provider-store'
 import { ensureProviderAuthReady } from '@renderer/lib/auth/provider-auth'
 import { getGlobalPromptCacheKey, registerProvider } from './provider'
+import { sanitizeMessagesForToolReplay } from '../tools/tool-input-sanitizer'
 
 function resolveHeaderTemplate(value: string, config: ProviderConfig): string {
   return value
@@ -70,6 +71,7 @@ class OpenAIChatProvider implements APIProvider {
     signal?: AbortSignal
   ): AsyncIterable<StreamEvent> {
     let runtimeConfig = config
+    let activeAccountId: string | undefined
     if (config.providerId) {
       const ready = await ensureProviderAuthReady(config.providerId)
       if (!ready) {
@@ -89,6 +91,7 @@ class OpenAIChatProvider implements APIProvider {
           baseUrl: latest.baseUrl || config.baseUrl,
           userAgent: latest.userAgent ?? config.userAgent
         }
+        activeAccountId = latest.activeAccountId
       }
     }
 
@@ -205,7 +208,8 @@ class OpenAIChatProvider implements APIProvider {
         signal: streamAbortController.signal,
         useSystemProxy: runtimeConfig.useSystemProxy,
         providerId: runtimeConfig.providerId,
-        providerBuiltinId: runtimeConfig.providerBuiltinId
+        providerBuiltinId: runtimeConfig.providerBuiltinId,
+        accountId: activeAccountId
       })) {
         clearCompatTerminalTimer()
         if (!sse.data || sse.data === '[DONE]') break
@@ -469,7 +473,9 @@ class OpenAIChatProvider implements APIProvider {
   ): unknown[] {
     const formatted: unknown[] = []
     const isGoogleCompatible = config ? isGoogleOpenAICompatible(config) : false
-    const normalizedMessages = this.normalizeMessagesForOpenAI(messages)
+    const normalizedMessages = this.normalizeMessagesForOpenAI(
+      sanitizeMessagesForToolReplay(messages)
+    )
 
     if (systemPrompt) {
       formatted.push({ role: 'system', content: systemPrompt })

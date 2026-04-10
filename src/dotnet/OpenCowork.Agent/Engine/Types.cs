@@ -344,6 +344,12 @@ public sealed class RequestOverrides
 public sealed class ProviderConfig
 {
     public string Type { get; set; } = "";
+    /// <summary>
+    /// "native" (default) runs inside the sidecar via a built-in ILlmProvider;
+    /// "bridged" delegates each streaming request back to the renderer over IPC
+    /// so unsupported providers can still drive the sidecar agent loop.
+    /// </summary>
+    public string? Mode { get; set; }
     public string ApiKey { get; set; } = "";
     public string? BaseUrl { get; set; }
     public string Model { get; set; } = "";
@@ -396,6 +402,19 @@ public sealed class ProviderConfig
 [JsonDerivedType(typeof(ContextCompressionStartEvent), "context_compression_start")]
 [JsonDerivedType(typeof(ContextCompressedEvent), "context_compressed")]
 [JsonDerivedType(typeof(RequestDebugEvent), "request_debug")]
+[JsonDerivedType(typeof(SubAgentStartEvent), "sub_agent_start")]
+[JsonDerivedType(typeof(SubAgentIterationEvent), "sub_agent_iteration")]
+[JsonDerivedType(typeof(SubAgentTextDeltaEvent), "sub_agent_text_delta")]
+[JsonDerivedType(typeof(SubAgentThinkingDeltaEvent), "sub_agent_thinking_delta")]
+[JsonDerivedType(typeof(SubAgentThinkingEncryptedEvent), "sub_agent_thinking_encrypted")]
+[JsonDerivedType(typeof(SubAgentToolUseStreamingStartEvent), "sub_agent_tool_use_streaming_start")]
+[JsonDerivedType(typeof(SubAgentToolUseArgsDeltaEvent), "sub_agent_tool_use_args_delta")]
+[JsonDerivedType(typeof(SubAgentToolUseGeneratedEvent), "sub_agent_tool_use_generated")]
+[JsonDerivedType(typeof(SubAgentMessageEndEvent), "sub_agent_message_end")]
+[JsonDerivedType(typeof(SubAgentToolResultMessageEvent), "sub_agent_tool_result_message")]
+[JsonDerivedType(typeof(SubAgentReportUpdateEvent), "sub_agent_report_update")]
+[JsonDerivedType(typeof(SubAgentToolCallEvent), "sub_agent_tool_call")]
+[JsonDerivedType(typeof(SubAgentEndEvent), "sub_agent_end")]
 public abstract class AgentEvent
 {
     protected abstract string TypeValue { get; }
@@ -578,12 +597,141 @@ public sealed class RequestDebugEvent : AgentEvent
     public required RequestDebugInfo DebugInfo { get; init; }
 }
 
+public sealed class SubAgentResult
+{
+    public bool Success { get; init; }
+    public required string Output { get; init; }
+    public bool? ReportSubmitted { get; init; }
+    public int ToolCallCount { get; init; }
+    public int Iterations { get; init; }
+    public required TokenUsage Usage { get; init; }
+    public string? Error { get; init; }
+}
+
+public sealed class SubAgentStartEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_start";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required Dictionary<string, JsonElement> Input { get; init; }
+    public required UnifiedMessage PromptMessage { get; init; }
+}
+
+public sealed class SubAgentIterationEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_iteration";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public int Iteration { get; init; }
+    public required UnifiedMessage AssistantMessage { get; init; }
+}
+
+public sealed class SubAgentTextDeltaEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_text_delta";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required string Text { get; init; }
+}
+
+public sealed class SubAgentThinkingDeltaEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_thinking_delta";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required string Thinking { get; init; }
+}
+
+public sealed class SubAgentThinkingEncryptedEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_thinking_encrypted";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required string ThinkingEncryptedContent { get; init; }
+    public required string ThinkingEncryptedProvider { get; init; }
+}
+
+public sealed class SubAgentToolUseStreamingStartEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_tool_use_streaming_start";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required string ToolCallId { get; init; }
+    public required string ToolName { get; init; }
+    public ToolCallExtraContent? ToolCallExtraContent { get; init; }
+}
+
+public sealed class SubAgentToolUseArgsDeltaEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_tool_use_args_delta";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required string ToolCallId { get; init; }
+    public required Dictionary<string, JsonElement> PartialInput { get; init; }
+}
+
+public sealed class SubAgentToolUseGeneratedEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_tool_use_generated";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required ToolUseBlock ToolUseBlock { get; init; }
+}
+
+public sealed class SubAgentMessageEndEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_message_end";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public TokenUsage? Usage { get; init; }
+    public string? ProviderResponseId { get; init; }
+}
+
+public sealed class SubAgentToolResultMessageEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_tool_result_message";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required UnifiedMessage Message { get; init; }
+}
+
+public sealed class SubAgentReportUpdateEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_report_update";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required string Report { get; init; }
+    public required string Status { get; init; }
+}
+
+public sealed class SubAgentToolCallEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_tool_call";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required ToolCallState ToolCall { get; init; }
+}
+
+public sealed class SubAgentEndEvent : AgentEvent
+{
+    protected override string TypeValue => "sub_agent_end";
+    public required string SubAgentName { get; init; }
+    public required string ToolUseId { get; init; }
+    public required SubAgentResult Result { get; init; }
+}
+
 // --- Lifecycle messages ---
 
 public sealed class AgentEventNotification
 {
     public required string RunId { get; init; }
     public required JsonElement Event { get; init; }
+}
+
+public sealed class AgentEventBatchNotification
+{
+    public required string RunId { get; init; }
+    public required List<JsonElement> Events { get; init; }
 }
 
 public sealed class ApprovalRequestParams
@@ -613,12 +761,43 @@ public sealed class RendererToolRequestParams
     public string? WorkingFolder { get; init; }
     public string? CurrentToolUseId { get; init; }
     public string? AgentRunId { get; init; }
+    public string? PluginId { get; init; }
+    public string? PluginChatId { get; init; }
+    public string? PluginChatType { get; init; }
+    public string? PluginSenderId { get; init; }
+    public string? PluginSenderName { get; init; }
+    public string? SshConnectionId { get; init; }
 }
 
 public sealed class RendererToolResponseResult
 {
     public JsonElement? Content { get; init; }
     public bool IsError { get; init; }
+    public string? Error { get; init; }
+}
+
+public sealed class BridgedProviderStreamStartParams
+{
+    public required string StreamId { get; init; }
+    public required string ProviderType { get; init; }
+    public required ProviderConfig ProviderConfig { get; init; }
+    public required List<UnifiedMessage> Messages { get; init; }
+    public required List<ToolDefinition> Tools { get; init; }
+    public string? AgentRunId { get; init; }
+    public string? SessionId { get; init; }
+}
+
+public sealed class BridgedProviderStreamStartResult
+{
+    public bool Accepted { get; init; }
+    public string? Error { get; init; }
+}
+
+public sealed class BridgedProviderStreamEventParams
+{
+    public required string StreamId { get; init; }
+    public OpenCowork.Agent.Providers.StreamEvent? Event { get; init; }
+    public bool Done { get; init; }
     public string? Error { get; init; }
 }
 
@@ -710,9 +889,31 @@ public sealed class AgentRunParams
     public string? RunId { get; init; }
     public string? SessionId { get; init; }
     public string? WorkingFolder { get; init; }
-    public int MaxIterations { get; init; } = 25;
+    /// <summary>
+    /// 0 (default) = unlimited — the loop runs until the model stops calling
+    /// tools. Any positive value caps the number of iterations.
+    /// </summary>
+    public int MaxIterations { get; init; } = 0;
     public bool ForceApproval { get; init; }
     public CompressionConfig? Compression { get; init; }
+    /// <summary>
+    /// "agent" (default) runs the full tool-calling loop.
+    /// "chat" runs a single provider turn with tool execution disabled.
+    /// </summary>
+    public string? SessionMode { get; init; }
+    /// <summary>
+    /// When true, any tool call not in <see cref="PlanModeAllowedTools"/> is
+    /// answered with a synthesized error tool_result instead of executing.
+    /// Mirrors the renderer-side plan-tool.ts PLAN_MODE_ALLOWED_TOOLS filter.
+    /// </summary>
+    public bool PlanMode { get; init; }
+    public List<string>? PlanModeAllowedTools { get; init; }
+    public string? PluginId { get; init; }
+    public string? PluginChatId { get; init; }
+    public string? PluginChatType { get; init; }
+    public string? PluginSenderId { get; init; }
+    public string? PluginSenderName { get; init; }
+    public string? SshConnectionId { get; init; }
 }
 
 public sealed class AgentRunResult

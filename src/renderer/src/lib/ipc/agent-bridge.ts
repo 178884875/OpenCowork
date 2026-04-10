@@ -33,10 +33,27 @@ class AgentBridgeClient {
       ipc.on(
         'sidecar:event',
         (_event: unknown, payload: { method: string; params: unknown }) => {
-          this.dispatchEvent(
-            payload.method,
-            payload.params as { type: string; [key: string]: unknown }
-          )
+          if (payload.method === 'agent/event-batch') {
+            // Unpack batch into individual agent/event dispatches
+            const batch = payload.params as {
+              runId?: string
+              events?: Array<{ type?: string; [key: string]: unknown }>
+            } | null
+            if (batch?.runId && Array.isArray(batch.events)) {
+              for (const evt of batch.events) {
+                this.dispatchEvent('agent/event', {
+                  runId: batch.runId,
+                  event: evt,
+                  type: evt?.type ?? 'unknown'
+                })
+              }
+            }
+          } else {
+            this.dispatchEvent(
+              payload.method,
+              payload.params as { type: string; [key: string]: unknown }
+            )
+          }
         }
       )
       this.listenerAttached = true

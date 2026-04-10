@@ -12,7 +12,12 @@ import { toolRegistry } from './tool-registry'
 import type { AgentEvent, AgentLoopConfig, ToolCallState } from './types'
 import type { ToolContext, ToolHandler } from '../tools/tool-types'
 import { encodeToolError } from '../tools/tool-result-format'
+import {
+  summarizeToolInputForHistory,
+  sanitizeMessagesForToolReplay
+} from '../tools/tool-input-sanitizer'
 import { shouldCompress, shouldPreCompress, preCompressMessages } from './context-compression'
+import { trySwitchProviderAccount } from '../auth/provider-auth'
 
 const MAX_PROVIDER_RETRIES = 3
 const BASE_RETRY_DELAY_MS = 1_500
@@ -53,6 +58,11 @@ export async function* runAgentLoop(
   let lastInputTokens = 0
   const hasIterationLimit = Number.isFinite(config.maxIterations) && config.maxIterations > 0
 
+  // Always hand the final transcript back to the caller so it can replay the
+  // conversation (e.g. generate a fallback report when no text was produced).
+  // Using a generator-level try/finally guarantees the callback fires for
+  // completed runs, errors, and early termination via .return().
+  try {
   while (!hasIterationLimit || iteration < config.maxIterations) {
     // --- Context management (between iterations) ---
     if (lastInputTokens > 0 && config.contextCompression && !config.signal.aborted) {
@@ -100,6 +110,7 @@ export async function* runAgentLoop(
     let assistantContentBlocks: ContentBlock[] = []
     let toolCalls: ToolCallState[] = []
     let sendAttempt = 0
+    let accountFailoverUsed = false
     let providerResponseId: string | undefined
     // stopReason from message_end is not used at loop level
 
@@ -234,11 +245,12 @@ export async function* runAgentLoop(
                 Object.keys(mergedToolInput).length > 0
                   ? mergedToolInput
                   : safeParseJSON(rawToolArgs)
+              const historyToolInput = summarizeToolInputForHistory(endToolName, toolInput)
               const toolUseBlock: ToolUseBlock = {
                 type: 'tool_use',
                 id: endToolId,
                 name: endToolName,
-                input: toolInput,
+                input: historyToolInput,
                 extraContent: event.toolCallExtraContent ?? toolExtraContentById.get(endToolId)
               }
               assistantContentBlocks.push(toolUseBlock)
@@ -264,7 +276,7 @@ export async function* runAgentLoop(
                 toolUseBlock: {
                   id: toolUseBlock.id,
                   name: endToolName,
-                  input: toolInput,
+                  input: historyToolInput,
                   ...(toolUseBlock.extraContent ? { extraContent: toolUseBlock.extraContent } : {})
                 }
               }
@@ -320,11 +332,12 @@ export async function* runAgentLoop(
             const requiresApproval =
               config.forceApproval ||
               checkToolRequiresApproval(danglingName, danglingInput, toolCtx)
+            const historyDanglingInput = summarizeToolInputForHistory(danglingName, danglingInput)
             const toolUseBlock: ToolUseBlock = {
               type: 'tool_use',
               id: danglingToolId,
               name: danglingName,
-              input: danglingInput,
+              input: historyDanglingInput,
               extraContent: toolExtraContentById.get(danglingToolId)
             }
             assistantContentBlocks.push(toolUseBlock)
@@ -337,7 +350,7 @@ export async function* runAgentLoop(
             })
             yield {
               type: 'tool_use_generated',
-              toolUseBlock: { id: danglingToolId, name: danglingName, input: danglingInput }
+              toolUseBlock: { id: danglingToolId, name: danglingName, input: historyDanglingInput }
             }
           }
           toolArgsById.clear()
@@ -350,6 +363,20 @@ export async function* runAgentLoop(
         if (config.signal.aborted) {
           yield { type: 'loop_end', reason: 'aborted' }
           return
+        }
+        // Multi-account failover: on rate-limit / auth errors, try switching to the
+        // next available OAuth account once before giving up. Rate-limit markers
+        // from the main process land asynchronously via IPC, so by the time we
+        // reach this catch the active account has typically already been flagged.
+        if (!accountFailoverUsed && isAccountFailoverCandidate(err)) {
+          const resolvedId = await safeResolveProviderId(config)
+          if (resolvedId) {
+            const switched = trySwitchProviderAccount(resolvedId)
+            if (switched) {
+              accountFailoverUsed = true
+              continue
+            }
+          }
         }
         const delay = getRetryDelay(err, sendAttempt, streamedContent)
         if (delay === null || sendAttempt === MAX_PROVIDER_RETRIES - 1) {
@@ -377,6 +404,7 @@ export async function* runAgentLoop(
       ...(providerResponseId ? { providerResponseId } : {})
     }
     conversationMessages.push(assistantMsg)
+    conversationMessages = sanitizeMessagesForToolReplay(conversationMessages)
 
     // 2. No tool calls → done
     if (toolCalls.length === 0) {
@@ -485,6 +513,13 @@ export async function* runAgentLoop(
     yield { type: 'loop_end', reason: 'max_iterations' }
   } else {
     yield { type: 'loop_end', reason: 'completed' }
+  }
+  } finally {
+    try {
+      config.captureFinalMessages?.([...conversationMessages])
+    } catch (captureErr) {
+      console.error('[Agent Loop] captureFinalMessages hook threw:', captureErr)
+    }
   }
 }
 
@@ -727,6 +762,36 @@ function getRetryDelay(err: unknown, attempt: number, streamedContent: boolean):
 
   // Default small backoff for partial streams
   return BASE_RETRY_DELAY_MS
+}
+
+function isAccountFailoverCandidate(err: unknown): boolean {
+  const status = extractStatusCode(err)
+  if (status === 401 || status === 403 || status === 429) return true
+  const message = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  if (
+    message.includes('rate limit') ||
+    message.includes('rate_limit') ||
+    message.includes('quota') ||
+    message.includes('auth_error') ||
+    message.includes('unauthorized')
+  ) {
+    return true
+  }
+  return false
+}
+
+async function safeResolveProviderId(
+  config: AgentLoopConfig
+): Promise<string | undefined> {
+  try {
+    if (config.resolveProvider) {
+      const resolved = await config.resolveProvider([])
+      return resolved?.providerId
+    }
+  } catch {
+    return undefined
+  }
+  return config.provider?.providerId
 }
 
 function extractStatusCode(err: unknown): number | null {

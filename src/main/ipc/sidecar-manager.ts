@@ -14,6 +14,7 @@ import {
   desktopInputType,
   isDesktopInputAvailable
 } from './desktop-control'
+import { listAgents } from './agents-handlers'
 
 const SIDECAR_RESTART_DELAY_MS = 2000
 const SIDECAR_MAX_RESTARTS = 5
@@ -560,6 +561,7 @@ export function registerSidecarHandlers(): void {
   const manager = getSidecarManager()
   const pendingApprovalRequests = new Map<string, PendingRendererApprovalRequest>()
   const pendingRendererToolRequests = new Map<string, PendingRendererToolRequest>()
+  const pendingProviderStreamRequests = new Map<string, PendingRendererToolRequest>()
 
   manager.setEventHandler((method, params) => {
     if (method === 'agent/event') {
@@ -631,9 +633,47 @@ export function registerSidecarHandlers(): void {
             return desktopInputScroll((args[0] ?? {}) as Parameters<typeof desktopInputScroll>[0])
           case 'desktop:input:available':
             return isDesktopInputAvailable()
+          case 'agents:list':
+            return listAgents()
           default:
             throw new Error(`Unsupported electron invoke channel: ${channel}`)
         }
+      }
+      case 'renderer/provider-stream-start': {
+        const requestId = `sidecar-provider-stream-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+        const focusedWindow = BrowserWindow.getFocusedWindow()
+        const candidateWindows = focusedWindow
+          ? [focusedWindow, ...BrowserWindow.getAllWindows().filter((win) => win !== focusedWindow)]
+          : BrowserWindow.getAllWindows()
+
+        const targetWindow = candidateWindows.find(
+          (win) => !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed()
+        )
+
+        if (!targetWindow) {
+          throw new Error('No renderer available for provider stream request')
+        }
+
+        return await new Promise<unknown>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            pendingProviderStreamRequests.delete(requestId)
+            reject(new Error('Renderer provider stream request timed out'))
+          }, SIDECAR_RENDERER_REQUEST_TIMEOUT_MS)
+
+          pendingProviderStreamRequests.set(requestId, { resolve, reject, timer })
+
+          const sent = safeSendToWindow(targetWindow, 'sidecar:provider-stream-start', {
+            requestId,
+            method,
+            params
+          })
+
+          if (!sent) {
+            clearTimeout(timer)
+            pendingProviderStreamRequests.delete(requestId)
+            reject(new Error('Failed to deliver provider stream request to renderer'))
+          }
+        })
       }
       case 'renderer/tool-request': {
         const requestId = `sidecar-renderer-tool-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -752,6 +792,43 @@ export function registerSidecarHandlers(): void {
         ...(payload.reason ? { reason: payload.reason } : {})
       })
       return { ok: true }
+    }
+  )
+
+  ipcMain.handle(
+    'sidecar:provider-stream-response',
+    async (
+      _event,
+      payload: { requestId: string; result?: unknown; error?: string }
+    ): Promise<{ ok: boolean }> => {
+      const pending = pendingProviderStreamRequests.get(payload.requestId)
+      if (!pending) return { ok: false }
+
+      pendingProviderStreamRequests.delete(payload.requestId)
+      clearTimeout(pending.timer)
+      if (payload.error) {
+        pending.reject(new Error(payload.error))
+      } else {
+        pending.resolve(payload.result)
+      }
+      return { ok: true }
+    }
+  )
+
+  // Streaming SSE events coming back from the renderer provider bridge.
+  // Forwarded to the sidecar as a JSON-RPC notification (no response).
+  ipcMain.on(
+    'sidecar:provider-stream-event',
+    (_event, payload: { streamId: string; event?: unknown; done?: boolean; error?: string }) => {
+      if (!payload || typeof payload.streamId !== 'string') return
+      if (manager.isRunning) {
+        manager.notify('provider/stream-event', {
+          streamId: payload.streamId,
+          event: payload.event ?? null,
+          done: payload.done === true,
+          ...(payload.error ? { error: payload.error } : {})
+        })
+      }
     }
   )
 

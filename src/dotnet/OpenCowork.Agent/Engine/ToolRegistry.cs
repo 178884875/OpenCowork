@@ -26,9 +26,17 @@ public class ToolContext
     public required string WorkingFolder { get; init; }
     public string? CurrentToolUseId { get; init; }
     public string? AgentRunId { get; init; }
+    public string? PluginId { get; init; }
+    public string? PluginChatId { get; init; }
+    public string? PluginChatType { get; init; }
+    public string? PluginSenderId { get; init; }
+    public string? PluginSenderName { get; init; }
+    public string? SshConnectionId { get; init; }
+    public ProviderConfig? ProviderConfig { get; init; }
     public Func<string, IReadOnlyList<object?>?, CancellationToken, Task<JsonElement?>>? ElectronInvokeAsync { get; init; }
     public Func<string, Dictionary<string, JsonElement>, ToolContext, CancellationToken, Task<JsonElement?>>? RendererToolInvokeAsync { get; init; }
     public Func<string, Dictionary<string, JsonElement>, ToolContext, CancellationToken, Task<bool>>? RendererToolRequiresApprovalAsync { get; init; }
+    public Func<AgentEvent, CancellationToken, Task>? EmitAgentEventAsync { get; init; }
     public Dictionary<string, ToolHandler>? InlineToolHandlers { get; init; }
     public Dictionary<string, ToolHandler>? LocalToolHandlers { get; init; }
     public ConcurrentDictionary<string, DateTimeOffset>? ReadFileHistory { get; init; }
@@ -95,6 +103,12 @@ public sealed class ToolRegistry
         if (_handlers.TryGetValue(name, out var handler))
             return await handler.Execute(input, ctx, ct);
 
+        // Dynamic renderer-tool bridge: delegate unknown tools to the renderer
+        // so newly added JS tools (MCP, plugins, WebFetch, etc.) don't require
+        // a sidecar update. The renderer's tool registry is the source of truth.
+        if (ctx.RendererToolInvokeAsync is not null)
+            return await InvokeRendererToolFallbackAsync(name, input, ctx, ct);
+
         return new ToolResultContent
         {
             Content = $"Unknown tool: {name}",
@@ -109,7 +123,48 @@ public sealed class ToolRegistry
             ?? ctx.LocalToolHandlers?.GetValueOrDefault(name)
             ?? _handlers.GetValueOrDefault(name);
 
-        if (handler is null) return true;
+        // Dynamically bridged tool: the renderer-side probe
+        // (RendererToolRequiresApprovalAsync) is the source of truth. Returning
+        // false here ensures we don't double-gate and force approval on every
+        // dynamically bridged call.
+        if (handler is null)
+            return ctx.RendererToolRequiresApprovalAsync is null;
         return handler.RequiresApproval?.Invoke(input, ctx) ?? false;
+    }
+
+    private static async Task<ToolResultContent> InvokeRendererToolFallbackAsync(
+        string toolName,
+        Dictionary<string, JsonElement> input,
+        ToolContext ctx,
+        CancellationToken ct)
+    {
+        var response = await ctx.RendererToolInvokeAsync!(toolName, input, ctx, ct);
+        if (response is null)
+        {
+            return new ToolResultContent
+            {
+                Content = $"Renderer bridge returned no result for tool: {toolName}",
+                IsError = true
+            };
+        }
+
+        var parsed = JsonSerializer.Deserialize(response.Value, AppJsonContext.Default.RendererToolResponseResult);
+        if (parsed is null)
+        {
+            return new ToolResultContent
+            {
+                Content = $"Renderer bridge returned invalid result for tool: {toolName}",
+                IsError = true
+            };
+        }
+
+        object content = parsed.Content?.Clone()
+            ?? JsonSerializer.SerializeToElement(string.Empty, AppJsonContext.Default.String);
+
+        return new ToolResultContent
+        {
+            Content = content,
+            IsError = parsed.IsError || !string.IsNullOrWhiteSpace(parsed.Error)
+        };
     }
 }

@@ -45,6 +45,12 @@ export function inputSummary(name: string, input: Record<string, unknown>): stri
   }
   if (name === 'Task')
     return `[${input.subagent_type ?? '?'}] ${String(input.description ?? '').slice(0, 50)}`
+  if (name === 'visualize_show_widget') {
+    const title = typeof input.title === 'string' ? input.title : ''
+    const widgetCode = typeof input.widget_code === 'string' ? input.widget_code.trim() : ''
+    const kind = widgetCode.startsWith('<svg') ? 'SVG' : 'HTML'
+    return title ? `${title} (${kind})` : kind
+  }
   const keys = Object.keys(input)
   if (keys.length === 0) return ''
   const first = input[keys[0]]

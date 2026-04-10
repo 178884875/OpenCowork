@@ -5,6 +5,46 @@ import { URL } from 'url'
 
 const MAX_RESPONSE_BODY_CHARS = 10_000_000
 
+// Retry policy for transient AI provider failures: HTTP 429 (rate limited) and HTTP 500 (server error).
+// Total requests sent = 1 initial + up to MAX_RETRY_ATTEMPTS retries.
+const MAX_RETRY_ATTEMPTS = 10
+const RETRY_BASE_DELAY_MS = 1000
+const RETRY_MAX_DELAY_MS = 30_000
+const RETRY_MAX_RETRY_AFTER_MS = 60_000
+
+function isRetryableStatus(status: number): boolean {
+  return status === 500 || status === 429
+}
+
+function parseRetryAfterMs(value: string | string[] | undefined): number | undefined {
+  if (value == null) return undefined
+  const raw = Array.isArray(value) ? value[0] : value
+  if (!raw) return undefined
+  const secs = Number(raw)
+  if (Number.isFinite(secs) && secs >= 0) {
+    return Math.min(RETRY_MAX_RETRY_AFTER_MS, Math.max(0, secs * 1000))
+  }
+  const date = Date.parse(raw)
+  if (Number.isFinite(date)) {
+    const delta = date - Date.now()
+    if (delta > 0) return Math.min(RETRY_MAX_RETRY_AFTER_MS, delta)
+  }
+  return undefined
+}
+
+function computeBackoffMs(attempt: number, retryAfterMs: number | undefined): number {
+  if (retryAfterMs != null) return retryAfterMs
+  const exp = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * Math.pow(2, attempt))
+  // +/-25% jitter
+  const jitter = (Math.random() * 0.5 - 0.25) * exp
+  return Math.max(100, Math.floor(exp + jitter))
+}
+
+type AttemptResult =
+  | { kind: 'streamed' }
+  | { kind: 'retryable'; status: number; body: string; retryAfterMs?: number }
+  | { kind: 'fatal'; status: number; body: string }
+
 interface APIStreamRequest {
   requestId: string
   url: string
@@ -14,6 +54,18 @@ interface APIStreamRequest {
   useSystemProxy?: boolean
   providerId?: string
   providerBuiltinId?: string
+  /** Active OAuth account id when the request is account-scoped. Used to surface rate-limit markers. */
+  accountId?: string
+}
+
+interface AccountRateLimitPayload {
+  providerId?: string
+  providerBuiltinId?: string
+  accountId?: string
+  resetAt: number
+  reason: 'http-429' | 'codex-quota'
+  windowType?: 'primary' | 'secondary'
+  message?: string
 }
 
 function readTimeoutFromEnv(name: string, fallbackMs: number): number {
@@ -155,6 +207,72 @@ function sendQuotaUpdate(
   })
 }
 
+/**
+ * Detect if the response should trigger an account-level rate-limit marker.
+ * Returns the payload to emit, or null.
+ *
+ * Two triggers:
+ *   1. HTTP 429 — derive resetAt from the Retry-After header when present.
+ *   2. Codex quota headers showing primary.usedPercent >= 100 — resetAt from x-codex-primary-reset-*.
+ *      This is a pre-emptive signal: we mark the account before the next 429 actually arrives.
+ */
+function detectAccountRateLimit(
+  status: number,
+  headers: Record<string, string | string[] | undefined>,
+  req: Pick<APIStreamRequest, 'providerId' | 'providerBuiltinId' | 'accountId'>
+): AccountRateLimitPayload | null {
+  if (status === 429) {
+    const retryAfterMs = parseRetryAfterMs(headers['retry-after']) ?? 60_000
+    return {
+      providerId: req.providerId,
+      providerBuiltinId: req.providerBuiltinId,
+      accountId: req.accountId,
+      resetAt: Date.now() + retryAfterMs,
+      reason: 'http-429',
+      message: `HTTP 429 with retry-after ${Math.round(retryAfterMs / 1000)}s`
+    }
+  }
+
+  const quota = extractCodexQuota(headers)
+  if (!quota) return null
+  const saturated =
+    (quota.primary && (quota.primary.usedPercent ?? 0) >= 100 && 'primary') ||
+    (quota.secondary && (quota.secondary.usedPercent ?? 0) >= 100 && 'secondary') ||
+    null
+  if (!saturated) return null
+  const window = saturated === 'primary' ? quota.primary : quota.secondary
+  if (!window) return null
+
+  let resetAt: number | undefined
+  if (typeof window.resetAt === 'string') {
+    const parsed = Date.parse(window.resetAt)
+    if (Number.isFinite(parsed)) resetAt = parsed
+  }
+  if (resetAt === undefined && typeof window.resetAfterSeconds === 'number') {
+    resetAt = Date.now() + window.resetAfterSeconds * 1000
+  }
+  if (resetAt === undefined) return null
+
+  return {
+    providerId: req.providerId,
+    providerBuiltinId: req.providerBuiltinId,
+    accountId: req.accountId,
+    resetAt,
+    reason: 'codex-quota',
+    windowType: saturated,
+    message: `Codex ${saturated} window saturated`
+  }
+}
+
+function sendAccountRateLimited(
+  event: Electron.IpcMainEvent,
+  payload: AccountRateLimitPayload
+): void {
+  const sender = getSender(event)
+  if (!sender) return
+  sender.send('api:account-rate-limited', payload)
+}
+
 function requestViaSystemProxy(args: {
   url: string
   method: string
@@ -228,23 +346,15 @@ export function registerApiProxyHandlers(): void {
   // Handle non-streaming API requests (e.g., test connection)
   ipcMain.handle('api:request', async (event, req: Omit<APIStreamRequest, 'requestId'>) => {
     const { url, method, headers, body, useSystemProxy, providerId, providerBuiltinId } = req
-    try {
-      console.log(`[API Proxy] request ${method} ${url}`)
-      if (useSystemProxy) {
-        const result = await requestViaSystemProxy({ url, method, headers, body })
-        if ((providerId || providerBuiltinId) && result.headers) {
-          const quota = extractCodexQuota(result.headers)
-          if (quota && event.sender) {
-            event.sender.send('api:quota-update', {
-              url,
-              providerId,
-              providerBuiltinId,
-              quota
-            })
-          }
-        }
-        return { statusCode: result.statusCode, body: result.body, error: result.error }
-      }
+
+    type AttemptOutcome = {
+      statusCode?: number
+      body?: string
+      error?: string
+      headers?: Record<string, string | string[] | undefined>
+    }
+
+    const runDirectAttempt = (): Promise<AttemptOutcome> => {
       const parsedUrl = new URL(url)
       const isHttps = parsedUrl.protocol === 'https:'
       const httpModule = isHttps ? https : http
@@ -255,7 +365,7 @@ export function registerApiProxyHandlers(): void {
         reqHeaders['Content-Length'] = String(bodyBuffer.byteLength)
       }
 
-      return new Promise((resolve) => {
+      return new Promise<AttemptOutcome>((resolve) => {
         const options = {
           hostname: parsedUrl.hostname,
           port: parsedUrl.port || (isHttps ? 443 : 80),
@@ -272,20 +382,11 @@ export function registerApiProxyHandlers(): void {
             }
           })
           res.on('end', () => {
-            if (providerId || providerBuiltinId) {
-              const quota = extractCodexQuota(
-                res.headers as Record<string, string | string[] | undefined>
-              )
-              if (quota && event.sender) {
-                event.sender.send('api:quota-update', {
-                  url,
-                  providerId,
-                  providerBuiltinId,
-                  quota
-                })
-              }
-            }
-            resolve({ statusCode: res.statusCode, body: responseBody })
+            resolve({
+              statusCode: res.statusCode,
+              body: responseBody,
+              headers: res.headers as Record<string, string | string[] | undefined>
+            })
           })
         })
 
@@ -302,6 +403,41 @@ export function registerApiProxyHandlers(): void {
         if (bodyBuffer) httpReq.write(bodyBuffer)
         httpReq.end()
       })
+    }
+
+    try {
+      console.log(`[API Proxy] request ${method} ${url}`)
+      let result: AttemptOutcome = {}
+      for (let attempt = 0; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+        result = useSystemProxy
+          ? await requestViaSystemProxy({ url, method, headers, body })
+          : await runDirectAttempt()
+        const status = result.statusCode ?? 0
+        if (status > 0 && isRetryableStatus(status) && attempt < MAX_RETRY_ATTEMPTS) {
+          const retryAfterMs = parseRetryAfterMs(result.headers?.['retry-after'])
+          const delay = computeBackoffMs(attempt, retryAfterMs)
+          console.warn(
+            `[API Proxy] request HTTP ${status}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRY_ATTEMPTS})`
+          )
+          await new Promise<void>((r) => setTimeout(r, delay))
+          continue
+        }
+        break
+      }
+
+      if ((providerId || providerBuiltinId) && result.headers) {
+        const quota = extractCodexQuota(result.headers)
+        if (quota && event.sender) {
+          event.sender.send('api:quota-update', {
+            url,
+            providerId,
+            providerBuiltinId,
+            quota
+          })
+        }
+      }
+
+      return { statusCode: result.statusCode, body: result.body, error: result.error }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       console.error(`[API Proxy] request fatal error: ${errMsg}`)
@@ -311,58 +447,104 @@ export function registerApiProxyHandlers(): void {
 
   // Handle streaming API requests from renderer
   ipcMain.on('api:stream-request', (event, req: APIStreamRequest) => {
-    const { requestId, url, method, headers, body, useSystemProxy, providerId, providerBuiltinId } =
-      req
+    const {
+      requestId,
+      url,
+      method,
+      headers,
+      body,
+      useSystemProxy,
+      providerId,
+      providerBuiltinId,
+      accountId
+    } = req
 
-    try {
-      console.log(`[API Proxy] stream-request[${requestId}] ${method} ${url}`)
+    console.log(`[API Proxy] stream-request[${requestId}] ${method} ${url}`)
 
-      const STREAM_CHUNK_FLUSH_MS = 16
-      const STREAM_CHUNK_MAX_BUFFER_CHARS = 8_192
-      let bufferedChunk = ''
-      let chunkFlushTimer: ReturnType<typeof setTimeout> | null = null
+    // Abort plumbing: registered once for the lifetime of the retry loop.
+    let aborted = false
+    let cancelCurrentAttempt: (() => void) | null = null
+    let cancelRetryWait: (() => void) | null = null
 
-      const clearChunkFlushTimer = (): void => {
-        if (chunkFlushTimer) {
-          clearTimeout(chunkFlushTimer)
-          chunkFlushTimer = null
-        }
-      }
+    const abortHandler = (_event: Electron.IpcMainEvent, data: { requestId: string }): void => {
+      if (data.requestId !== requestId) return
+      aborted = true
+      cancelCurrentAttempt?.()
+      cancelRetryWait?.()
+      ipcMain.removeListener('api:abort', abortHandler)
+    }
+    ipcMain.on('api:abort', abortHandler)
 
-      const flushBufferedChunk = (): void => {
-        clearChunkFlushTimer()
-        if (!bufferedChunk) return
-        const sender = getSender(event)
-        if (sender) {
-          sender.send('api:stream-chunk', {
-            requestId,
-            data: bufferedChunk
-          })
-        }
-        bufferedChunk = ''
-      }
+    const sendError = (error: string): void => {
+      const sender = getSender(event)
+      if (sender) sender.send('api:stream-error', { requestId, error })
+    }
 
-      const queueChunkFlush = (): void => {
-        if (chunkFlushTimer) return
-        chunkFlushTimer = setTimeout(() => {
-          chunkFlushTimer = null
-          flushBufferedChunk()
-        }, STREAM_CHUNK_FLUSH_MS)
-      }
-
-      const pushStreamChunk = (chunk: Buffer): void => {
-        bufferedChunk += chunk.toString()
-        if (bufferedChunk.length >= STREAM_CHUNK_MAX_BUFFER_CHARS) {
-          flushBufferedChunk()
+    const waitForRetry = (ms: number): Promise<void> =>
+      new Promise<void>((resolve) => {
+        if (aborted) {
+          resolve()
           return
         }
-        queueChunkFlush()
-      }
+        const timer = setTimeout(() => {
+          cancelRetryWait = null
+          resolve()
+        }, ms)
+        cancelRetryWait = () => {
+          clearTimeout(timer)
+          cancelRetryWait = null
+          resolve()
+        }
+      })
 
-      if (useSystemProxy) {
-        const requestUrl = url.trim()
-        const bodyBuffer = body ? Buffer.from(body, 'utf-8') : null
-        const reqHeaders = sanitizeHeaders({ ...headers })
+    const runOneAttempt = (): Promise<AttemptResult> =>
+      new Promise<AttemptResult>((resolve) => {
+        const STREAM_CHUNK_FLUSH_MS = 16
+        const STREAM_CHUNK_MAX_BUFFER_CHARS = 8_192
+        let bufferedChunk = ''
+        let chunkFlushTimer: ReturnType<typeof setTimeout> | null = null
+        let settled = false
+
+        const finish = (result: AttemptResult): void => {
+          if (settled) return
+          settled = true
+          cancelCurrentAttempt = null
+          resolve(result)
+        }
+
+        const clearChunkFlushTimer = (): void => {
+          if (chunkFlushTimer) {
+            clearTimeout(chunkFlushTimer)
+            chunkFlushTimer = null
+          }
+        }
+
+        const flushBufferedChunk = (): void => {
+          clearChunkFlushTimer()
+          if (!bufferedChunk) return
+          const sender = getSender(event)
+          if (sender) {
+            sender.send('api:stream-chunk', { requestId, data: bufferedChunk })
+          }
+          bufferedChunk = ''
+        }
+
+        const queueChunkFlush = (): void => {
+          if (chunkFlushTimer) return
+          chunkFlushTimer = setTimeout(() => {
+            chunkFlushTimer = null
+            flushBufferedChunk()
+          }, STREAM_CHUNK_FLUSH_MS)
+        }
+
+        const pushStreamChunk = (chunk: Buffer): void => {
+          bufferedChunk += chunk.toString()
+          if (bufferedChunk.length >= STREAM_CHUNK_MAX_BUFFER_CHARS) {
+            flushBufferedChunk()
+            return
+          }
+          queueChunkFlush()
+        }
 
         // Timeouts (ms):
         // - Connection: max wait for the server to start responding (first byte)
@@ -372,312 +554,328 @@ export function registerApiProxyHandlers(): void {
           180_000
         )
         const IDLE_TIMEOUT = readTimeoutFromEnv('OPENCOWORK_API_IDLE_TIMEOUT_MS', 300_000)
-        let idleTimer: ReturnType<typeof setTimeout> | null = null
 
-        const clearIdleTimer = (): void => {
-          if (idleTimer) {
-            clearTimeout(idleTimer)
-            idleTimer = null
-          }
-        }
+        try {
+          if (useSystemProxy) {
+            const requestUrl = url.trim()
+            const bodyBuffer = body ? Buffer.from(body, 'utf-8') : null
+            const reqHeaders = sanitizeHeaders({ ...headers })
 
-        const resetIdleTimer = (req: Electron.ClientRequest): void => {
-          if (IDLE_TIMEOUT <= 0) return
-          clearIdleTimer()
-          idleTimer = setTimeout(() => {
-            console.warn(`[API Proxy] Idle timeout (${IDLE_TIMEOUT}ms) for ${requestId}`)
-            cancelNetRequest(req)
-          }, IDLE_TIMEOUT)
-        }
-
-        const httpReq = net.request({ method, url: requestUrl })
-        for (const [key, value] of Object.entries(reqHeaders)) {
-          httpReq.setHeader(key, value)
-        }
-        let connectionTimer: ReturnType<typeof setTimeout> | null = null
-
-        const clearConnectionTimer = (): void => {
-          if (connectionTimer) {
-            clearTimeout(connectionTimer)
-            connectionTimer = null
-          }
-        }
-
-        httpReq.on('response', (res) => {
-          clearConnectionTimer()
-          const statusCode = res.statusCode || 0
-          sendQuotaUpdate(
-            event,
-            { requestId, url, providerId, providerBuiltinId },
-            res.headers ?? {}
-          )
-
-          // For non-2xx, collect full body and send as error
-          if (statusCode < 200 || statusCode >= 300) {
-            clearIdleTimer()
-            let errorBody = ''
-            res.on('data', (chunk: Buffer) => {
-              if (errorBody.length < 4000) errorBody += chunk.toString()
-            })
-            res.on('end', () => {
-              console.error(
-                `[API Proxy] stream-request[${requestId}] HTTP ${statusCode}: ${errorBody.slice(0, 500)}`
-              )
-              const sender = getSender(event)
-              if (sender) {
-                sender.send('api:stream-error', {
-                  requestId,
-                  error: `HTTP ${statusCode}: ${errorBody.slice(0, 2000)}`
-                })
+            let idleTimer: ReturnType<typeof setTimeout> | null = null
+            const clearIdleTimer = (): void => {
+              if (idleTimer) {
+                clearTimeout(idleTimer)
+                idleTimer = null
               }
+            }
+
+            const httpReq = net.request({ method, url: requestUrl })
+            for (const [key, value] of Object.entries(reqHeaders)) {
+              httpReq.setHeader(key, value)
+            }
+
+            let connectionTimer: ReturnType<typeof setTimeout> | null = null
+            const clearConnectionTimer = (): void => {
+              if (connectionTimer) {
+                clearTimeout(connectionTimer)
+                connectionTimer = null
+              }
+            }
+
+            const resetIdleTimer = (): void => {
+              if (IDLE_TIMEOUT <= 0) return
+              clearIdleTimer()
+              idleTimer = setTimeout(() => {
+                console.warn(`[API Proxy] Idle timeout (${IDLE_TIMEOUT}ms) for ${requestId}`)
+                cancelNetRequest(httpReq)
+              }, IDLE_TIMEOUT)
+            }
+
+            cancelCurrentAttempt = (): void => {
+              clearConnectionTimer()
+              clearIdleTimer()
+              clearChunkFlushTimer()
+              bufferedChunk = ''
+              cancelNetRequest(httpReq)
+            }
+
+            httpReq.on('response', (res) => {
+              clearConnectionTimer()
+              const statusCode = res.statusCode || 0
+              sendQuotaUpdate(
+                event,
+                { requestId, url, providerId, providerBuiltinId },
+                res.headers ?? {}
+              )
+              const rateLimit = detectAccountRateLimit(
+                statusCode,
+                res.headers ?? {},
+                { providerId, providerBuiltinId, accountId }
+              )
+              if (rateLimit) {
+                sendAccountRateLimited(event, rateLimit)
+              }
+
+              if (statusCode < 200 || statusCode >= 300) {
+                clearIdleTimer()
+                let errorBody = ''
+                res.on('data', (chunk: Buffer) => {
+                  if (errorBody.length < 4000) errorBody += chunk.toString()
+                })
+                res.on('end', () => {
+                  const retryAfterMs = parseRetryAfterMs(
+                    (res.headers as Record<string, string | string[] | undefined>)['retry-after']
+                  )
+                  console.error(
+                    `[API Proxy] stream-request[${requestId}] HTTP ${statusCode}: ${errorBody.slice(0, 500)}`
+                  )
+                  // If this account is rate-limited, don't retry on it at the proxy level:
+                  // the agent loop will fail over to another account.
+                  const kind: AttemptResult['kind'] = rateLimit
+                    ? 'fatal'
+                    : isRetryableStatus(statusCode)
+                      ? 'retryable'
+                      : 'fatal'
+                  finish({
+                    kind,
+                    status: statusCode,
+                    body: errorBody,
+                    retryAfterMs
+                  } as AttemptResult)
+                })
+                return
+              }
+
+              res.on('data', (chunk: Buffer) => {
+                resetIdleTimer()
+                pushStreamChunk(chunk)
+              })
+
+              res.on('end', () => {
+                clearIdleTimer()
+                flushBufferedChunk()
+                const sender = getSender(event)
+                if (sender) sender.send('api:stream-end', { requestId })
+                finish({ kind: 'streamed' })
+              })
+
+              res.on('error', (err) => {
+                clearIdleTimer()
+                clearChunkFlushTimer()
+                bufferedChunk = ''
+                console.error(
+                  `[API Proxy] stream-request[${requestId}] response error: ${err.message}`
+                )
+                finish({ kind: 'fatal', status: 0, body: err.message })
+              })
             })
+
+            if (CONNECTION_TIMEOUT > 0) {
+              connectionTimer = setTimeout(() => {
+                console.warn(
+                  `[API Proxy] Connection timeout (${CONNECTION_TIMEOUT}ms) for ${requestId}`
+                )
+                cancelNetRequest(httpReq)
+                finish({
+                  kind: 'fatal',
+                  status: 0,
+                  body: `Connection timeout (${CONNECTION_TIMEOUT / 1000}s)`
+                })
+              }, CONNECTION_TIMEOUT)
+            }
+
+            httpReq.on('error', (err) => {
+              clearConnectionTimer()
+              clearIdleTimer()
+              clearChunkFlushTimer()
+              bufferedChunk = ''
+              console.error(
+                `[API Proxy] stream-request[${requestId}] request error: ${err.message}`
+              )
+              finish({ kind: 'fatal', status: 0, body: err.message })
+            })
+
+            httpReq.on('close', () => {
+              clearConnectionTimer()
+              clearIdleTimer()
+              clearChunkFlushTimer()
+              bufferedChunk = ''
+              // If close fires before we settled, treat as aborted fatal.
+              if (!settled) finish({ kind: 'fatal', status: 0, body: 'Connection closed' })
+            })
+
+            if (bodyBuffer) httpReq.write(bodyBuffer)
+            httpReq.end()
             return
           }
 
-          // Stream SSE chunks to renderer
-          res.on('data', (chunk: Buffer) => {
-            resetIdleTimer(httpReq)
-            pushStreamChunk(chunk)
-          })
+          // Direct http/https path
+          const parsedUrl = new URL(url)
+          const isHttps = parsedUrl.protocol === 'https:'
+          const httpModule = isHttps ? https : http
 
-          res.on('end', () => {
-            clearIdleTimer()
-            flushBufferedChunk()
-            const sender = getSender(event)
-            if (sender) {
-              sender.send('api:stream-end', { requestId })
+          const bodyBuffer = body ? Buffer.from(body, 'utf-8') : null
+          const reqHeaders = { ...headers }
+          if (bodyBuffer) {
+            reqHeaders['Content-Length'] = String(bodyBuffer.byteLength)
+          }
+
+          const options = {
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port || (isHttps ? 443 : 80),
+            path: parsedUrl.pathname + parsedUrl.search,
+            method,
+            headers: reqHeaders
+          }
+
+          let idleTimer: ReturnType<typeof setTimeout> | null = null
+          const clearIdleTimer = (): void => {
+            if (idleTimer) {
+              clearTimeout(idleTimer)
+              idleTimer = null
             }
+          }
+
+          const httpReq = httpModule.request(options, (res) => {
+            const statusCode = res.statusCode || 0
+            sendQuotaUpdate(
+              event,
+              { requestId, url, providerId, providerBuiltinId },
+              res.headers ?? {}
+            )
+            const rateLimit = detectAccountRateLimit(
+              statusCode,
+              res.headers ?? {},
+              { providerId, providerBuiltinId, accountId }
+            )
+            if (rateLimit) {
+              sendAccountRateLimited(event, rateLimit)
+            }
+
+            if (statusCode < 200 || statusCode >= 300) {
+              clearIdleTimer()
+              let errorBody = ''
+              res.on('data', (chunk: Buffer) => {
+                if (errorBody.length < 4000) errorBody += chunk.toString()
+              })
+              res.on('end', () => {
+                const retryAfterMs = parseRetryAfterMs(res.headers['retry-after'])
+                console.error(
+                  `[API Proxy] stream-request[${requestId}] HTTP ${statusCode}: ${errorBody.slice(0, 500)}`
+                )
+                finish({
+                  kind: rateLimit
+                    ? 'fatal'
+                    : isRetryableStatus(statusCode)
+                      ? 'retryable'
+                      : 'fatal',
+                  status: statusCode,
+                  body: errorBody,
+                  retryAfterMs
+                } as AttemptResult)
+              })
+              return
+            }
+
+            const resetIdleTimer = (): void => {
+              if (IDLE_TIMEOUT <= 0) return
+              clearIdleTimer()
+              idleTimer = setTimeout(() => {
+                console.warn(`[API Proxy] Idle timeout (${IDLE_TIMEOUT}ms) for ${requestId}`)
+                httpReq.destroy(
+                  new Error(`Stream idle timeout (${IDLE_TIMEOUT / 1000}s with no data)`)
+                )
+              }, IDLE_TIMEOUT)
+            }
+
+            res.on('data', (chunk: Buffer) => {
+              resetIdleTimer()
+              pushStreamChunk(chunk)
+            })
+
+            res.on('end', () => {
+              clearIdleTimer()
+              flushBufferedChunk()
+              const sender = getSender(event)
+              if (sender) sender.send('api:stream-end', { requestId })
+              finish({ kind: 'streamed' })
+            })
+
+            res.on('error', (err) => {
+              clearIdleTimer()
+              clearChunkFlushTimer()
+              bufferedChunk = ''
+              console.error(
+                `[API Proxy] stream-request[${requestId}] response error: ${err.message}`
+              )
+              finish({ kind: 'fatal', status: 0, body: err.message })
+            })
           })
 
-          res.on('error', (err) => {
+          cancelCurrentAttempt = (): void => {
             clearIdleTimer()
             clearChunkFlushTimer()
             bufferedChunk = ''
-            console.error(`[API Proxy] stream-request[${requestId}] response error: ${err.message}`)
-            const sender = getSender(event)
-            if (sender) {
-              sender.send('api:stream-error', {
-                requestId,
-                error: err.message
-              })
-            }
-          })
-        })
+            httpReq.destroy()
+          }
 
-        // Connection timeout: abort if the server doesn't respond at all
-        if (CONNECTION_TIMEOUT > 0) {
-          connectionTimer = setTimeout(() => {
-            console.warn(
-              `[API Proxy] Connection timeout (${CONNECTION_TIMEOUT}ms) for ${requestId}`
-            )
-            cancelNetRequest(httpReq)
-            const sender = getSender(event)
-            if (sender) {
-              sender.send('api:stream-error', {
-                requestId,
-                error: `Connection timeout (${CONNECTION_TIMEOUT / 1000}s)`
-              })
-            }
-          }, CONNECTION_TIMEOUT)
-        }
-
-        httpReq.on('error', (err) => {
-          clearConnectionTimer()
-          clearIdleTimer()
-          clearChunkFlushTimer()
-          bufferedChunk = ''
-          console.error(`[API Proxy] stream-request[${requestId}] request error: ${err.message}`)
-          const sender = getSender(event)
-          if (sender) {
-            sender.send('api:stream-error', {
-              requestId,
-              error: err.message
+          if (CONNECTION_TIMEOUT > 0) {
+            httpReq.setTimeout(CONNECTION_TIMEOUT, () => {
+              console.warn(
+                `[API Proxy] Connection timeout (${CONNECTION_TIMEOUT}ms) for ${requestId}`
+              )
+              httpReq.destroy(new Error(`Connection timeout (${CONNECTION_TIMEOUT / 1000}s)`))
             })
           }
-        })
 
-        // Handle abort from renderer
-        const abortHandler = (_event: Electron.IpcMainEvent, data: { requestId: string }): void => {
-          if (data.requestId === requestId) {
-            clearConnectionTimer()
+          httpReq.on('error', (err) => {
             clearIdleTimer()
             clearChunkFlushTimer()
             bufferedChunk = ''
-            cancelNetRequest(httpReq)
-            ipcMain.removeListener('api:abort', abortHandler)
-          }
-        }
-        ipcMain.on('api:abort', abortHandler)
+            console.error(`[API Proxy] stream-request[${requestId}] request error: ${err.message}`)
+            finish({ kind: 'fatal', status: 0, body: err.message })
+          })
 
-        // Clean up abort listener and timers when request completes
-        httpReq.on('close', () => {
-          clearConnectionTimer()
-          clearIdleTimer()
-          clearChunkFlushTimer()
-          bufferedChunk = ''
-          ipcMain.removeListener('api:abort', abortHandler)
-        })
+          httpReq.on('close', () => {
+            clearIdleTimer()
+            clearChunkFlushTimer()
+            bufferedChunk = ''
+            if (!settled) finish({ kind: 'fatal', status: 0, body: 'Connection closed' })
+          })
 
-        if (bodyBuffer) {
-          httpReq.write(bodyBuffer)
+          if (bodyBuffer) httpReq.write(bodyBuffer)
+          httpReq.end()
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err)
+          console.error(`[API Proxy] stream-request[${requestId}] fatal error: ${errMsg}`)
+          finish({ kind: 'fatal', status: 0, body: errMsg })
         }
-        httpReq.end()
+      })
+
+    ;(async () => {
+      for (let attempt = 0; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+        if (aborted) return
+        const result = await runOneAttempt()
+        if (aborted) return
+        if (result.kind === 'streamed') return
+        if (result.kind === 'retryable' && attempt < MAX_RETRY_ATTEMPTS) {
+          const delay = computeBackoffMs(attempt, result.retryAfterMs)
+          console.warn(
+            `[API Proxy] stream-request[${requestId}] HTTP ${result.status}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRY_ATTEMPTS})`
+          )
+          await waitForRetry(delay)
+          continue
+        }
+        // Fatal, or retryable but retries exhausted: surface the error.
+        const trimmed = result.body.slice(0, 2000)
+        const errorMessage =
+          result.status > 0 ? `HTTP ${result.status}: ${trimmed}` : trimmed || 'Unknown error'
+        sendError(errorMessage)
         return
       }
-      const parsedUrl = new URL(url)
-      const isHttps = parsedUrl.protocol === 'https:'
-      const httpModule = isHttps ? https : http
-
-      const bodyBuffer = body ? Buffer.from(body, 'utf-8') : null
-      const reqHeaders = { ...headers }
-      if (bodyBuffer) {
-        reqHeaders['Content-Length'] = String(bodyBuffer.byteLength)
-      }
-
-      const options = {
-        hostname: parsedUrl.hostname,
-        port: parsedUrl.port || (isHttps ? 443 : 80),
-        path: parsedUrl.pathname + parsedUrl.search,
-        method,
-        headers: reqHeaders
-      }
-
-      // Timeouts (ms):
-      // - Connection: max wait for the server to start responding (first byte)
-      // - Idle: max gap between consecutive data chunks during streaming
-      const CONNECTION_TIMEOUT = readTimeoutFromEnv('OPENCOWORK_API_CONNECTION_TIMEOUT_MS', 180_000)
-      const IDLE_TIMEOUT = readTimeoutFromEnv('OPENCOWORK_API_IDLE_TIMEOUT_MS', 300_000)
-      let idleTimer: ReturnType<typeof setTimeout> | null = null
-
-      const clearIdleTimer = (): void => {
-        if (idleTimer) {
-          clearTimeout(idleTimer)
-          idleTimer = null
-        }
-      }
-
-      const resetIdleTimer = (req: http.ClientRequest): void => {
-        if (IDLE_TIMEOUT <= 0) return
-        clearIdleTimer()
-        idleTimer = setTimeout(() => {
-          console.warn(`[API Proxy] Idle timeout (${IDLE_TIMEOUT}ms) for ${requestId}`)
-          req.destroy(new Error(`Stream idle timeout (${IDLE_TIMEOUT / 1000}s with no data)`))
-        }, IDLE_TIMEOUT)
-      }
-
-      const httpReq = httpModule.request(options, (res) => {
-        const statusCode = res.statusCode || 0
-        sendQuotaUpdate(event, { requestId, url, providerId, providerBuiltinId }, res.headers ?? {})
-
-        // For non-2xx, collect full body and send as error
-        if (statusCode < 200 || statusCode >= 300) {
-          clearIdleTimer()
-          let errorBody = ''
-          res.on('data', (chunk: Buffer) => {
-            if (errorBody.length < 4000) errorBody += chunk.toString()
-          })
-          res.on('end', () => {
-            console.error(
-              `[API Proxy] stream-request[${requestId}] HTTP ${statusCode}: ${errorBody.slice(0, 500)}`
-            )
-            const sender = getSender(event)
-            if (sender) {
-              sender.send('api:stream-error', {
-                requestId,
-                error: `HTTP ${statusCode}: ${errorBody.slice(0, 2000)}`
-              })
-            }
-          })
-          return
-        }
-
-        // Stream SSE chunks to renderer
-        res.on('data', (chunk: Buffer) => {
-          resetIdleTimer(httpReq)
-          pushStreamChunk(chunk)
-        })
-
-        res.on('end', () => {
-          clearIdleTimer()
-          flushBufferedChunk()
-          const sender = getSender(event)
-          if (sender) {
-            sender.send('api:stream-end', { requestId })
-          }
-        })
-
-        res.on('error', (err) => {
-          clearIdleTimer()
-          clearChunkFlushTimer()
-          bufferedChunk = ''
-          console.error(`[API Proxy] stream-request[${requestId}] response error: ${err.message}`)
-          const sender = getSender(event)
-          if (sender) {
-            sender.send('api:stream-error', {
-              requestId,
-              error: err.message
-            })
-          }
-        })
-      })
-
-      // Connection timeout: abort if the server doesn't respond at all
-      if (CONNECTION_TIMEOUT > 0) {
-        httpReq.setTimeout(CONNECTION_TIMEOUT, () => {
-          console.warn(`[API Proxy] Connection timeout (${CONNECTION_TIMEOUT}ms) for ${requestId}`)
-          httpReq.destroy(new Error(`Connection timeout (${CONNECTION_TIMEOUT / 1000}s)`))
-        })
-      }
-
-      httpReq.on('error', (err) => {
-        clearIdleTimer()
-        clearChunkFlushTimer()
-        bufferedChunk = ''
-        console.error(`[API Proxy] stream-request[${requestId}] request error: ${err.message}`)
-        const sender = getSender(event)
-        if (sender) {
-          sender.send('api:stream-error', {
-            requestId,
-            error: err.message
-          })
-        }
-      })
-
-      // Handle abort from renderer
-      const abortHandler = (_event: Electron.IpcMainEvent, data: { requestId: string }): void => {
-        if (data.requestId === requestId) {
-          clearIdleTimer()
-          clearChunkFlushTimer()
-          bufferedChunk = ''
-          httpReq.destroy()
-          ipcMain.removeListener('api:abort', abortHandler)
-        }
-      }
-      ipcMain.on('api:abort', abortHandler)
-
-      // Clean up abort listener and timers when request completes
-      httpReq.on('close', () => {
-        clearIdleTimer()
-        clearChunkFlushTimer()
-        bufferedChunk = ''
-        ipcMain.removeListener('api:abort', abortHandler)
-      })
-
-      if (bodyBuffer) {
-        httpReq.write(bodyBuffer)
-      }
-      httpReq.end()
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      console.error(`[API Proxy] stream-request[${requestId}] fatal error: ${errMsg}`)
-      const sender = getSender(event)
-      if (sender) {
-        sender.send('api:stream-error', {
-          requestId,
-          error: errMsg
-        })
-      }
-    }
+    })().finally(() => {
+      ipcMain.removeListener('api:abort', abortHandler)
+    })
   })
 }
 

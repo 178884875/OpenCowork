@@ -22,7 +22,11 @@ import {
   resolvePromptEnvironmentContext
 } from '@renderer/lib/agent/system-prompt'
 import { subAgentEvents } from '@renderer/lib/agent/sub-agents/events'
-import { parseSubAgentMeta, TASK_TOOL_NAME } from '@renderer/lib/agent/sub-agents/create-tool'
+import {
+  clearLastTaskInvocation,
+  parseSubAgentMeta,
+  TASK_TOOL_NAME
+} from '@renderer/lib/agent/sub-agents/create-tool'
 import type { SubAgentEvent } from '@renderer/lib/agent/sub-agents/types'
 import { abortAllTeammates } from '@renderer/lib/agent/teams/teammate-runner'
 import { TEAM_TOOL_NAMES } from '@renderer/lib/agent/teams/register'
@@ -80,6 +84,10 @@ import {
 } from '@renderer/lib/agent/context-compression'
 import { runAgentLoop } from '@renderer/lib/agent/agent-loop'
 import {
+  summarizeToolInputForHistory,
+  summarizeToolInputForLiveCard
+} from '@renderer/lib/tools/tool-input-sanitizer'
+import {
   addRuntimeMessage,
   appendRuntimeContentBlock,
   appendRuntimeTextDelta,
@@ -123,12 +131,11 @@ import {
   buildSidecarAgentRunRequest,
   normalizeSidecarAgentEvent,
   normalizeSidecarApprovalRequest,
-  normalizeSidecarRecord
+  normalizeSidecarRecord,
+  normalizeSidecarSubAgentEvent
 } from '@renderer/lib/ipc/sidecar-protocol'
-import {
-  attachRendererToolBridge,
-  getRendererBridgedToolNames
-} from '@renderer/lib/ipc/renderer-tool-bridge'
+import { attachRendererToolBridge } from '@renderer/lib/ipc/renderer-tool-bridge'
+import { attachRendererProviderBridge } from '@renderer/lib/ipc/renderer-provider-bridge'
 
 /** Per-session abort controllers — module-level so concurrent sessions don't overwrite each other */
 const sessionAbortControllers = new Map<string, AbortController>()
@@ -478,13 +485,14 @@ function buildProviderConfigWithRuntimeSettings(
   const effectiveMaxTokens = modelConfig?.maxOutputTokens
     ? Math.min(settings.maxTokens, modelConfig.maxOutputTokens)
     : settings.maxTokens
-  const thinkingEnabled = settings.thinkingEnabled && !!modelConfig?.thinkingConfig
+  const resolvedThinkingConfig = modelConfig?.thinkingConfig ?? providerConfig.thinkingConfig
+  const thinkingEnabled = settings.thinkingEnabled && !!resolvedThinkingConfig
   const reasoningEffort = resolveReasoningEffortForModel({
     reasoningEffort: settings.reasoningEffort,
     reasoningEffortByModel: settings.reasoningEffortByModel,
     providerId: providerConfig.providerId,
     modelId: modelConfig?.id ?? providerConfig.model,
-    thinkingConfig: modelConfig?.thinkingConfig
+    thinkingConfig: resolvedThinkingConfig
   })
 
   return {
@@ -493,7 +501,7 @@ function buildProviderConfigWithRuntimeSettings(
     temperature: settings.temperature,
     systemPrompt: settings.systemPrompt || undefined,
     thinkingEnabled,
-    thinkingConfig: modelConfig?.thinkingConfig,
+    thinkingConfig: resolvedThinkingConfig,
     reasoningEffort,
     responseSummary: modelConfig?.responseSummary ?? providerConfig.responseSummary,
     enablePromptCache: modelConfig?.enablePromptCache ?? providerConfig.enablePromptCache,
@@ -1220,134 +1228,6 @@ function createStreamDeltaBuffer(sessionId: string, assistantMsgId: string): Str
   }
 }
 
-const EDIT_TOOL_PREVIEW_CHARS = 800
-const WRITE_TOOL_PREVIEW_CHARS = 1200
-
-function sharedPrefixLength(a: string, b: string): number {
-  const limit = Math.min(a.length, b.length)
-  let index = 0
-  while (index < limit && a.charCodeAt(index) === b.charCodeAt(index)) {
-    index += 1
-  }
-  return index
-}
-
-function sharedSuffixLength(a: string, b: string, prefixLength: number): number {
-  const limit = Math.min(a.length, b.length) - prefixLength
-  let count = 0
-  while (
-    count < limit &&
-    a.charCodeAt(a.length - 1 - count) === b.charCodeAt(b.length - 1 - count)
-  ) {
-    count += 1
-  }
-  return count
-}
-
-function excerptAroundRange(text: string, start: number, end: number, maxChars: number): string {
-  if (text.length <= maxChars) return text
-
-  const safeStart = Math.max(0, Math.min(start, text.length))
-  const safeEnd = Math.max(safeStart, Math.min(end, text.length))
-  const span = Math.max(1, safeEnd - safeStart)
-
-  if (span >= maxChars - 6) {
-    const budget = Math.max(1, maxChars - 6)
-    const head = Math.ceil(budget / 2)
-    const tail = Math.max(0, budget - head)
-    let excerpt = ''
-    if (safeStart > 0) excerpt += '…\n'
-    excerpt += text.slice(safeStart, Math.min(safeStart + head, safeEnd))
-    if (tail > 0 && safeEnd - safeStart > head) {
-      excerpt += '\n…\n'
-      excerpt += text.slice(Math.max(safeEnd - tail, safeStart + head), safeEnd)
-    }
-    if (safeEnd < text.length) excerpt += '\n…'
-    return excerpt
-  }
-
-  const remaining = maxChars - span
-  let before = Math.min(safeStart, Math.floor(remaining / 2))
-  let after = Math.min(text.length - safeEnd, remaining - before)
-  const leftover = remaining - before - after
-
-  if (leftover > 0) {
-    const extraBefore = Math.min(safeStart - before, Math.ceil(leftover / 2))
-    before += extraBefore
-    after += Math.min(text.length - safeEnd - after, leftover - extraBefore)
-  }
-
-  const from = safeStart - before
-  const to = safeEnd + after
-  let excerpt = text.slice(from, to)
-  if (from > 0) excerpt = `…\n${excerpt}`
-  if (to < text.length) excerpt = `${excerpt}\n…`
-  return excerpt
-}
-
-function buildEditPreviewPair(
-  oldStr: string,
-  newStr: string,
-  maxChars: number = EDIT_TOOL_PREVIEW_CHARS
-): { oldPreview: string; newPreview: string } {
-  if (oldStr === newStr) {
-    const preview = excerptAroundRange(oldStr, 0, Math.min(oldStr.length, maxChars), maxChars)
-    return { oldPreview: preview, newPreview: preview }
-  }
-
-  const prefixLength = sharedPrefixLength(oldStr, newStr)
-  const suffixLength = sharedSuffixLength(oldStr, newStr, prefixLength)
-  const oldEnd = Math.max(prefixLength, oldStr.length - suffixLength)
-  const newEnd = Math.max(prefixLength, newStr.length - suffixLength)
-
-  return {
-    oldPreview: excerptAroundRange(oldStr, prefixLength, oldEnd, maxChars),
-    newPreview: excerptAroundRange(newStr, prefixLength, newEnd, maxChars)
-  }
-}
-
-function compactStreamingToolInput(input: Record<string, unknown>): Record<string, unknown> {
-  const hasEditPayload =
-    typeof input.old_string === 'string' || typeof input.new_string === 'string'
-  const hasWritePayload = typeof input.content === 'string'
-
-  if (!hasEditPayload && !hasWritePayload) return input
-
-  const compact: Record<string, unknown> = {}
-  if (input.file_path !== undefined) compact.file_path = input.file_path
-  if (input.path !== undefined) compact.path = input.path
-
-  if (hasEditPayload) {
-    if (input.explanation !== undefined) compact.explanation = input.explanation
-    if (input.replace_all !== undefined) compact.replace_all = input.replace_all
-
-    const oldStr = typeof input.old_string === 'string' ? input.old_string : ''
-    const newStr = typeof input.new_string === 'string' ? input.new_string : ''
-    const { oldPreview, newPreview } = buildEditPreviewPair(oldStr, newStr)
-
-    if (typeof input.old_string === 'string') {
-      compact.old_string_preview = oldPreview
-      compact.old_string_chars = oldStr.length
-      if (oldStr.length > EDIT_TOOL_PREVIEW_CHARS) compact.old_string_truncated = true
-    }
-
-    if (typeof input.new_string === 'string') {
-      compact.new_string_preview = newPreview
-      compact.new_string_chars = newStr.length
-      if (newStr.length > EDIT_TOOL_PREVIEW_CHARS) compact.new_string_truncated = true
-    }
-  }
-
-  if (hasWritePayload) {
-    const content = String(input.content)
-    compact.content_preview = content.slice(0, WRITE_TOOL_PREVIEW_CHARS)
-    compact.content_lines = content.length === 0 ? 0 : content.split('\n').length
-    compact.content_chars = content.length
-    if (content.length > WRITE_TOOL_PREVIEW_CHARS) compact.content_truncated = true
-  }
-
-  return compact
-}
 
 function shouldHandleAgentEventAfterAbort(event: AgentEvent): boolean {
   switch (event.type) {
@@ -1362,31 +1242,10 @@ function shouldHandleAgentEventAfterAbort(event: AgentEvent): boolean {
   }
 }
 
-function getSidecarSupportedToolNames(): Set<string> {
-  return new Set([
-    'Read',
-    'Write',
-    'Edit',
-    'Bash',
-    'Delete',
-    'Move',
-    'LS',
-    'Glob',
-    'Grep',
-    'DesktopScreenshot',
-    'DesktopClick',
-    'DesktopType',
-    'DesktopScroll',
-    'DesktopWait',
-    IMAGE_GENERATE_TOOL_NAME,
-    ...getRendererBridgedToolNames()
-  ])
-}
-
-function getUnsupportedSidecarToolNames(toolNames: string[]): string[] {
-  const supportedToolNames = getSidecarSupportedToolNames()
-  return [...new Set(toolNames)].filter((toolName) => !supportedToolNames.has(toolName))
-}
+// Stage 1: the sidecar ToolRegistry dynamically bridges any unknown tool to
+// the renderer. Every tool the renderer's toolRegistry can handle — including
+// MCP, plugin/channel tools, WebFetch/WebSearch — is considered sidecar
+// supported. A static whitelist is no longer authoritative.
 
 function createNodeAgentLoop(args: {
   messages: UnifiedMessage[]
@@ -1502,8 +1361,6 @@ async function canUseSidecarForAgentRun(args: {
   hasChannels: boolean
   hasMcps: boolean
 }): Promise<boolean> {
-  if (args.sessionMode === 'chat') return false
-
   const sidecarRequest = buildSidecarAgentRunRequest({
     messages: args.messages,
     provider: args.provider,
@@ -1512,40 +1369,39 @@ async function canUseSidecarForAgentRun(args: {
     workingFolder: args.workingFolder,
     maxIterations: args.maxIterations,
     forceApproval: args.forceApproval,
-    compression: args.compression
+    compression: args.compression,
+    sessionMode: 'agent',
+    planMode: args.isPlanMode,
+    planModeAllowedTools: args.isPlanMode ? [...PLAN_MODE_ALLOWED_TOOLS] : undefined
   })
   if (!sidecarRequest) return false
 
   const requestedToolNames = [...new Set(sidecarRequest.tools.map((tool) => tool.name))]
-  const unsupportedToolNames = getUnsupportedSidecarToolNames(requestedToolNames)
-  if (unsupportedToolNames.length > 0) {
-    console.warn('[ChatActions] Sidecar unsupported tool set', {
-      sessionId: args.sessionId,
-      providerType: sidecarRequest.provider.type,
-      requestedToolNames,
-      unsupportedToolNames,
-      hasChannels: args.hasChannels,
-      hasMcps: args.hasMcps
-    })
-    return false
-  }
 
-  const providerCapability = `provider.${sidecarRequest.provider.type}`
+  // Stages 1-3: tool-level and provider-level capability probes are gone.
+  // - Unknown tools are auto-bridged back to the renderer by the sidecar's
+  //   ToolRegistry.Execute fallback.
+  // - Non-native provider types (or providers using features the native
+  //   sidecar provider doesn't support) are flagged mode=bridged in
+  //   mapSidecarProvider, and the sidecar spins up a BridgedProvider that
+  //   delegates streaming back to renderer-provider-bridge.
+  // The only remaining hard requirement is that the sidecar is running and
+  // exposes agent.run, plus the desktop-input bridge when the session needs
+  // computer-use tools.
   const needsDesktopCapability =
     args.desktopControlMode === 'computer-use' ||
     requestedToolNames.some((toolName) => toolName.startsWith('Desktop'))
 
   const capabilityChecks = await Promise.all([
     canSidecarHandle('agent.run'),
-    canSidecarHandle(providerCapability),
-    ...(needsDesktopCapability ? [canSidecarHandle('desktop.input')] : []),
-    ...requestedToolNames.map((toolName) => canSidecarHandle(`tool.${toolName}`))
+    ...(needsDesktopCapability ? [canSidecarHandle('desktop.input')] : [])
   ])
   const ok = capabilityChecks.every(Boolean)
   if (!ok) {
     console.warn('[ChatActions] Sidecar agent gating failed', {
       sessionId: args.sessionId,
       providerType: sidecarRequest.provider.type,
+      providerMode: sidecarRequest.provider.mode ?? 'native',
       requestedToolNames,
       needsDesktopCapability,
       hasChannels: args.hasChannels,
@@ -1741,6 +1597,10 @@ export function useChatActions(): {
       }
       if (source !== 'continue') {
         longRunningVerificationPasses.delete(sessionId)
+        // Reset the back-to-back Task dedup guard on every fresh user turn —
+        // the guard is only meant to block immediate retries within one loop,
+        // not carry over into new user messages.
+        clearLastTaskInvocation(sessionId)
       }
       await chatStore.loadRecentSessionMessages(sessionId)
 
@@ -2470,12 +2330,21 @@ export function useChatActions(): {
             workingFolder: session?.workingFolder,
             maxIterations: DEFAULT_AGENT_MAX_ITERATIONS,
             forceApproval: false,
-            compression: compressionConfig
+            compression: compressionConfig,
+            sessionMode: 'agent',
+            planMode: isPlanMode,
+            planModeAllowedTools: isPlanMode ? [...PLAN_MODE_ALLOWED_TOOLS] : undefined,
+            pluginId: session?.pluginId,
+            pluginChatId: session?.externalChatId
+              ? extractPluginChatId(session.externalChatId)
+              : undefined,
+            pluginChatType: session?.pluginChatType,
+            pluginSenderId: session?.pluginSenderId,
+            pluginSenderName: session?.pluginSenderName,
+            sshConnectionId: session?.sshConnectionId
           })
 
-          const useSidecar =
-            !isPlanMode &&
-            (await canUseSidecarForAgentRun({
+          const useSidecar = await canUseSidecarForAgentRun({
               messages: messagesToSend,
               provider: agentProviderConfig,
               tools: effectiveToolDefs,
@@ -2489,7 +2358,7 @@ export function useChatActions(): {
               desktopControlMode,
               hasChannels: scopedActiveChannels.length > 0,
               hasMcps: activeMcps.length > 0
-            }))
+            })
 
           console.log('[ChatActions] Agent execution path', {
             sessionId,
@@ -2521,7 +2390,7 @@ export function useChatActions(): {
             loop = {
               async *[Symbol.asyncIterator]() {
                 const queue: AgentEvent[] = []
-                const pendingEvents: Array<{ runId: string; event: AgentEvent }> = []
+                const pendingEvents: Array<{ runId: string; rawEvent: unknown }> = []
                 let finished = false
                 let notify: (() => void) | null = null
                 let runId = ''
@@ -2541,20 +2410,31 @@ export function useChatActions(): {
                   }
                 }
 
+                const dispatchSidecarEvent = (rawEvent: unknown): void => {
+                  const subAgentEvent = normalizeSidecarSubAgentEvent(rawEvent)
+                  if (subAgentEvent) {
+                    subAgentEvents.emit(subAgentEvent)
+                    return
+                  }
+
+                  const normalized = normalizeSidecarAgentEvent(rawEvent)
+                  if (normalized) {
+                    pushEvent(normalized)
+                  }
+                }
+
                 const unsub = agentBridge.on('agent/event', (payload) => {
                   const record = normalizeSidecarRecord(payload)
                   const eventRunId = String(record.runId ?? '')
                   if (!eventRunId) return
-                  const normalized = normalizeSidecarAgentEvent(record.event)
-                  if (!normalized) return
 
                   if (!runId) {
-                    pendingEvents.push({ runId: eventRunId, event: normalized })
+                    pendingEvents.push({ runId: eventRunId, rawEvent: record.event })
                     return
                   }
 
                   if (eventRunId !== runId) return
-                  pushEvent(normalized)
+                  dispatchSidecarEvent(record.event)
                 })
                 try {
                   const result = await agentBridge.runAgent(sidecarRequest)
@@ -2564,7 +2444,7 @@ export function useChatActions(): {
 
                   for (const pending of pendingEvents.splice(0, pendingEvents.length)) {
                     if (pending.runId !== runId) continue
-                    pushEvent(pending.event)
+                    dispatchSidecarEvent(pending.rawEvent)
                     if (finished) break
                   }
 
@@ -2592,9 +2472,6 @@ export function useChatActions(): {
               providerType: agentProviderConfig.type,
               toolNames: effectiveToolDefs.map((tool) => tool.name),
               hasSidecarRequest: !!sidecarRequest,
-              unsupportedToolNames: sidecarRequest
-                ? getUnsupportedSidecarToolNames(sidecarRequest.tools.map((tool) => tool.name))
-                : [],
               isPlanMode,
               sessionMode: mode,
               hasChannels: scopedActiveChannels.length > 0,
@@ -2623,6 +2500,7 @@ export function useChatActions(): {
 
           let thinkingDone = false
           let hasThinkingDelta = false
+          const liveToolNames = new Map<string, string>()
           streamDeltaBuffer = createStreamDeltaBuffer(sessionId!, assistantMsgId)
 
           const flushChatToolInput = (toolCallId: string): void => {
@@ -2793,6 +2671,7 @@ export function useChatActions(): {
                 break
 
               case 'tool_use_streaming_start':
+                liveToolNames.set(event.toolCallId, event.toolName)
                 // Preserve stream order: flush any pending thinking/text before inserting tool block.
                 streamDeltaBuffer.flushNow()
                 if (!thinkingDone) {
@@ -2826,14 +2705,16 @@ export function useChatActions(): {
 
               case 'tool_use_args_delta': {
                 // Real-time partial args update via partial-json parsing
-                const compactPartialInput = compactStreamingToolInput(event.partialInput)
-                scheduleChatToolInputUpdate(event.toolCallId, compactPartialInput)
-                scheduleToolInputUpdate(event.toolCallId, compactPartialInput)
+                const toolName = liveToolNames.get(event.toolCallId) ?? ''
+                const liveCardInput = summarizeToolInputForLiveCard(toolName, event.partialInput)
+                scheduleChatToolInputUpdate(event.toolCallId, liveCardInput)
+                scheduleToolInputUpdate(event.toolCallId, liveCardInput)
                 break
               }
 
               case 'tool_use_generated':
                 runUsedTools = true
+                liveToolNames.set(event.toolUseBlock.id, event.toolUseBlock.name)
                 if (event.toolUseBlock.name === 'Write') {
                   console.log('[WriteTrace] tool_use_generated', {
                     sessionId,
@@ -2863,7 +2744,10 @@ export function useChatActions(): {
                     type: 'tool_use',
                     id: event.toolUseBlock.id,
                     name: event.toolUseBlock.name,
-                    input: event.toolUseBlock.input,
+                    input: summarizeToolInputForLiveCard(
+                      event.toolUseBlock.name,
+                      event.toolUseBlock.input
+                    ),
                     ...(event.toolUseBlock.extraContent
                       ? { extraContent: event.toolUseBlock.extraContent }
                       : {})
@@ -2872,7 +2756,10 @@ export function useChatActions(): {
                     {
                       id: event.toolUseBlock.id,
                       name: event.toolUseBlock.name,
-                      input: event.toolUseBlock.input,
+                      input: summarizeToolInputForLiveCard(
+                        event.toolUseBlock.name,
+                        event.toolUseBlock.input
+                      ),
                       status: 'running',
                       requiresApproval: false,
                       ...(event.toolUseBlock.extraContent
@@ -2883,15 +2770,19 @@ export function useChatActions(): {
                     sessionId!
                   )
                 }
-                // Args fully streamed — update the existing block's input (final)
-                streamDeltaBuffer.setToolInput(event.toolUseBlock.id, event.toolUseBlock.input)
+                // Args fully streamed — keep live cards compact until execution finishes.
+                const liveCardInput = summarizeToolInputForLiveCard(
+                  event.toolUseBlock.name,
+                  event.toolUseBlock.input
+                )
+                streamDeltaBuffer.setToolInput(event.toolUseBlock.id, liveCardInput)
                 streamDeltaBuffer.flushNow()
                 flushChatToolInput(event.toolUseBlock.id)
                 flushToolInput(event.toolUseBlock.id)
                 useAgentStore.getState().updateToolCall(
                   event.toolUseBlock.id,
                   {
-                    input: event.toolUseBlock.input,
+                    input: liveCardInput,
                     ...(event.toolUseBlock.extraContent
                       ? { extraContent: event.toolUseBlock.extraContent }
                       : {})
@@ -2902,7 +2793,13 @@ export function useChatActions(): {
 
               case 'tool_call_start':
                 runUsedTools = true
-                useAgentStore.getState().addToolCall(event.toolCall, sessionId!)
+                useAgentStore.getState().addToolCall(
+                  {
+                    ...event.toolCall,
+                    input: summarizeToolInputForLiveCard(event.toolCall.name, event.toolCall.input)
+                  },
+                  sessionId!
+                )
                 break
 
               case 'tool_call_approval_needed': {
@@ -2912,7 +2809,13 @@ export function useChatActions(): {
                   useSettingsStore.getState().autoApprove ||
                   useAgentStore.getState().approvedToolNames.includes(event.toolCall.name)
                 if (!willAutoApprove) {
-                  useAgentStore.getState().addToolCall(event.toolCall, sessionId!)
+                  useAgentStore.getState().addToolCall(
+                    {
+                      ...event.toolCall,
+                      input: summarizeToolInputForLiveCard(event.toolCall.name, event.toolCall.input)
+                    },
+                    sessionId!
+                  )
                 }
                 break
               }
@@ -2929,9 +2832,17 @@ export function useChatActions(): {
                     error: event.toolCall.error
                   })
                 }
+                const settledInput =
+                  event.toolCall.status === 'completed' || event.toolCall.status === 'error'
+                    ? summarizeToolInputForHistory(event.toolCall.name, event.toolCall.input)
+                    : undefined
+                if (settledInput) {
+                  updateRuntimeToolUseInput(sessionId!, assistantMsgId, event.toolCall.id, settledInput)
+                }
                 useAgentStore.getState().updateToolCall(
                   event.toolCall.id,
                   {
+                    ...(settledInput ? { input: settledInput } : {}),
                     status: event.toolCall.status,
                     output: event.toolCall.output,
                     error: event.toolCall.error,
@@ -2947,6 +2858,9 @@ export function useChatActions(): {
                   (event.toolCall.name === 'Write' || event.toolCall.name === 'Edit')
                 ) {
                   void useAgentStore.getState().refreshRunChanges(assistantMsgId)
+                }
+                if (event.toolCall.status === 'completed' || event.toolCall.status === 'error') {
+                  liveToolNames.delete(event.toolCall.id)
                 }
                 break
 
@@ -3244,6 +3158,7 @@ export function useChatActions(): {
   useEffect(() => {
     if (!sidecarRendererToolListenerAttached) {
       attachRendererToolBridge()
+      attachRendererProviderBridge()
       sidecarRendererToolListenerAttached = true
     }
 
@@ -3946,7 +3861,8 @@ async function runSimpleChat(
     tools: [],
     sessionId,
     maxIterations: 1,
-    forceApproval: false
+    forceApproval: false,
+    sessionMode: 'chat'
   })
 
   if (!sidecarRequest) {
@@ -3964,21 +3880,20 @@ async function runSimpleChat(
     })
   }
 
-  const providerCapability = sidecarRequest ? `provider.${sidecarRequest.provider.type}` : null
+  // Stage 3: provider.<type> capability probing is gone — unsupported
+  // provider types are flagged mode=bridged by mapSidecarProvider and the
+  // sidecar's BridgedProvider handles streaming via the renderer bridge.
   const supportsAgentRun = sidecarRequest ? await canSidecarHandle('agent.run') : false
-  const supportsProvider =
-    sidecarRequest && providerCapability ? await canSidecarHandle(providerCapability) : false
-  const useSidecar = !!sidecarRequest && supportsAgentRun && supportsProvider
+  const useSidecar = !!sidecarRequest && supportsAgentRun
 
   console.log('[ChatActions] Simple chat sidecar decision', {
     sessionId,
     assistantMsgId,
     providerType: config.type,
     mappedProviderType: sidecarRequest?.provider.type,
+    providerMode: sidecarRequest?.provider.mode ?? 'native',
     hasSidecarRequest: !!sidecarRequest,
-    providerCapability,
     supportsAgentRun,
-    supportsProvider,
     useSidecar
   })
 
@@ -3987,9 +3902,6 @@ async function runSimpleChat(
   }
   if (!supportsAgentRun) {
     throw new Error('Sidecar does not support agent.run for chat path')
-  }
-  if (!supportsProvider) {
-    throw new Error(`Sidecar does not support provider ${config.type}`)
   }
 
   setRequestTraceInfo(assistantMsgId, {
@@ -4004,7 +3916,7 @@ async function runSimpleChat(
     const stream: AsyncIterable<AgentEvent | StreamEvent> = {
       async *[Symbol.asyncIterator]() {
         const queue: AgentEvent[] = []
-        const pendingEvents: Array<{ runId: string; event: AgentEvent }> = []
+        const pendingEvents: Array<{ runId: string; rawEvent: unknown }> = []
         let finished = false
         let notify: (() => void) | null = null
         let runId = ''
@@ -4024,20 +3936,31 @@ async function runSimpleChat(
           }
         }
 
+        const dispatchSidecarEvent = (rawEvent: unknown): void => {
+          const subAgentEvent = normalizeSidecarSubAgentEvent(rawEvent)
+          if (subAgentEvent) {
+            subAgentEvents.emit(subAgentEvent)
+            return
+          }
+
+          const normalized = normalizeSidecarAgentEvent(rawEvent)
+          if (normalized) {
+            pushEvent(normalized)
+          }
+        }
+
         const unsub = agentBridge.on('agent/event', (payload) => {
           const record = normalizeSidecarRecord(payload)
           const eventRunId = String(record.runId ?? '')
           if (!eventRunId) return
-          const normalized = normalizeSidecarAgentEvent(record.event)
-          if (!normalized) return
 
           if (!runId) {
-            pendingEvents.push({ runId: eventRunId, event: normalized })
+            pendingEvents.push({ runId: eventRunId, rawEvent: record.event })
             return
           }
 
           if (eventRunId !== runId) return
-          pushEvent(normalized)
+          dispatchSidecarEvent(record.event)
         })
         try {
           const result = await agentBridge.runAgent(sidecarRequest)
@@ -4047,7 +3970,7 @@ async function runSimpleChat(
 
           for (const pending of pendingEvents.splice(0, pendingEvents.length)) {
             if (pending.runId !== runId) continue
-            pushEvent(pending.event)
+            dispatchSidecarEvent(pending.rawEvent)
             if (finished) break
           }
 

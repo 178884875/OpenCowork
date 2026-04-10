@@ -2413,7 +2413,7 @@ export function InputArea({
               </div>
 
               {/* Web search toggle */}
-              {mode !== 'chat' && webSearchEnabled && (
+              {mode !== 'chat' && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button

@@ -161,7 +161,7 @@ function parseAgentFile(content: string, filename: string): AgentInfo | null {
   }
 
   const tools = getStringList('tools') ??
-    getStringList('allowedTools') ?? ['Read', 'Glob', 'Grep', 'LS']
+    getStringList('allowedTools') ?? ['Read', 'Glob', 'Grep', 'LS', 'Bash']
   const disallowedTools = getStringList('disallowedTools') ?? []
   const maxTurns = getNumber('maxTurns') ?? getNumber('maxIterations') ?? 0
 
@@ -215,34 +215,38 @@ function collectManageAgents(): AgentManageItem[] {
   )
 }
 
+/**
+ * Scan ~/.open-cowork/agents/ and return all available agents.
+ * Each .md file with valid frontmatter is treated as an agent.
+ * Shared between the `agents:list` ipcMain handler and the sidecar
+ * `electron/invoke` bridge.
+ */
+export function listAgents(): AgentInfo[] {
+  try {
+    const entries = fs.readdirSync(AGENTS_DIR, { withFileTypes: true })
+    const agents: AgentInfo[] = []
+    for (const entry of entries) {
+      if (entry.isDirectory()) continue
+      if (!entry.name.endsWith('.md')) continue
+      try {
+        const content = fs.readFileSync(path.join(AGENTS_DIR, entry.name), 'utf-8')
+        const agent = parseAgentFile(content, entry.name)
+        if (agent) agents.push(agent)
+      } catch {
+        // Skip unreadable files
+      }
+    }
+    return agents
+  } catch {
+    return []
+  }
+}
+
 export function registerAgentsHandlers(): void {
   // Initialize builtin agents on startup
   ensureBuiltinAgents()
 
-  /**
-   * agents:list — scan ~/.open-cowork/agents/ and return all available agents.
-   * Each .md file with valid frontmatter is treated as an agent.
-   */
-  ipcMain.handle('agents:list', async (): Promise<AgentInfo[]> => {
-    try {
-      const entries = fs.readdirSync(AGENTS_DIR, { withFileTypes: true })
-      const agents: AgentInfo[] = []
-      for (const entry of entries) {
-        if (entry.isDirectory()) continue
-        if (!entry.name.endsWith('.md')) continue
-        try {
-          const content = fs.readFileSync(path.join(AGENTS_DIR, entry.name), 'utf-8')
-          const agent = parseAgentFile(content, entry.name)
-          if (agent) agents.push(agent)
-        } catch {
-          // Skip unreadable files
-        }
-      }
-      return agents
-    } catch {
-      return []
-    }
-  })
+  ipcMain.handle('agents:list', async (): Promise<AgentInfo[]> => listAgents())
 
   /**
    * agents:load — read and parse a specific agent .md file by name.

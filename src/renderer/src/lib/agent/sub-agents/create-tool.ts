@@ -20,6 +20,41 @@ import type { TeamMember } from '../teams/types'
 
 const subAgentLimiter = new ConcurrencyLimiter(2)
 
+/**
+ * Tracks the immediately-previous synchronous Task invocation per session so
+ * we can block back-to-back identical sub-agent calls. Some parent models will
+ * happily re-invoke the same sub-agent with the same prompt over and over
+ * after it returns a report, wasting tokens and confusing the UI. Blocking
+ * the second identical call and returning the previous report forces the
+ * parent to move on.
+ */
+interface LastTaskInvocation {
+  key: string
+  output: string
+  toolUseId: string
+}
+const lastTaskInvocationBySession = new Map<string, LastTaskInvocation>()
+
+function normalizeTaskPrompt(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.trim().replace(/\s+/g, ' ')
+}
+
+function buildTaskDedupKey(input: Record<string, unknown>): string {
+  const subType = String(input.subagent_type ?? '')
+  const prompt =
+    normalizeTaskPrompt(input.prompt) ||
+    normalizeTaskPrompt(input.query) ||
+    normalizeTaskPrompt(input.task) ||
+    normalizeTaskPrompt(input.target)
+  return `${subType}::${prompt}`
+}
+
+export function clearLastTaskInvocation(sessionId: string | undefined | null): void {
+  if (!sessionId) return
+  lastTaskInvocationBySession.delete(sessionId)
+}
+
 export interface SubAgentMeta {
   iterations: number
   elapsed: number
@@ -452,6 +487,30 @@ export function createTaskTool(providerGetter: () => ProviderConfig): ToolHandle
         )
       }
 
+      // Guard against back-to-back identical Task calls: if the parent just
+      // invoked this exact sub-agent with the same prompt, short-circuit and
+      // replay the previous report with an instruction to move on. This
+      // prevents runaway loops where a parent model keeps re-dispatching the
+      // same sub-agent after each successful return.
+      const dedupKey = buildTaskDedupKey(input)
+      const sessionId = ctx.sessionId ?? ''
+      const lastInvocation = sessionId ? lastTaskInvocationBySession.get(sessionId) : undefined
+      if (
+        sessionId &&
+        lastInvocation &&
+        lastInvocation.key === dedupKey &&
+        lastInvocation.toolUseId !== (ctx.currentToolUseId ?? '')
+      ) {
+        return encodeStructuredToolResult({
+          error:
+            `Duplicate Task call blocked: the previous Task invocation to "${subType}" used an identical prompt ` +
+            'and already returned a report. Do NOT re-launch the same sub-agent with the same prompt. ' +
+            'Use the previous report below to continue your work, or call Task with a different sub-agent ' +
+            'or a materially different prompt if you need new information.',
+          previous_report: lastInvocation.output
+        })
+      }
+
       await subAgentLimiter.acquire(ctx.signal)
 
       try {
@@ -482,6 +541,17 @@ export function createTaskTool(providerGetter: () => ProviderConfig): ToolHandle
           return encodeStructuredToolResult({
             error: result.error ?? 'SubAgent failed',
             result: result.output || undefined
+          })
+        }
+
+        // Remember this invocation so a literal back-to-back repeat gets
+        // blocked by the guard at the top of execute(). We only track
+        // successful runs — failed runs are legitimate retry candidates.
+        if (sessionId) {
+          lastTaskInvocationBySession.set(sessionId, {
+            key: dedupKey,
+            output: result.output,
+            toolUseId: ctx.currentToolUseId ?? ''
           })
         }
 

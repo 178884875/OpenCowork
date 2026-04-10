@@ -538,7 +538,8 @@ public sealed class OpenAiResponsesProvider : ILlmProvider
             }).Where(text => !string.IsNullOrWhiteSpace(text))),
             JsonElement element => element.ValueKind == JsonValueKind.String ? element.GetString() ?? string.Empty : element.GetRawText(),
             JsonNode node => node.ToJsonString(),
-            _ => JsonSerializer.Serialize(content)
+            // Fallback: reflection serialization is disabled; use ToString() for unknown types.
+            _ => content.ToString() ?? string.Empty
         };
     }
 
@@ -927,7 +928,7 @@ public sealed class OpenAiResponsesProvider : ILlmProvider
 
     private static Dictionary<string, JsonElement> ToJsonElementDictionary(Dictionary<string, object?> input)
     {
-        var json = JsonSerializer.Serialize(input);
+        var json = JsonSerializer.Serialize(input, AppJsonContext.Default.DictionaryStringObject);
         return JsonSerializer.Deserialize(json, AppJsonContext.Default.DictionaryStringJsonElement)
             ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
     }

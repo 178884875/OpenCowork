@@ -89,11 +89,15 @@ namespace OpenCowork.Agent;
 [JsonSerializable(typeof(ToolCallRunningEvent))]
 [JsonSerializable(typeof(ErrorEvent))]
 [JsonSerializable(typeof(AgentEventNotification))]
+[JsonSerializable(typeof(AgentEventBatchNotification))]
 [JsonSerializable(typeof(ApprovalRequestParams))]
 [JsonSerializable(typeof(ApprovalResponseResult))]
 [JsonSerializable(typeof(ElectronInvokeParams))]
 [JsonSerializable(typeof(RendererToolRequestParams))]
 [JsonSerializable(typeof(RendererToolResponseResult))]
+[JsonSerializable(typeof(BridgedProviderStreamStartParams))]
+[JsonSerializable(typeof(BridgedProviderStreamStartResult))]
+[JsonSerializable(typeof(BridgedProviderStreamEventParams))]
 [JsonSerializable(typeof(DesktopInputAvailableResult))]
 [JsonSerializable(typeof(DesktopOperationResult))]
 [JsonSerializable(typeof(FsGrepParams))]
@@ -112,6 +116,7 @@ namespace OpenCowork.Agent;
 // Sub-agent types
 [JsonSerializable(typeof(OpenCowork.Agent.SubAgents.SubAgentDefinition))]
 [JsonSerializable(typeof(List<OpenCowork.Agent.SubAgents.SubAgentDefinition>))]
+[JsonSerializable(typeof(OpenCowork.Agent.Engine.SubAgentResult))]
 // Engine types
 [JsonSerializable(typeof(CompressionConfig))]
 // Request body building (dynamic structures for LLM API payloads)

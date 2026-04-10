@@ -98,7 +98,7 @@ export function ArtifactsPanel(): React.JSX.Element {
     setTimeout(() => setCopiedId(null), 1500)
   }, [])
 
-  const handleOpenPreview = useCallback((path: string) => {
+  const handleOpenFilePreview = useCallback((path: string) => {
     if (!path) return
     useUIStore.getState().openFilePreview(path)
   }, [])
@@ -233,7 +233,7 @@ export function ArtifactsPanel(): React.JSX.Element {
                       className="rounded-full p-1 text-blue-500/60 hover:bg-muted/70"
                       onClick={(e) => {
                         e.stopPropagation()
-                        handleOpenPreview(filePath)
+                        handleOpenFilePreview(filePath)
                       }}
                       title={t('artifacts.openInPreview')}
                     >

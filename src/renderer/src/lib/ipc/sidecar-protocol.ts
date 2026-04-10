@@ -10,6 +10,7 @@ import type {
   UnifiedMessage
 } from '../api/types'
 import type { AgentEvent, ToolCallState } from '../agent/types'
+import type { SubAgentEvent } from '../agent/sub-agents/types'
 import type { CompressionConfig } from '../agent/context-compression'
 
 export interface SidecarTextBlock {
@@ -93,7 +94,13 @@ export interface SidecarUnifiedMessage {
 }
 
 export interface SidecarProviderConfig {
-  type: 'anthropic' | 'openai-chat' | 'openai-responses' | 'gemini'
+  type: string
+  /**
+   * When set to "bridged", the sidecar delegates provider streaming back to
+   * the renderer via the provider bridge instead of using a native provider.
+   * Omitted (or "native") uses the sidecar's built-in provider implementation.
+   */
+  mode?: 'native' | 'bridged'
   apiKey: string
   baseUrl?: string
   model: string
@@ -137,6 +144,27 @@ export interface SidecarAgentRunRequest {
   maxIterations: number
   forceApproval: boolean
   compression?: CompressionConfig
+  /**
+   * Session mode: "agent" (default) runs the full tool loop, "chat" collapses
+   * to a single assistant turn with tool execution disabled inside the sidecar.
+   */
+  sessionMode?: 'agent' | 'chat'
+  /**
+   * When true the sidecar enforces plan mode by blocking any tool call whose
+   * name is not in planModeAllowedTools with a synthesized error tool_result.
+   */
+  planMode?: boolean
+  planModeAllowedTools?: string[]
+  /**
+   * Plugin/SSH session context — propagated through the renderer tool bridge
+   * so that plugin & ssh tool handlers can resolve their target channels.
+   */
+  pluginId?: string
+  pluginChatId?: string
+  pluginChatType?: 'p2p' | 'group'
+  pluginSenderId?: string
+  pluginSenderName?: string
+  sshConnectionId?: string
 }
 
 export interface SidecarApprovalRequest {
@@ -188,21 +216,23 @@ function createSidecarError(rawEvent: unknown): Error {
   return error
 }
 
-function hasUnsupportedProviderFeatures(provider: ProviderConfig): boolean {
-  if (
-    provider.type !== 'anthropic' &&
-    provider.type !== 'openai-chat' &&
-    provider.type !== 'openai-responses' &&
-    provider.type !== 'gemini'
-  ) {
-    return true
-  }
+// Provider types the sidecar implements natively. Anything else (or any
+// native-typed provider using a feature the sidecar doesn't support, such as
+// Gemini image models) is routed through the bridged provider so the .NET
+// agent loop can still drive it via the renderer's JS provider modules.
+const SIDECAR_NATIVE_PROVIDER_TYPES = new Set<string>([
+  'anthropic',
+  'openai-chat',
+  'openai-responses',
+  'gemini'
+])
 
+function shouldBridgeProvider(provider: ProviderConfig): boolean {
+  if (!SIDECAR_NATIVE_PROVIDER_TYPES.has(provider.type)) return true
   if (provider.type === 'gemini') {
     if (provider.category === 'image') return true
     if (/image/i.test(provider.model)) return true
   }
-
   return false
 }
 
@@ -305,19 +335,11 @@ function mapSidecarMessage(message: UnifiedMessage): SidecarUnifiedMessage | nul
   }
 }
 
-function mapSidecarProvider(provider: ProviderConfig): SidecarProviderConfig | null {
-  if (hasUnsupportedProviderFeatures(provider)) return null
-  if (
-    provider.type !== 'anthropic' &&
-    provider.type !== 'openai-chat' &&
-    provider.type !== 'openai-responses' &&
-    provider.type !== 'gemini'
-  ) {
-    return null
-  }
-
+function mapSidecarProvider(provider: ProviderConfig): SidecarProviderConfig {
+  const bridged = shouldBridgeProvider(provider)
   return {
     type: provider.type,
+    ...(bridged ? { mode: 'bridged' as const } : {}),
     apiKey: provider.apiKey,
     ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
     model: provider.model,
@@ -368,9 +390,17 @@ export function buildSidecarAgentRunRequest(args: {
   maxIterations: number
   forceApproval: boolean
   compression?: CompressionConfig | null
+  sessionMode?: 'agent' | 'chat'
+  planMode?: boolean
+  planModeAllowedTools?: readonly string[]
+  pluginId?: string
+  pluginChatId?: string
+  pluginChatType?: 'p2p' | 'group'
+  pluginSenderId?: string
+  pluginSenderName?: string
+  sshConnectionId?: string
 }): SidecarAgentRunRequest | null {
   const provider = mapSidecarProvider(args.provider)
-  if (!provider) return null
 
   const messages: SidecarUnifiedMessage[] = []
   for (const message of args.messages) {
@@ -388,7 +418,18 @@ export function buildSidecarAgentRunRequest(args: {
     ...(args.workingFolder ? { workingFolder: args.workingFolder } : {}),
     ...(args.compression ? { compression: args.compression } : {}),
     maxIterations: args.maxIterations,
-    forceApproval: args.forceApproval
+    forceApproval: args.forceApproval,
+    ...(args.sessionMode ? { sessionMode: args.sessionMode } : {}),
+    ...(args.planMode ? { planMode: true } : {}),
+    ...(args.planModeAllowedTools && args.planModeAllowedTools.length > 0
+      ? { planModeAllowedTools: [...args.planModeAllowedTools] }
+      : {}),
+    ...(args.pluginId ? { pluginId: args.pluginId } : {}),
+    ...(args.pluginChatId ? { pluginChatId: args.pluginChatId } : {}),
+    ...(args.pluginChatType ? { pluginChatType: args.pluginChatType } : {}),
+    ...(args.pluginSenderId ? { pluginSenderId: args.pluginSenderId } : {}),
+    ...(args.pluginSenderName ? { pluginSenderName: args.pluginSenderName } : {}),
+    ...(args.sshConnectionId ? { sshConnectionId: args.sshConnectionId } : {})
   }
 }
 
@@ -549,6 +590,192 @@ function normalizeToolResultOutput(value: unknown): ToolResultContent | undefine
     }
   }
   return undefined
+}
+
+function normalizeToolCallStatusValue(status: unknown): ToolCallState['status'] {
+  const value = String(status ?? '').trim().toLowerCase()
+  switch (value) {
+    case 'streaming':
+      return 'streaming'
+    case 'pendingapproval':
+    case 'pending_approval':
+      return 'pending_approval'
+    case 'running':
+      return 'running'
+    case 'error':
+      return 'error'
+    default:
+      return 'completed'
+  }
+}
+
+export function normalizeSidecarSubAgentEvent(rawEvent: unknown): SubAgentEvent | null {
+  const event = normalizeSidecarRecord(rawEvent)
+  const type = typeof event.type === 'string' ? event.type : null
+  if (!type) return null
+
+  const subAgentName = typeof event.subAgentName === 'string' ? event.subAgentName : ''
+  const toolUseId = typeof event.toolUseId === 'string' ? event.toolUseId : ''
+  if (!subAgentName || !toolUseId) return null
+
+  switch (type) {
+    case 'sub_agent_start': {
+      const promptMessage = normalizeSidecarMessage(event.promptMessage)
+      if (!promptMessage) return null
+      return {
+        type: 'sub_agent_start',
+        subAgentName,
+        toolUseId,
+        input: normalizeSidecarRecord(event.input),
+        promptMessage
+      }
+    }
+    case 'sub_agent_iteration': {
+      const assistantMessage = normalizeSidecarMessage(event.assistantMessage)
+      if (!assistantMessage) return null
+      return {
+        type: 'sub_agent_iteration',
+        subAgentName,
+        toolUseId,
+        iteration: Number(event.iteration ?? 0),
+        assistantMessage
+      }
+    }
+    case 'sub_agent_text_delta':
+      return { type: 'sub_agent_text_delta', subAgentName, toolUseId, text: String(event.text ?? '') }
+    case 'sub_agent_thinking_delta':
+      return {
+        type: 'sub_agent_thinking_delta',
+        subAgentName,
+        toolUseId,
+        thinking: String(event.thinking ?? '')
+      }
+    case 'sub_agent_thinking_encrypted': {
+      const provider = event.thinkingEncryptedProvider
+      if (
+        provider !== 'anthropic' &&
+        provider !== 'openai-responses' &&
+        provider !== 'google'
+      ) {
+        return null
+      }
+      return {
+        type: 'sub_agent_thinking_encrypted',
+        subAgentName,
+        toolUseId,
+        thinkingEncryptedContent: String(event.thinkingEncryptedContent ?? ''),
+        thinkingEncryptedProvider: provider
+      }
+    }
+    case 'sub_agent_tool_use_streaming_start':
+      return {
+        type: 'sub_agent_tool_use_streaming_start',
+        subAgentName,
+        toolUseId,
+        toolCallId: String(event.toolCallId ?? ''),
+        toolName: String(event.toolName ?? ''),
+        ...(event.toolCallExtraContent ? { toolCallExtraContent: event.toolCallExtraContent } : {})
+      }
+    case 'sub_agent_tool_use_args_delta':
+      return {
+        type: 'sub_agent_tool_use_args_delta',
+        subAgentName,
+        toolUseId,
+        toolCallId: String(event.toolCallId ?? ''),
+        partialInput: normalizeSidecarRecord(event.partialInput)
+      }
+    case 'sub_agent_tool_use_generated': {
+      const toolUseBlock = normalizeSidecarRecord(event.toolUseBlock)
+      return {
+        type: 'sub_agent_tool_use_generated',
+        subAgentName,
+        toolUseId,
+        toolUseBlock: {
+          type: 'tool_use',
+          id: String(toolUseBlock.id ?? ''),
+          name: String(toolUseBlock.name ?? ''),
+          input: normalizeSidecarRecord(toolUseBlock.input),
+          ...(toolUseBlock.extraContent ? { extraContent: toolUseBlock.extraContent } : {})
+        }
+      }
+    }
+    case 'sub_agent_message_end':
+      return {
+        type: 'sub_agent_message_end',
+        subAgentName,
+        toolUseId,
+        ...(event.usage ? { usage: event.usage as TokenUsage } : {}),
+        ...(typeof event.providerResponseId === 'string'
+          ? { providerResponseId: event.providerResponseId }
+          : {})
+      }
+    case 'sub_agent_tool_result_message': {
+      const message = normalizeSidecarMessage(event.message)
+      if (!message) return null
+      return { type: 'sub_agent_tool_result_message', subAgentName, toolUseId, message }
+    }
+    case 'sub_agent_report_update':
+      return {
+        type: 'sub_agent_report_update',
+        subAgentName,
+        toolUseId,
+        report: String(event.report ?? ''),
+        status:
+          event.status === 'submitted' ||
+          event.status === 'retrying' ||
+          event.status === 'fallback' ||
+          event.status === 'missing'
+            ? event.status
+            : 'pending'
+      }
+    case 'sub_agent_tool_call': {
+      const toolCall = normalizeSidecarRecord(event.toolCall)
+      return {
+        type: 'sub_agent_tool_call',
+        subAgentName,
+        toolUseId,
+        toolCall: {
+          id: String(toolCall.id ?? ''),
+          name: String(toolCall.name ?? ''),
+          input: normalizeSidecarRecord(toolCall.input),
+          status: normalizeToolCallStatusValue(toolCall.status),
+          ...(toolCall.output !== undefined
+            ? { output: normalizeToolResultOutput(toolCall.output) }
+            : {}),
+          ...(typeof toolCall.error === 'string' ? { error: toolCall.error } : {}),
+          requiresApproval: Boolean(toolCall.requiresApproval),
+          ...(toolCall.extraContent ? { extraContent: toolCall.extraContent } : {}),
+          ...(toolCall.startedAt === undefined
+            ? {}
+            : { startedAt: Number(toolCall.startedAt ?? Date.now()) }),
+          ...(toolCall.completedAt === undefined
+            ? {}
+            : { completedAt: Number(toolCall.completedAt ?? Date.now()) })
+        }
+      }
+    }
+    case 'sub_agent_end': {
+      const result = normalizeSidecarRecord(event.result)
+      return {
+        type: 'sub_agent_end',
+        subAgentName,
+        toolUseId,
+        result: {
+          success: result.success === true,
+          output: String(result.output ?? ''),
+          ...(typeof result.reportSubmitted === 'boolean'
+            ? { reportSubmitted: result.reportSubmitted }
+            : {}),
+          toolCallCount: Number(result.toolCallCount ?? 0),
+          iterations: Number(result.iterations ?? 0),
+          usage: (result.usage as TokenUsage | undefined) ?? { inputTokens: 0, outputTokens: 0 },
+          ...(typeof result.error === 'string' ? { error: result.error } : {})
+        }
+      }
+    }
+    default:
+      return null
+  }
 }
 
 export function normalizeSidecarAgentEvent(rawEvent: unknown): AgentEvent | null {
@@ -715,7 +942,7 @@ export function normalizeSidecarAgentEvent(rawEvent: unknown): AgentEvent | null
               input: event.input
             }
 
-      const status = toolCall.status === 'error' ? 'error' : 'completed'
+      const status = normalizeToolCallStatusValue(toolCall.status)
       return {
         type: 'tool_call_result',
         toolCall: {

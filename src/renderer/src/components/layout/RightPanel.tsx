@@ -10,7 +10,6 @@ import { ArtifactsPanel } from '@renderer/components/cowork/ArtifactsPanel'
 import { ContextPanel } from '@renderer/components/cowork/ContextPanel'
 import { FileTreePanel } from '@renderer/components/cowork/FileTreePanel'
 import { PlanPanel } from '@renderer/components/cowork/PlanPanel'
-import { AcpPanel } from '@renderer/components/cowork/AcpPanel'
 import { SshFileExplorer } from '@renderer/components/ssh/SshFileExplorer'
 import { TerminalPanel } from '@renderer/components/terminal/TerminalPanel'
 import { usePlanStore } from '@renderer/stores/plan-store'
@@ -18,6 +17,7 @@ import { useChatStore } from '@renderer/stores/chat-store'
 import { useAgentStore } from '@renderer/stores/agent-store'
 import { useSshStore } from '@renderer/stores/ssh-store'
 import { useSettingsStore } from '@renderer/stores/settings-store'
+import { TASK_TOOL_NAME } from '@renderer/lib/agent/sub-agents/create-tool'
 import { cn } from '@renderer/lib/utils'
 import { RightPanelHeader } from './RightPanelHeader'
 import { RightPanelRail } from './RightPanelRail'
@@ -123,7 +123,6 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
   const setRightPanelOpen = useUIStore((s) => s.setRightPanelOpen)
 
   const teamToolsEnabled = useSettingsStore((s) => s.teamToolsEnabled)
-  const mode = useUIStore((s) => s.mode)
   const activeSessionId = useChatStore((s) => s.activeSessionId)
   const activeSession = useChatStore((s) =>
     s.sessions.find((session) => session.id === s.activeSessionId)
@@ -134,15 +133,30 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
   })
   const hasSessionSubAgents = useAgentStore((s) => {
     if (!activeSessionId) return false
-    const hasActive = Object.values(s.activeSubAgents).some((item) => item.sessionId === activeSessionId)
-    const hasCompleted = Object.values(s.completedSubAgents).some((item) => item.sessionId === activeSessionId)
-    const hasHistory = s.subAgentHistory.some((item) => item.sessionId === activeSessionId)
+    const matchSession = (item: { sessionId?: string }): boolean =>
+      !item.sessionId || item.sessionId === activeSessionId
+    const hasActive = Object.values(s.activeSubAgents).some(matchSession)
+    const hasCompleted = Object.values(s.completedSubAgents).some(matchSession)
+    const hasHistory = s.subAgentHistory.some(matchSession)
     return hasActive || hasCompleted || hasHistory
+  })
+  const hasSessionSubAgentMessages = useChatStore((s) => {
+    if (!activeSessionId) return false
+    return s.getSessionMessages(activeSessionId).some((message) => {
+      if (!Array.isArray(message.content)) return false
+      return message.content.some(
+        (block) =>
+          block.type === 'tool_use' &&
+          block.name === TASK_TOOL_NAME &&
+          block.input.run_in_background !== true
+      )
+    })
   })
   const planMode = useUIStore((s) => s.planMode)
 
   const shouldShowSubAgentsTab =
     hasSessionSubAgents ||
+    hasSessionSubAgentMessages ||
     tab === 'subagents' ||
     tab === 'orchestration' ||
     !!selectedSubAgentToolUseId ||
@@ -152,9 +166,8 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
     () =>
       RIGHT_PANEL_TAB_DEFS.filter((item) => teamToolsEnabled || item.value !== 'team')
         .filter((item) => hasPlan || planMode || item.value !== 'plan')
-        .filter((item) => shouldShowSubAgentsTab || (item.value !== 'subagents' && item.value !== 'orchestration'))
-        .filter((item) => (activeSession?.mode ?? mode) === 'acp' || item.value !== 'acp'),
-    [teamToolsEnabled, hasPlan, planMode, shouldShowSubAgentsTab, activeSession?.mode, mode]
+        .filter((item) => shouldShowSubAgentsTab || (item.value !== 'subagents' && item.value !== 'orchestration')),
+    [teamToolsEnabled, hasPlan, planMode, shouldShowSubAgentsTab]
   )
 
   const availableSections = useMemo(
@@ -325,12 +338,6 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
                     {resolvedTab === 'plan' && (
                       <FadeIn key="plan" className="h-full">
                         <PlanPanel />
-                      </FadeIn>
-                    )}
-
-                    {resolvedTab === 'acp' && (
-                      <FadeIn key="acp" className="h-full">
-                        <AcpPanel />
                       </FadeIn>
                     )}
                   </AnimatePresence>

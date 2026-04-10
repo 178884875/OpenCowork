@@ -20,6 +20,7 @@ import { useProviderStore } from '@renderer/stores/provider-store'
 import { ensureProviderAuthReady } from '@renderer/lib/auth/provider-auth'
 import { loadPrompt } from '../prompts/prompt-loader'
 import { getGlobalPromptCacheKey, registerProvider } from './provider'
+import { sanitizeMessagesForToolReplay } from '../tools/tool-input-sanitizer'
 
 function resolveHeaderTemplate(value: string, config: ProviderConfig): string {
   return value
@@ -72,6 +73,7 @@ class OpenAIResponsesProvider implements APIProvider {
   ): AsyncIterable<StreamEvent> {
     let runtimeConfig = config
     let accountId: string | undefined
+    let activeAccountId: string | undefined
     if (config.providerId) {
       const ready = await ensureProviderAuthReady(config.providerId)
       if (!ready) {
@@ -92,6 +94,7 @@ class OpenAIResponsesProvider implements APIProvider {
           userAgent: latest.userAgent ?? config.userAgent
         }
         accountId = latest.oauth?.accountId
+        activeAccountId = latest.activeAccountId
       }
     }
 
@@ -252,7 +255,8 @@ class OpenAIResponsesProvider implements APIProvider {
         signal,
         useSystemProxy: runtimeConfig.useSystemProxy,
         providerId: runtimeConfig.providerId,
-        providerBuiltinId: runtimeConfig.providerBuiltinId
+        providerBuiltinId: runtimeConfig.providerBuiltinId,
+        accountId: activeAccountId
       })) {
         if (!sse.data || sse.data === '[DONE]') continue
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -450,7 +454,9 @@ class OpenAIResponsesProvider implements APIProvider {
     includeEncryptedReasoning = false
   ): unknown[] {
     const input: unknown[] = []
-    const normalizedMessages = this.normalizeMessagesForOpenAI(messages)
+    const normalizedMessages = this.normalizeMessagesForOpenAI(
+      sanitizeMessagesForToolReplay(messages)
+    )
 
     if (systemPrompt) {
       input.push({ type: 'message', role: 'developer', content: systemPrompt })

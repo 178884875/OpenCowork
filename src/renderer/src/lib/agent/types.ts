@@ -87,6 +87,11 @@ export interface AgentLoopConfig {
   /** Force all tool calls through the approval callback, even if the tool declares requiresApproval=false.
    *  Used by plugin auto-reply to enforce security permissions on all tools. */
   forceApproval?: boolean
+  /** Invoked once when the loop terminates for any reason, with the final
+   *  conversation history (including every assistant message and tool result).
+   *  Callers use this to replay the transcript — e.g. to synthesize a fallback
+   *  report when the last assistant turn produced no text. */
+  captureFinalMessages?: (messages: UnifiedMessage[]) => void
 }
 
 // --- Agent Loop Events ---

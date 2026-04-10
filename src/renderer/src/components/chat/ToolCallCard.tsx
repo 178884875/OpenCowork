@@ -33,6 +33,7 @@ import { Input } from '@renderer/components/ui/input'
 import { LazySyntaxHighlighter } from './LazySyntaxHighlighter'
 import { CodeDiffViewer } from './CodeDiffViewer'
 import { inputSummary } from './tool-call-summary'
+import { useChatActions } from '@renderer/hooks/use-chat-actions'
 
 interface ToolCallCardProps {
   toolUseId?: string
@@ -102,6 +103,210 @@ function ImageOutputBlock({ output }: { output: ToolResultContent }): React.JSX.
           </div>
         )
       })}
+    </div>
+  )
+}
+
+interface WidgetToolPayload {
+  title: string
+  loadingMessages: string[]
+  widgetCode: string
+  kind: 'svg' | 'html'
+}
+
+const WIDGET_BRIDGE_SOURCE = 'open_cowork_widget'
+const DEFAULT_WIDGET_LOADING_MESSAGES = ['Rendering widget...']
+
+function normalizeWidgetPayload(input: Record<string, unknown>): WidgetToolPayload | null {
+  const title = typeof input.title === 'string' ? input.title.trim() : ''
+  const rawCode =
+    typeof input.widget_code === 'string'
+      ? input.widget_code
+      : typeof input.widget_code_preview === 'string'
+        ? input.widget_code_preview
+        : ''
+  const widgetCode = rawCode.trim()
+  const loadingMessages = Array.isArray(input.loading_messages)
+    ? input.loading_messages
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : []
+
+  if (!title && !widgetCode) return null
+
+  return {
+    title: title || 'widget',
+    loadingMessages: loadingMessages.length > 0 ? loadingMessages : DEFAULT_WIDGET_LOADING_MESSAGES,
+    widgetCode,
+    kind: /^<svg[\s>]/i.test(widgetCode) ? 'svg' : 'html'
+  }
+}
+
+function buildWidgetDocument(payload: WidgetToolPayload): string {
+  return `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
+        background: transparent;
+      }
+      body {
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: #e5e7eb;
+      }
+      #open-cowork-widget-root {
+        width: 100%;
+        min-height: 100%;
+      }
+      ${payload.kind === 'svg' ? 'body { display: flex; align-items: stretch; justify-content: stretch; } #open-cowork-widget-root > svg { display: block; width: 100%; height: auto; }' : ''}
+    </style>
+    <script>
+      (() => {
+        const bridgeSource = ${JSON.stringify(WIDGET_BRIDGE_SOURCE)};
+        const post = (type, extra = {}) => {
+          window.parent.postMessage({ source: bridgeSource, type, ...extra }, '*');
+        };
+        const reportSize = () => {
+          const bodyHeight = document.body ? document.body.scrollHeight : 0;
+          const docHeight = document.documentElement ? document.documentElement.scrollHeight : 0;
+          post('resize', { height: Math.max(bodyHeight, docHeight, 240) });
+        };
+
+        window.sendPrompt = (text) => {
+          if (typeof text !== 'string') return;
+          const trimmed = text.trim();
+          if (!trimmed) return;
+          post('send_prompt', { text: trimmed });
+        };
+
+        window.__openCoworkWidgetReady = () => {
+          if (typeof ResizeObserver !== 'undefined') {
+            const observer = new ResizeObserver(() => reportSize());
+            if (document.documentElement) observer.observe(document.documentElement);
+            if (document.body) observer.observe(document.body);
+            const root = document.getElementById('open-cowork-widget-root');
+            if (root) observer.observe(root);
+          }
+          post('ready');
+          reportSize();
+          setTimeout(reportSize, 32);
+          setTimeout(reportSize, 160);
+          setTimeout(reportSize, 600);
+        };
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="open-cowork-widget-root">${payload.widgetCode}</div>
+    <script>window.__openCoworkWidgetReady && window.__openCoworkWidgetReady();</script>
+  </body>
+</html>`
+}
+
+function WidgetOutputBlock({
+  input,
+  status
+}: {
+  input: Record<string, unknown>
+  status: ToolCallStatus | 'completed'
+}): React.JSX.Element | null {
+  const payload = React.useMemo(() => normalizeWidgetPayload(input), [input])
+  const iframeRef = React.useRef<HTMLIFrameElement>(null)
+  const [loaded, setLoaded] = React.useState(false)
+  const [frameHeight, setFrameHeight] = React.useState(360)
+  const [loadingIndex, setLoadingIndex] = React.useState(0)
+  const { sendMessage } = useChatActions()
+
+  React.useEffect(() => {
+    setLoaded(false)
+    setLoadingIndex(0)
+    setFrameHeight(payload?.kind === 'svg' ? 320 : 420)
+  }, [payload?.title, payload?.widgetCode, payload?.kind])
+
+  React.useEffect(() => {
+    if (!payload || payload.loadingMessages.length <= 1 || loaded) return
+    const timer = window.setInterval(() => {
+      setLoadingIndex((index) => (index + 1) % payload.loadingMessages.length)
+    }, 1400)
+    return () => window.clearInterval(timer)
+  }, [loaded, payload])
+
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent): void => {
+      if (event.source !== iframeRef.current?.contentWindow) return
+      const data = event.data
+      if (!data || typeof data !== 'object') return
+      if ((data as { source?: unknown }).source !== WIDGET_BRIDGE_SOURCE) return
+
+      const type = (data as { type?: unknown }).type
+      if (type === 'ready') {
+        setLoaded(true)
+        return
+      }
+
+      if (type === 'resize') {
+        const nextHeight = (data as { height?: unknown }).height
+        if (typeof nextHeight === 'number' && Number.isFinite(nextHeight)) {
+          setFrameHeight(Math.max(240, Math.min(Math.ceil(nextHeight) + 2, 720)))
+        }
+        return
+      }
+
+      if (type === 'send_prompt') {
+        const text = (data as { text?: unknown }).text
+        if (typeof text === 'string' && text.trim()) {
+          void sendMessage(text.trim())
+        }
+      }
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [sendMessage])
+
+  if (!payload) return null
+
+  const isPending = status === 'streaming' || status === 'running' || !loaded
+  const loadingMessage = payload.loadingMessages[loadingIndex] ?? DEFAULT_WIDGET_LOADING_MESSAGES[0]
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1.5">
+        <p className="text-xs font-medium text-muted-foreground">Widget</p>
+        <span className="rounded bg-violet-500/10 px-1 py-0.5 text-[9px] font-mono text-violet-400/80">
+          {payload.title}
+        </span>
+        <span className="text-[9px] text-muted-foreground/40 uppercase">{payload.kind}</span>
+      </div>
+      <div className="relative overflow-hidden rounded-md border bg-white/5">
+        {payload.widgetCode ? (
+          <iframe
+            ref={iframeRef}
+            title={payload.title}
+            sandbox="allow-scripts allow-forms"
+            srcDoc={buildWidgetDocument(payload)}
+            className="w-full border-0 bg-transparent transition-[height] duration-200"
+            style={{ height: `${frameHeight}px` }}
+          />
+        ) : (
+          <div className="flex h-48 items-center justify-center text-xs text-muted-foreground/60">
+            Waiting for widget code...
+          </div>
+        )}
+        {isPending && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-[1px]">
+            <div className="rounded-md border border-border/60 bg-background/90 px-3 py-2 text-xs text-muted-foreground shadow-sm">
+              {loadingMessage}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -1104,6 +1309,20 @@ function StructuredInput({
     const replaceAll = input.replace_all === true
     const visibleOld = oldStr || oldPreview
     const visibleNew = newStr || newPreview
+    const oldLineTotal =
+      typeof input.old_string_lines === 'number'
+        ? input.old_string_lines
+        : visibleOld
+          ? lineCount(visibleOld)
+          : null
+    const newLineTotal =
+      typeof input.new_string_lines === 'number'
+        ? input.new_string_lines
+        : visibleNew
+          ? lineCount(visibleNew)
+          : null
+    const oldCharTotal = typeof input.old_string_chars === 'number' ? input.old_string_chars : null
+    const newCharTotal = typeof input.new_string_chars === 'number' ? input.new_string_chars : null
 
     return (
       <div className="space-y-1">
@@ -1123,9 +1342,19 @@ function StructuredInput({
         {explanation && (
           <p className="pl-[18px] text-[11px] text-muted-foreground/60">{explanation}</p>
         )}
-        {(visibleOld || visibleNew) && (
+        {(oldLineTotal !== null || newLineTotal !== null || oldCharTotal !== null || newCharTotal !== null) && (
           <div className="pl-[18px] text-[10px] text-muted-foreground/40">
-            -{lineCount(visibleOld)} / +{lineCount(visibleNew)} lines
+            {oldLineTotal !== null ? `-${oldLineTotal} lines` : '-? lines'}
+            {' / '}
+            {newLineTotal !== null ? `+${newLineTotal} lines` : '+? lines'}
+            {(oldCharTotal !== null || newCharTotal !== null) && (
+              <>
+                {' · '}
+                {oldCharTotal !== null ? `-${oldCharTotal} chars` : '-? chars'}
+                {' / '}
+                {newCharTotal !== null ? `+${newCharTotal} chars` : '+? chars'}
+              </>
+            )}
           </div>
         )}
         {(visibleOld || visibleNew) && (
@@ -1168,6 +1397,13 @@ function StructuredInput({
               </span>
             </div>
           )}
+          {(lineTotal !== null || charTotal !== null) && (
+            <div className="pl-[18px] text-[10px] text-muted-foreground/40">
+              {lineTotal !== null ? `${lineTotal} lines` : ''}
+              {lineTotal !== null && charTotal !== null ? ' · ' : ''}
+              {charTotal !== null ? `${charTotal} chars` : ''}
+            </div>
+          )}
           {visiblePreview && (
             <pre
               className="max-h-36 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 px-2.5 py-2 text-[11px] text-foreground/80 dark:bg-zinc-950 dark:text-zinc-300/80"
@@ -1176,13 +1412,6 @@ function StructuredInput({
               {visiblePreview}
               {input.content_truncated ? '\n…' : ''}
             </pre>
-          )}
-          {!filePath && (lineTotal !== null || charTotal !== null) && (
-            <div className="pl-[18px] text-[10px] text-muted-foreground/40">
-              {lineTotal !== null ? `${lineTotal} lines` : ''}
-              {lineTotal !== null && charTotal !== null ? ' · ' : ''}
-              {charTotal !== null ? `${charTotal} chars` : ''}
-            </div>
           )}
         </div>
       )
@@ -1434,6 +1663,20 @@ function StructuredInput({
   }
 
   // Generic fallback: structured key-value pairs instead of raw JSON
+  if (name === 'visualize_show_widget') {
+    const payload = normalizeWidgetPayload(input)
+    const messages = Array.isArray(input.loading_messages)
+      ? input.loading_messages.filter((item): item is string => typeof item === 'string')
+      : []
+    return (
+      <div className="space-y-0.5">
+        <InputField label="title" value={payload?.title ?? String(input.title ?? '')} />
+        <InputField label="kind" value={payload?.kind ?? 'html'} />
+        {messages.length > 0 && <InputField label="loading" value={messages.join(' / ')} />}
+      </div>
+    )
+  }
+
   const entries = Object.entries(input).filter(([, v]) => v != null && v !== '')
   if (entries.length === 0) return <></>
   return (
@@ -1456,12 +1699,11 @@ function StructuredInput({
 
 // Tools that auto-expand when they have output (mutation/action tools)
 const EXPAND_TOOLS = new Set([
-  'Edit',
-  'Write',
   'Delete',
   'Bash',
   'TaskCreate',
-  'TaskList'
+  'TaskList',
+  'visualize_show_widget'
 ])
 
 export function ToolStatusDot({
@@ -1526,6 +1768,7 @@ export function ToolCallCard({
   // Auto-expand for errors and mutation tools with output; keep read-heavy tools collapsed
   const shouldAutoExpand =
     status === 'error' ||
+    name === 'visualize_show_widget' ||
     (!!output && EXPAND_TOOLS.has(name)) ||
     (name === 'Bash' && status === 'running')
   const [open, setOpen] = React.useState(shouldAutoExpand)
@@ -1534,7 +1777,12 @@ export function ToolCallCard({
     if (shouldAutoExpand) setOpen(true)
   }, [shouldAutoExpand])
 
+  const isProcessing = status === 'streaming' || status === 'running'
   const summary = inputSummary(name, input)
+  const hideLivePayload =
+    isProcessing &&
+    (name === 'Write' || name === 'Edit') &&
+    input.content_hidden_until_complete === true
   const showSettledEditDiff =
     name === 'Edit' &&
     status !== 'streaming' &&
@@ -1555,7 +1803,7 @@ export function ToolCallCard({
       >
         <ToolStatusDot status={status} />
         <span className="font-medium">{name}</span>
-        {status === 'streaming' && !error && (
+        {isProcessing && !error && (
           <>
             {name === 'Write' && (input.file_path || input.path) ? (
               <span className="text-blue-400/70 text-[10px] animate-pulse">
@@ -1603,6 +1851,15 @@ export function ToolCallCard({
       {/* Expanded details */}
       {open && (
         <div className="mt-1.5 space-y-2 pl-5 min-w-0 overflow-hidden">
+          {hideLivePayload ? (
+            <div className="space-y-2">
+              <StructuredInput name={name} input={input} />
+              <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground/70">
+                Detailed Write/Edit content stays hidden until the tool finishes.
+              </div>
+            </div>
+          ) : (
+            <>
           {/* Diff view for Edit tool */}
           {showSettledEditDiff && (
             <div className="space-y-2">
@@ -1648,6 +1905,7 @@ export function ToolCallCard({
             (name === 'TaskCreate' && !!input.subject)
           ) && <StructuredInput name={name} input={input} />}
           {/* Output — tool-specific rendering */}
+          {name === 'visualize_show_widget' && <WidgetOutputBlock input={input} status={status} />}
           {output && name === 'Read' && hasImageBlocks(output) && (
             <ImageOutputBlock output={output} />
           )}
@@ -1717,7 +1975,8 @@ export function ToolCallCard({
               'Edit',
               'Write',
               'Delete',
-              'AskUserQuestion'
+              'AskUserQuestion',
+              'visualize_show_widget'
             ].includes(name) &&
             (hasImageBlocks(output) ? (
               <ImageOutputBlock output={output} />
@@ -1732,6 +1991,8 @@ export function ToolCallCard({
                 {error}
               </pre>
             </div>
+          )}
+            </>
           )}
         </div>
       )}

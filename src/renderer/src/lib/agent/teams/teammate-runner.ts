@@ -15,7 +15,7 @@ import type { TeamMessage, TeamTask } from './types'
 import { buildRuntimeCompression } from '../context-compression-runtime'
 import { subAgentRegistry } from '../sub-agents/registry'
 import { resolveSubAgentTools } from '../sub-agents/resolve-tools'
-import { runSharedAgentRuntime } from '../shared-runtime'
+import { requestFallbackReport, runSharedAgentRuntime } from '../shared-runtime'
 import { appendTeamRuntimeMessage, updateTeamRuntimeManifest, updateTeamRuntimeMember } from './runtime-client'
 import { requestTeammatePermission, stopWorkerPermissionPoller } from './permission-bridge'
 import { requestPlanApproval, stopWorkerPlanApprovalPoller } from './plan-approval-bridge'
@@ -548,7 +548,26 @@ async function runSingleTaskLoop(opts: {
   }
   flushStreamingText()
 
-  const resolvedOutput = runtime.finalOutput
+  // If the teammate loop ended without any final assistant text, replay the
+  // transcript with a synthetic "generate a detailed report" user message.
+  // Without this the lead agent loses all visibility into what the teammate did.
+  let resolvedOutput = runtime.finalOutput
+  if (!resolvedOutput.trim() && runtime.finalMessages.length > 0 && !abortController.signal.aborted) {
+    const fallback = await requestFallbackReport({
+      capturedMessages: runtime.finalMessages,
+      loopConfig,
+      toolContext: {
+        workingFolder,
+        signal: abortController.signal,
+        ipc: ipcClient,
+        callerAgent: 'teammate'
+      }
+    })
+    if (fallback) {
+      resolvedOutput = fallback
+    }
+  }
+
   if (taskId && resolvedOutput) {
     const currentTask = useTeamStore.getState().activeTeam?.tasks.find((task) => task.id === taskId)
     if (!currentTask?.report?.trim()) {

@@ -6,7 +6,6 @@ import {
   FolderTree,
   ListChecks,
   Monitor,
-  ShieldCheck,
   Users,
   Bot,
   Workflow,
@@ -48,8 +47,7 @@ export const RIGHT_PANEL_TAB_DEFS: RightPanelTabDef[] = [
   { value: 'orchestration', labelKey: 'orchestration', section: 'collaboration', icon: Users },
   { value: 'subagents', labelKey: 'subagents', section: 'collaboration', icon: Bot },
   { value: 'team', labelKey: 'team', section: 'collaboration', icon: Users },
-  { value: 'context', labelKey: 'context', section: 'monitoring', icon: Database },
-  { value: 'acp', labelKey: 'acp', section: 'monitoring', icon: ShieldCheck }
+  { value: 'context', labelKey: 'context', section: 'monitoring', icon: Database }
 ]
 
 export const RIGHT_PANEL_TAB_ORDER: RightPanelTab[] = RIGHT_PANEL_TAB_DEFS.map((tab) => tab.value)

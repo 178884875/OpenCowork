@@ -2,7 +2,7 @@
 name: copywriter
 description: Write compelling marketing copy, blog posts, social media content, product descriptions, and email campaigns. Adapts tone and style for different brands, audiences, and platforms.
 icon: pen-line
-allowedTools: Read, Write, Edit, Glob, Grep, LS
+allowedTools: Read, Write, Edit, Glob, Grep, LS, Bash
 maxIterations: 0
 ---
 

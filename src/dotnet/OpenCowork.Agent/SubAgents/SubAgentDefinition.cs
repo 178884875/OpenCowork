@@ -22,8 +22,15 @@ public sealed class SubAgentDefinition
     [JsonPropertyName("disallowedTools")]
     public List<string>? DisallowedTools { get; init; }
 
+    /// <summary>
+    /// 0 (default) = unlimited — the sub-agent loop runs until the model stops
+    /// calling tools. Any positive value caps the number of iterations.
+    /// </summary>
     [JsonPropertyName("maxTurns")]
-    public int MaxTurns { get; init; } = 10;
+    public int MaxTurns { get; init; } = 0;
+
+    [JsonPropertyName("initialPrompt")]
+    public string? InitialPrompt { get; init; }
 
     [JsonPropertyName("model")]
     public string? Model { get; init; }

@@ -1,9 +1,12 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading.Channels;
 using OpenCowork.Agent.Engine;
 using OpenCowork.Agent.Providers;
+using OpenCowork.Agent.SubAgents;
 using OpenCowork.Agent.Tools.Fs;
 
 namespace OpenCowork.Agent.Protocol;
@@ -14,8 +17,10 @@ public sealed class AgentRuntimeService
     private readonly Func<string, object?, CancellationToken, TimeSpan?, Task<JsonElement?>> _sendRequestAsync;
     private readonly LlmHttpClientFactory _httpClientFactory = new();
     private readonly ToolRegistry _toolRegistry = new();
+    private readonly SubAgentRunner _subAgentRunner;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeRuns = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _readFileHistory = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Channel<StreamEvent>> _bridgedProviderStreams = new();
 
     private static readonly string[] SupportedCapabilities =
     [
@@ -46,7 +51,7 @@ public sealed class AgentRuntimeService
         "tool.EnterPlanMode",
         "tool.SavePlan",
         "tool.ExitPlanMode",
-        "tool.OpenPreview",
+        "tool.visualize_show_widget",
         "tool.Notify",
         "tool.CronAdd",
         "tool.CronUpdate",
@@ -68,6 +73,7 @@ public sealed class AgentRuntimeService
     {
         _transport = transport;
         _sendRequestAsync = sendRequestAsync;
+        _subAgentRunner = new SubAgentRunner(_toolRegistry);
         RegisterBuiltinTools();
     }
 
@@ -92,7 +98,7 @@ public sealed class AgentRuntimeService
             Console.Error.WriteLine($"[{DateTimeOffset.Now:HH:mm:ss.fff}] [AgentRuntime] background task started runId={runId}");
             try
             {
-                var provider = CreateProvider(input.Provider);
+                var provider = CreateProvider(input.Provider, runId);
                 Console.Error.WriteLine($"[{DateTimeOffset.Now:HH:mm:ss.fff}] [AgentRuntime] provider created runId={runId} provider={input.Provider.Type}");
 
                 var toolContext = new ToolContext
@@ -101,12 +107,21 @@ public sealed class AgentRuntimeService
                     WorkingFolder = input.WorkingFolder ?? Environment.CurrentDirectory,
                     CurrentToolUseId = null,
                     AgentRunId = runId,
+                    PluginId = input.PluginId,
+                    PluginChatId = input.PluginChatId,
+                    PluginChatType = input.PluginChatType,
+                    PluginSenderId = input.PluginSenderId,
+                    PluginSenderName = input.PluginSenderName,
+                    SshConnectionId = input.SshConnectionId,
+                    ProviderConfig = input.Provider,
                     ElectronInvokeAsync = CreateElectronInvokeHandler(runCts.Token),
                     RendererToolInvokeAsync = CreateRendererToolInvokeHandler(runId, runCts.Token),
                     RendererToolRequiresApprovalAsync = CreateRendererToolRequiresApprovalHandler(runId, runCts.Token),
+                    EmitAgentEventAsync = (evt, token) => SendAgentEventAsync(runId, evt, token),
                     ReadFileHistory = _readFileHistory
                 };
 
+                var isChatMode = string.Equals(input.SessionMode, "chat", StringComparison.OrdinalIgnoreCase);
                 var loopConfig = new AgentLoopRunConfig
                 {
                     Provider = provider,
@@ -114,10 +129,17 @@ public sealed class AgentRuntimeService
                     Tools = input.Tools,
                     ToolRegistry = _toolRegistry,
                     ToolContext = toolContext,
-                    MaxIterations = input.MaxIterations,
+                    // Chat mode collapses to a single assistant turn regardless
+                    // of the requested maxIterations.
+                    MaxIterations = isChatMode ? 1 : input.MaxIterations,
                     ForceApproval = input.ForceApproval,
                     Compression = input.Compression,
-                    EnableParallelToolExecution = true
+                    EnableParallelToolExecution = true,
+                    SessionMode = input.SessionMode,
+                    PlanMode = input.PlanMode,
+                    PlanModeAllowedTools = input.PlanModeAllowedTools is { Count: > 0 }
+                        ? new HashSet<string>(input.PlanModeAllowedTools, StringComparer.Ordinal)
+                        : null
                 };
 
                 var approvalHandler = CreateApprovalHandler(runId, toolContext.SessionId, runCts.Token);
@@ -442,7 +464,10 @@ public sealed class AgentRuntimeService
                 {
                     return new ToolResultContent
                     {
-                        Content = JsonSerializer.Serialize(new { error = GetString(result, "error") ?? "Failed to capture desktop screenshot." }),
+                        Content = new JsonObject
+                        {
+                            ["error"] = GetString(result, "error") ?? "Failed to capture desktop screenshot."
+                        }.ToJsonString(),
                         IsError = true
                     };
                 }
@@ -452,7 +477,10 @@ public sealed class AgentRuntimeService
                 {
                     return new ToolResultContent
                     {
-                        Content = JsonSerializer.Serialize(new { error = "Failed to capture desktop screenshot." }),
+                        Content = new JsonObject
+                        {
+                            ["error"] = "Failed to capture desktop screenshot."
+                        }.ToJsonString(),
                         IsError = true
                     };
                 }
@@ -620,6 +648,14 @@ public sealed class AgentRuntimeService
             RequiresApproval = (_, _) => true
         });
 
+        // NOTE: Stage 1 — the top-level agent loop now auto-bridges unknown
+        // tools to the renderer via ToolRegistry.Execute's dynamic fallback,
+        // so newly added JS-only tools (MCP, plugins, WebFetch, etc.) no
+        // longer require a sidecar update. The static registrations below
+        // are still used by SubAgentRunner (SubAgents/SubAgentRunner.cs:422
+        // reads _toolRegistry.GetDefinitions() to resolve sub-agent tool
+        // allowlists) and must stay until sub-agent tool resolution is
+        // refactored to use the parent request's Tools list (Stage 6).
         RegisterRendererBridgedTool("TaskCreate", "Create a task for the current session.", ParseSchema("""{"type":"object","properties":{"subject":{"type":"string"},"description":{"type":"string"},"activeForm":{"type":"string"},"metadata":{"type":"object"}},"required":["subject","description"]}"""));
         RegisterRendererBridgedTool("TaskGet", "Retrieve a task by its ID.", ParseSchema("""{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"]}"""));
         RegisterRendererBridgedTool("TaskUpdate", "Update a task.", ParseSchema("""{"type":"object","properties":{"taskId":{"type":"string"},"subject":{"type":"string"},"description":{"type":"string"},"activeForm":{"type":"string"},"status":{"type":"string"},"addBlocks":{"type":"array","items":{"type":"string"}},"addBlockedBy":{"type":"array","items":{"type":"string"}},"owner":{"type":"string"},"metadata":{"type":"object"}},"required":["taskId"]}"""));
@@ -628,13 +664,45 @@ public sealed class AgentRuntimeService
         RegisterRendererBridgedTool("EnterPlanMode", "Enter plan mode.", ParseSchema("""{"type":"object","properties":{"reason":{"type":"string"}}}"""));
         RegisterRendererBridgedTool("SavePlan", "Save the current plan content.", ParseSchema("""{"type":"object","properties":{"title":{"type":"string"},"content":{"type":"string"}},"required":["content"]}"""));
         RegisterRendererBridgedTool("ExitPlanMode", "Exit plan mode.", ParseSchema("""{"type":"object","properties":{}}"""));
-        RegisterRendererBridgedTool("OpenPreview", "Open a file in the preview panel.", ParseSchema("""{"type":"object","properties":{"file_path":{"type":"string"},"view_mode":{"type":"string"}},"required":["file_path"]}"""));
+        RegisterRendererBridgedTool("visualize_show_widget", "Show visual content — SVG graphics, diagrams, charts, or interactive HTML widgets — that renders inline alongside your text response.\nUse for flowcharts, architecture diagrams, dashboards, forms, calculators, data tables, games, illustrations, or any visual content.\nThe code is auto-detected: starts with <svg = SVG mode, otherwise HTML mode.\nA global sendPrompt(text) function is available — it sends a message to chat as if the user typed it.\nIMPORTANT: Call read_me before your first show_widget call.", ParseSchema("""
+                {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "description": "Short snake_case identifier for this visual. Must be specific and disambiguating."
+                    },
+                    "loading_messages": {
+                      "type": "array",
+                      "description": "1-4 loading messages shown to the user while the visual renders.",
+                      "minItems": 1,
+                      "maxItems": 4,
+                      "items": { "type": "string" }
+                    },
+                    "widget_code": {
+                      "type": "string",
+                      "description": "SVG or HTML code to render. For SVG: raw SVG code starting with <svg> tag. For HTML: raw HTML content without DOCTYPE, <html>, <head>, or <body> tags."
+                    }
+                  },
+                  "required": ["loading_messages", "title", "widget_code"]
+                }
+                """));
         RegisterRendererBridgedTool("Notify", "Send a desktop notification to the user.", ParseSchema("""{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"},"type":{"type":"string"},"duration":{"type":"number"}},"required":["title","body"]}"""));
         RegisterRendererBridgedTool("CronAdd", "Create a scheduled cron job.", ParseSchema("""{"type":"object","properties":{"name":{"type":"string"},"schedule":{"type":"object"},"prompt":{"type":"string"}},"required":["name","schedule","prompt"]}"""));
         RegisterRendererBridgedTool("CronUpdate", "Update an existing cron job.", ParseSchema("""{"type":"object","properties":{"jobId":{"type":"string"},"patch":{"type":"object"}},"required":["jobId","patch"]}"""));
         RegisterRendererBridgedTool("CronRemove", "Remove a scheduled cron job.", ParseSchema("""{"type":"object","properties":{"jobId":{"type":"string"}},"required":["jobId"]}"""));
         RegisterRendererBridgedTool("CronList", "List scheduled cron jobs.", ParseSchema("""{"type":"object","properties":{}}"""));
-        RegisterRendererBridgedTool("Task", "Run a sub-agent task.", ParseSchema("""{"type":"object","properties":{"subagent_type":{"type":"string"},"description":{"type":"string"},"prompt":{"type":"string"},"model":{"type":"string"},"resume":{"type":"string"},"readonly":{"type":"boolean"},"attachments":{"type":"array","items":{"type":"string"}},"run_in_background":{"type":"boolean"}},"required":["subagent_type","description","prompt"]}"""));
+        _toolRegistry.Register(new ToolHandler
+        {
+            Definition = new ToolDefinition
+            {
+                Name = "Task",
+                Description = "Run a sub-agent task.",
+                InputSchema = ParseSchema("""{"type":"object","properties":{"subagent_type":{"type":"string"},"description":{"type":"string"},"prompt":{"type":"string"},"model":{"type":"string"},"resume":{"type":"string"},"readonly":{"type":"boolean"},"attachments":{"type":"array","items":{"type":"string"}},"run_in_background":{"type":"boolean"}},"required":["subagent_type","description","prompt"]}""")
+            },
+            Execute = ExecuteTaskToolAsync,
+            RequiresApproval = (input, _) => GetOptionalBool(input, "run_in_background") == true
+        });
         RegisterRendererBridgedTool("Skill", "Load a skill by name.", ParseSchema("""{"type":"object","properties":{"SkillName":{"type":"string"}},"required":["SkillName"]}"""));
         RegisterRendererBridgedTool("ImageGenerate", "Generate images from a complete visual prompt.", ParseSchema("""{"type":"object","properties":{"prompt":{"type":"string"},"count":{"type":"number"}},"required":["prompt"]}"""));
     }
@@ -888,7 +956,7 @@ public sealed class AgentRuntimeService
 
     private static JsonElement SerializeAgentEvent(AgentEvent evt)
     {
-        var node = JsonSerializer.SerializeToNode(evt, evt.GetType(), AppJsonContext.Default)?.AsObject()
+        var node = JsonSerializer.SerializeToNode(evt, AppJsonContext.Default.AgentEvent)?.AsObject()
             ?? throw new InvalidOperationException($"Failed to serialize agent event {evt.GetType().Name}");
 
         if (!node.ContainsKey("type"))
@@ -917,6 +985,104 @@ public sealed class AgentRuntimeService
         };
     }
 
+    private async Task<ToolResultContent> ExecuteTaskToolAsync(
+        Dictionary<string, JsonElement> input,
+        ToolContext ctx,
+        CancellationToken ct)
+    {
+        if (GetOptionalBool(input, "run_in_background") == true)
+        {
+            return await InvokeRendererToolAsync(ctx, "Task", input, ct);
+        }
+
+        var subAgentName = GetString(input, "subagent_type", required: true);
+        var definition = await GetSubAgentDefinitionAsync(ctx, subAgentName, ct);
+        if (definition is null)
+        {
+            return new ToolResultContent
+            {
+                Content = BuildJsonObject(new Dictionary<string, JsonNode?>
+                {
+                    ["error"] = JsonValue.Create($"Unknown subagent_type \"{subAgentName}\".")
+                })
+            };
+        }
+
+        if (ctx.ProviderConfig is null)
+            throw new InvalidOperationException("Provider config is unavailable for sub-agent execution.");
+
+        var provider = CreateProvider(ctx.ProviderConfig, ctx.AgentRunId ?? ctx.SessionId);
+        var result = await _subAgentRunner.RunAsync(definition, input, provider, ctx.ProviderConfig, ctx, CreateApprovalHandler(ctx.AgentRunId ?? ctx.SessionId, ctx.SessionId, ct), ct);
+
+        if (!result.Result.Success)
+        {
+            return new ToolResultContent
+            {
+                Content = BuildJsonObject(new Dictionary<string, JsonNode?>
+                {
+                    ["error"] = JsonValue.Create(result.Result.Error ?? "Sub-agent failed"),
+                    ["result"] = string.IsNullOrWhiteSpace(result.Result.Output)
+                        ? null
+                        : JsonValue.Create(result.Result.Output)
+                })
+            };
+        }
+
+        return new ToolResultContent
+        {
+            Content = result.Result.Output
+        };
+    }
+
+    private async Task<SubAgentDefinition?> GetSubAgentDefinitionAsync(
+        ToolContext ctx,
+        string name,
+        CancellationToken ct)
+    {
+        if (_subAgentRunner.Get(name) is { } cached)
+            return cached;
+
+        var response = await InvokeElectronAsync(ctx, "agents:list", Array.Empty<object?>(), ct);
+        if (response.ValueKind != JsonValueKind.Array)
+            return null;
+
+        foreach (var item in response.EnumerateArray())
+        {
+            var definition = ParseSubAgentDefinition(item);
+            if (definition is null)
+                continue;
+            _subAgentRunner.Register(definition);
+        }
+
+        return _subAgentRunner.Get(name);
+    }
+
+    private static SubAgentDefinition? ParseSubAgentDefinition(JsonElement element)
+    {
+        if (!element.TryGetProperty("name", out var nameValue) || nameValue.ValueKind != JsonValueKind.String)
+            return null;
+        if (!element.TryGetProperty("systemPrompt", out var systemPromptValue) || systemPromptValue.ValueKind != JsonValueKind.String)
+            return null;
+
+        var tools = GetOptionalStringArray(element, "tools")
+            ?? GetOptionalStringArray(element, "allowedTools")
+            ?? new[] { "Read", "Glob", "Grep", "LS", "Bash" };
+        var maxTurns = GetOptionalInt(element, "maxTurns") ?? GetOptionalInt(element, "maxIterations") ?? 0;
+
+        return new SubAgentDefinition
+        {
+            Name = nameValue.GetString()!,
+            Description = GetString(element, "description"),
+            SystemPrompt = systemPromptValue.GetString(),
+            Tools = tools.ToList(),
+            DisallowedTools = (GetOptionalStringArray(element, "disallowedTools") ?? Array.Empty<string>()).ToList(),
+            MaxTurns = maxTurns,
+            InitialPrompt = GetString(element, "initialPrompt"),
+            Model = GetString(element, "model"),
+            Temperature = GetOptionalDouble(element, "temperature")
+        };
+    }
+
     private Func<string, IReadOnlyList<object?>?, CancellationToken, Task<JsonElement?>> CreateElectronInvokeHandler(CancellationToken runCt)
     {
         return async (channel, args, token) =>
@@ -925,13 +1091,51 @@ public sealed class AgentRuntimeService
             var payload = new ElectronInvokeParams
             {
                 Channel = channel,
-                Args = args?
-                    .Select(arg => JsonSerializer.SerializeToElement(arg, arg?.GetType() ?? typeof(object), AppJsonContext.Default))
-                    .ToList()
+                Args = args?.Select(ArgToJsonElement).ToList()
             };
             var response = await _sendRequestAsync("electron/invoke", payload, linked.Token, TimeSpan.FromMinutes(2));
             return response;
         };
+    }
+
+    /// <summary>
+    /// Convert an arbitrary invoke argument to a JsonElement without going through
+    /// reflection-based serialization (disabled in this app). JsonNode/JsonElement
+    /// pass through directly; primitives use their registered JsonTypeInfo; unknown
+    /// types are rendered as strings.
+    /// </summary>
+    private static JsonElement ArgToJsonElement(object? arg)
+    {
+        switch (arg)
+        {
+            case null:
+                return JsonSerializer.SerializeToElement<string?>(null, AppJsonContext.Default.String);
+            case JsonElement element:
+                return element.Clone();
+            case JsonNode node:
+            {
+                using var doc = JsonDocument.Parse(node.ToJsonString());
+                return doc.RootElement.Clone();
+            }
+            case string text:
+                return JsonSerializer.SerializeToElement(text, AppJsonContext.Default.String);
+            case bool boolean:
+                return JsonSerializer.SerializeToElement(boolean, AppJsonContext.Default.Boolean);
+            case int int32:
+                return JsonSerializer.SerializeToElement(int32, AppJsonContext.Default.Int32);
+            case long int64:
+                return JsonSerializer.SerializeToElement(int64, AppJsonContext.Default.Int64);
+            case double float64:
+                return JsonSerializer.SerializeToElement(float64, AppJsonContext.Default.Double);
+            case Dictionary<string, JsonElement> dict:
+                return JsonSerializer.SerializeToElement(dict, AppJsonContext.Default.DictionaryStringJsonElement);
+            case Dictionary<string, object?> dictObj:
+                return JsonSerializer.SerializeToElement(dictObj, AppJsonContext.Default.DictionaryStringObject);
+            default:
+                return JsonSerializer.SerializeToElement(
+                    arg.ToString() ?? string.Empty,
+                    AppJsonContext.Default.String);
+        }
     }
 
     private Func<string, Dictionary<string, JsonElement>, ToolContext, CancellationToken, Task<JsonElement?>> CreateRendererToolInvokeHandler(string runId, CancellationToken runCt)
@@ -946,7 +1150,13 @@ public sealed class AgentRuntimeService
                 SessionId = ctx.SessionId,
                 WorkingFolder = ctx.WorkingFolder,
                 CurrentToolUseId = ctx.CurrentToolUseId,
-                AgentRunId = ctx.AgentRunId ?? runId
+                AgentRunId = ctx.AgentRunId ?? runId,
+                PluginId = ctx.PluginId,
+                PluginChatId = ctx.PluginChatId,
+                PluginChatType = ctx.PluginChatType,
+                PluginSenderId = ctx.PluginSenderId,
+                PluginSenderName = ctx.PluginSenderName,
+                SshConnectionId = ctx.SshConnectionId
             };
             return await _sendRequestAsync("renderer/tool-request", payload, linked.Token, TimeSpan.FromMinutes(10));
         };
@@ -1044,12 +1254,152 @@ public sealed class AgentRuntimeService
         };
     }
 
-    private ILlmProvider CreateProvider(ProviderConfig config) => config.Type switch
+    private static int? GetOptionalInt(JsonElement element, string propertyName)
     {
-        "anthropic" => new AnthropicProvider(_httpClientFactory),
-        "openai-chat" => new OpenAiChatProvider(_httpClientFactory),
-        "openai-responses" => new OpenAiResponsesProvider(_httpClientFactory),
-        "gemini" => new GeminiProvider(_httpClientFactory),
-        _ => throw new InvalidOperationException($"Unsupported provider type: {config.Type}")
-    };
+        if (!element.TryGetProperty(propertyName, out var value))
+            return null;
+        return value.ValueKind == JsonValueKind.Number ? value.GetInt32() : null;
+    }
+
+    private static double? GetOptionalDouble(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value))
+            return null;
+        return value.ValueKind == JsonValueKind.Number ? value.GetDouble() : null;
+    }
+
+    private static string[]? GetOptionalStringArray(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.Array)
+            return null;
+
+        return value.EnumerateArray()
+            .Where(static item => item.ValueKind == JsonValueKind.String)
+            .Select(static item => item.GetString())
+            .Where(static item => !string.IsNullOrWhiteSpace(item))
+            .Cast<string>()
+            .ToArray();
+    }
+
+    private ILlmProvider CreateProvider(ProviderConfig config, string runId)
+    {
+        if (string.Equals(config.Mode, "bridged", StringComparison.OrdinalIgnoreCase))
+            return new BridgedProvider(CreateBridgedProviderInvoker(runId));
+
+        return config.Type switch
+        {
+            "anthropic" => new AnthropicProvider(_httpClientFactory),
+            "openai-chat" => new OpenAiChatProvider(_httpClientFactory),
+            "openai-responses" => new OpenAiResponsesProvider(_httpClientFactory),
+            "gemini" => new GeminiProvider(_httpClientFactory),
+            _ => new BridgedProvider(CreateBridgedProviderInvoker(runId))
+        };
+    }
+
+    private Func<ProviderConfig, List<UnifiedMessage>, List<ToolDefinition>, CancellationToken, IAsyncEnumerable<StreamEvent>>
+        CreateBridgedProviderInvoker(string runId)
+    {
+        return (config, messages, tools, ct) => InvokeBridgedProviderAsync(runId, config, messages, tools, ct);
+    }
+
+    private async IAsyncEnumerable<StreamEvent> InvokeBridgedProviderAsync(
+        string runId,
+        ProviderConfig config,
+        List<UnifiedMessage> messages,
+        List<ToolDefinition> tools,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var streamId = Guid.NewGuid().ToString("N");
+        var channel = Channel.CreateBounded<StreamEvent>(new BoundedChannelOptions(256)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = false
+        });
+
+        _bridgedProviderStreams[streamId] = channel;
+
+        var startParams = new BridgedProviderStreamStartParams
+        {
+            StreamId = streamId,
+            ProviderType = config.Type,
+            ProviderConfig = config,
+            Messages = messages,
+            Tools = tools,
+            AgentRunId = runId
+        };
+
+        var startTask = _sendRequestAsync(
+            "renderer/provider-stream-start",
+            startParams,
+            ct,
+            TimeSpan.FromMinutes(10));
+
+        // When the renderer's response comes back (or errors), signal channel completion
+        // in case the renderer missed sending a Done event.
+        _ = startTask.ContinueWith(t =>
+        {
+            if (t.IsFaulted)
+            {
+                var inner = t.Exception?.GetBaseException();
+                channel.Writer.TryComplete(inner);
+            }
+            else
+            {
+                channel.Writer.TryComplete();
+            }
+        }, TaskScheduler.Default);
+
+        try
+        {
+            await foreach (var ev in channel.Reader.ReadAllAsync(ct))
+            {
+                yield return ev;
+            }
+        }
+        finally
+        {
+            _bridgedProviderStreams.TryRemove(streamId, out _);
+            try { await startTask.ConfigureAwait(false); } catch { /* already surfaced via channel or ct */ }
+        }
+    }
+
+    /// <summary>
+    /// Called by MessageRouter when a "provider/stream-event" notification arrives.
+    /// Routes the event to the waiting bridged provider's channel by streamId.
+    /// </summary>
+    public Task HandleBridgedProviderStreamEventAsync(JsonElement? @params, CancellationToken ct)
+    {
+        if (!@params.HasValue)
+            return Task.CompletedTask;
+
+        var parsed = JsonSerializer.Deserialize(@params.Value, AppJsonContext.Default.BridgedProviderStreamEventParams);
+        if (parsed is null || string.IsNullOrWhiteSpace(parsed.StreamId))
+            return Task.CompletedTask;
+
+        if (!_bridgedProviderStreams.TryGetValue(parsed.StreamId, out var channel))
+            return Task.CompletedTask;
+
+        if (parsed.Done)
+        {
+            if (!string.IsNullOrWhiteSpace(parsed.Error))
+                channel.Writer.TryComplete(new InvalidOperationException(parsed.Error));
+            else
+                channel.Writer.TryComplete();
+            return Task.CompletedTask;
+        }
+
+        if (parsed.Event is not null)
+        {
+            // Use TryWrite to avoid blocking the message pump; bounded channel will
+            // drop-then-wait only under extreme backpressure, which we don't expect
+            // for SSE-rate events.
+            if (!channel.Writer.TryWrite(parsed.Event))
+            {
+                return channel.Writer.WriteAsync(parsed.Event, ct).AsTask();
+            }
+        }
+
+        return Task.CompletedTask;
+    }
 }

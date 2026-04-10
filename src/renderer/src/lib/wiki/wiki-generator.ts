@@ -1,5 +1,7 @@
 import { nanoid } from 'nanoid'
-import { runAgentLoop } from '@renderer/lib/agent/agent-loop'
+import { runAgentViaSidecar } from '@renderer/lib/agent/run-agent-via-sidecar'
+import { buildSidecarAgentRunRequest } from '@renderer/lib/ipc/sidecar-protocol'
+import { registerInlineToolHandlers } from '@renderer/lib/ipc/inline-tool-handler-registry'
 import { createProvider } from '@renderer/lib/api/provider'
 import { buildSystemPrompt } from '@renderer/lib/agent/system-prompt'
 import { toolRegistry } from '@renderer/lib/agent/tool-registry'
@@ -10,7 +12,7 @@ import { ipcClient } from '@renderer/lib/ipc/ipc-client'
 import { IPC } from '@renderer/lib/ipc/channels'
 import { encodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
 import type { ProviderConfig, ToolDefinition, UnifiedMessage } from '@renderer/lib/api/types'
-import type { ToolContext, ToolHandler } from '@renderer/lib/tools/tool-types'
+import type { ToolHandler } from '@renderer/lib/tools/tool-types'
 import type { SubAgentDefinition } from '@renderer/lib/agent/sub-agents/types'
 import { useProviderStore } from '@renderer/stores/provider-store'
 import { useSettingsStore, resolveReasoningEffortForModel } from '@renderer/stores/settings-store'
@@ -542,38 +544,32 @@ async function generateStructure(options: {
   const structureTool = createStructureTool(state)
   const toolDefs = pickToolDefs(['Read', 'Glob', 'Grep'], [structureTool.definition])
   const systemPrompt = buildPlanningSystemPrompt(options.workingFolder, toolDefs)
-  const toolCtx: ToolContext = {
-    workingFolder: options.workingFolder,
-    signal: options.signal,
-    ipc: ipcClient,
-    inlineToolHandlers: {
-      SetWikiStructure: structureTool
-    }
-  }
+  const wikiSessionId = `wiki-structure-${nanoid()}`
+  const unregisterInline = registerInlineToolHandlers(wikiSessionId, {
+    SetWikiStructure: structureTool
+  })
 
   const attemptMessages: UnifiedMessage[] = [
     buildPlanningPrompt(options.projectName, options.workingFolder)
   ]
   let collectedText = ''
 
+  try {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     collectedText = ''
-    const loop = runAgentLoop(
-      attemptMessages,
-      {
-        maxIterations: 20,
-        provider: {
-          ...options.providerConfig,
-          systemPrompt
-        },
-        tools: toolDefs,
-        systemPrompt,
-        workingFolder: options.workingFolder,
-        signal: options.signal
-      },
-      toolCtx,
-      async () => true
-    )
+    const sidecarRequest = buildSidecarAgentRunRequest({
+      messages: attemptMessages,
+      provider: { ...options.providerConfig, systemPrompt },
+      tools: toolDefs,
+      sessionId: wikiSessionId,
+      workingFolder: options.workingFolder,
+      maxIterations: 20,
+      forceApproval: false
+    })
+    if (!sidecarRequest) {
+      throw new Error('Failed to build sidecar request for wiki structure planning')
+    }
+    const loop = runAgentViaSidecar(sidecarRequest, { signal: options.signal })
 
     for await (const event of loop) {
       if (event.type === 'text_delta') {
@@ -612,6 +608,9 @@ async function generateStructure(options: {
   }
 
   throw new Error('AI 未提交 Wiki 树结构')
+  } finally {
+    unregisterInline()
+  }
 }
 
 async function persistStructure(

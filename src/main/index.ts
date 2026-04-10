@@ -405,11 +405,11 @@ function configureChromiumCachePaths(): void {
   }
 }
 
-/** Cap renderer V8 old-space to 1/4 of system RAM (min 512 MB, max 4 GB). Must run before ready. */
+/** Cap renderer V8 old-space to 1/4 of system RAM (min 512 MB). Must run before ready. */
 function configureRendererHeapLimit(): void {
   try {
     const systemMemMb = Math.floor(totalmem() / (1024 * 1024))
-    const heapSizeMb = Math.max(512, Math.min(Math.floor(systemMemMb / 4), 4096))
+    const heapSizeMb = Math.max(512, Math.floor(systemMemMb / 4))
     app.commandLine.appendSwitch('js-flags', `--max-old-space-size=${heapSizeMb}`)
   } catch (error) {
     console.warn('[Main] Failed to set renderer heap limit:', error)

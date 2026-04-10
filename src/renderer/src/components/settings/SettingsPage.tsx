@@ -70,6 +70,7 @@ import {
 } from '@renderer/lib/agent/memory-files'
 import packageJson from '../../../../../package.json'
 import {
+  clearUsageEvents,
   getUsageByModel,
   getUsageByProvider,
   getUsageDaily,
@@ -1493,6 +1494,7 @@ function AnalyticsPanel(): React.JSX.Element {
   const [models, setModels] = useState<Record<string, unknown>[]>([])
   const [providers, setProviders] = useState<Record<string, unknown>[]>([])
   const [details, setDetails] = useState<Record<string, unknown>[]>([])
+  const [clearing, setClearing] = useState(false)
 
   const providerOptions = useMemo(
     () =>
@@ -1539,9 +1541,8 @@ function AnalyticsPanel(): React.JSX.Element {
     }
   }, [rangeDays, selectedModelId, selectedProviderId, selectedSourceKind])
 
-  useEffect(() => {
-    let cancelled = false
-    const run = async (): Promise<void> => {
+  const loadAnalytics = useCallback(
+    async (signal?: { cancelled: boolean }): Promise<void> => {
       setLoading(true)
       try {
         const [nextOverview, nextTimeline, nextDaily, nextModels, nextProviders, nextDetails] =
@@ -1553,7 +1554,7 @@ function AnalyticsPanel(): React.JSX.Element {
             getUsageByProvider(query),
             listUsageEvents(query)
           ])
-        if (cancelled) return
+        if (signal?.cancelled) return
         setOverview(nextOverview)
         setTimeline(nextTimeline)
         setDaily(nextDaily)
@@ -1561,14 +1562,48 @@ function AnalyticsPanel(): React.JSX.Element {
         setProviders(nextProviders)
         setDetails(nextDetails)
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!signal?.cancelled) setLoading(false)
       }
-    }
-    void run()
+    },
+    [query, timelineBucket]
+  )
+
+  useEffect(() => {
+    const signal = { cancelled: false }
+    void loadAnalytics(signal)
     return () => {
-      cancelled = true
+      signal.cancelled = true
     }
-  }, [query, timelineBucket])
+  }, [loadAnalytics])
+
+  const handleClearLogs = useCallback(async (): Promise<void> => {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
+    const purgeQuery = { from: 0, to: cutoff }
+    const preview = (await getUsageOverview(purgeQuery)) as { request_count?: number } | null
+    const count = Number(preview?.request_count ?? 0)
+    if (count <= 0) {
+      toast.info(t('analytics.clearEmpty'))
+      return
+    }
+    const cutoffLabel = new Date(cutoff).toLocaleString()
+    const ok = await confirm({
+      title: t('analytics.clearConfirmTitle'),
+      description: t('analytics.clearConfirmDescription', { count, date: cutoffLabel }),
+      variant: 'destructive'
+    })
+    if (!ok) return
+    setClearing(true)
+    try {
+      const result = await clearUsageEvents(purgeQuery)
+      toast.success(t('analytics.clearSuccess', { count: result.deleted }))
+      await loadAnalytics()
+    } catch (error) {
+      console.error('[analytics] clear logs failed', error)
+      toast.error(t('analytics.clearFailed'))
+    } finally {
+      setClearing(false)
+    }
+  }, [loadAnalytics, t])
 
   const tokenLocale = i18n.language?.startsWith('zh') ? 'zh-CN' : 'en-US'
   const inputTokenLabel = t('analytics.billableInputTokens', {
@@ -1663,7 +1698,7 @@ function AnalyticsPanel(): React.JSX.Element {
           <h2 className="text-lg font-semibold">{t('analytics.title')}</h2>
           <p className="text-sm text-muted-foreground">{t('analytics.subtitle')}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {([1, 7, 30] as const).map((days) => (
             <Button
               key={days}
@@ -1679,6 +1714,20 @@ function AnalyticsPanel(): React.JSX.Element {
                   : t('analytics.range30d')}
             </Button>
           ))}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs text-destructive hover:text-destructive"
+            onClick={() => void handleClearLogs()}
+            disabled={clearing || loading}
+          >
+            {clearing ? (
+              <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="mr-1.5 size-3.5" />
+            )}
+            {clearing ? t('analytics.clearing') : t('analytics.clearLogs')}
+          </Button>
         </div>
       </div>
 

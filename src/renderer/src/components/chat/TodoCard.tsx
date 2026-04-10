@@ -5,6 +5,25 @@ import { cn } from '@renderer/lib/utils'
 import type { ToolResultContent } from '@renderer/lib/api/types'
 import { decodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
 import { useTaskStore, type TaskItem } from '@renderer/stores/task-store'
+import { useTeamStore } from '@renderer/stores/team-store'
+import type { TeamTask } from '@renderer/lib/agent/teams/types'
+
+function teamTaskToItem(task: TeamTask): TaskItem {
+  return {
+    id: task.id,
+    sessionId: '',
+    subject: task.subject,
+    description: task.description,
+    activeForm: task.activeForm,
+    status: task.status,
+    owner: task.owner,
+    blocks: [],
+    blockedBy: task.dependsOn ?? [],
+    metadata: undefined,
+    createdAt: 0,
+    updatedAt: 0
+  }
+}
 
 function StatusDot({ status }: { status: TaskItem['status'] }): React.JSX.Element {
   switch (status) {
@@ -90,33 +109,71 @@ function parseTaskSnapshot(output: ToolResultContent | undefined): {
 
 export function TaskCard({ name, input, output }: TaskCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  const liveTasks = useTaskStore((s) => s.tasks)
+  const liveStandaloneTasks = useTaskStore((s) => s.tasks)
+  const activeTeam = useTeamStore((s) => s.activeTeam)
+  const liveTeamTasks = React.useMemo(
+    () => (activeTeam?.tasks ?? []).map(teamTaskToItem),
+    [activeTeam]
+  )
+  // Prefer the tool-result snapshot; fall back to whichever live store has data.
+  const liveTasks: TaskItem[] =
+    liveStandaloneTasks.length > 0 ? liveStandaloneTasks : liveTeamTasks
   const [expanded, setExpanded] = React.useState(false)
   const snapshot = React.useMemo(() => parseTaskSnapshot(output), [output])
   const tasks: TaskItem[] = snapshot?.tasks ?? liveTasks
   const focusedTaskId =
     snapshot?.taskId ?? (typeof input.taskId === 'string' ? input.taskId : undefined)
 
-  const total = tasks.length || (name === 'TaskCreate' && input.subject ? 1 : 0)
-  const completed = tasks.filter((t) => t.status === 'completed').length
+  // For TaskUpdate with no snapshot and no hit in live stores, synthesize a single
+  // focus item from the tool input so the card still conveys what happened.
+  const focusedTask = React.useMemo<TaskItem | null>(() => {
+    if (name !== 'TaskUpdate') return null
+    if (!focusedTaskId) return null
+    if (tasks.some((task) => task.id === focusedTaskId)) return null
+    const inputSubject = typeof input.subject === 'string' ? input.subject : undefined
+    const inputStatus = typeof input.status === 'string' ? input.status : 'in_progress'
+    const inputActiveForm = typeof input.activeForm === 'string' ? input.activeForm : undefined
+    const status: TaskItem['status'] =
+      inputStatus === 'completed' || inputStatus === 'in_progress' || inputStatus === 'pending'
+        ? inputStatus
+        : 'in_progress'
+    return {
+      id: focusedTaskId,
+      sessionId: '',
+      subject: inputSubject ?? `#${focusedTaskId}`,
+      description: '',
+      activeForm: inputActiveForm,
+      status,
+      owner: null,
+      blocks: [],
+      blockedBy: [],
+      createdAt: 0,
+      updatedAt: 0
+    }
+  }, [name, focusedTaskId, tasks, input])
+
+  const displayedTasks: TaskItem[] = focusedTask ? [focusedTask] : tasks
+  const total =
+    displayedTasks.length || (name === 'TaskCreate' && input.subject ? 1 : 0)
+  const completed = displayedTasks.filter((t) => t.status === 'completed').length
 
   const { hiddenCount, visibleTasks } = React.useMemo(() => {
-    if (tasks.length <= COLLAPSED_VISIBLE_RECENT_TASK_COUNT) {
-      return { hiddenCount: 0, visibleTasks: tasks }
+    if (displayedTasks.length <= COLLAPSED_VISIBLE_RECENT_TASK_COUNT) {
+      return { hiddenCount: 0, visibleTasks: displayedTasks }
     }
 
     const recentTaskIds = new Set(
-      tasks.slice(-COLLAPSED_VISIBLE_RECENT_TASK_COUNT).map((task) => task.id)
+      displayedTasks.slice(-COLLAPSED_VISIBLE_RECENT_TASK_COUNT).map((task) => task.id)
     )
-    const nextVisibleTasks = tasks.filter(
+    const nextVisibleTasks = displayedTasks.filter(
       (task) => task.status !== 'completed' || recentTaskIds.has(task.id)
     )
 
     return {
-      hiddenCount: Math.max(0, tasks.length - nextVisibleTasks.length),
+      hiddenCount: Math.max(0, displayedTasks.length - nextVisibleTasks.length),
       visibleTasks: nextVisibleTasks
     }
-  }, [tasks])
+  }, [displayedTasks])
 
   React.useEffect(() => {
     if (hiddenCount === 0) {
@@ -124,8 +181,11 @@ export function TaskCard({ name, input, output }: TaskCardProps): React.JSX.Elem
     }
   }, [hiddenCount])
 
-  const displayTasks = hiddenCount > 0 && !expanded ? visibleTasks : tasks
+  const displayTasks = hiddenCount > 0 && !expanded ? visibleTasks : displayedTasks
   const pendingSubject = name === 'TaskCreate' && input.subject ? String(input.subject) : null
+  // Show the pending placeholder whenever we have no rows to render for this TaskCreate —
+  // not only when total === 0 (team mode can leave `total` at 1 with an empty task list).
+  const showPendingPlaceholder = !!pendingSubject && displayTasks.length === 0
 
   if (total === 0 && !pendingSubject) {
     return <></>
@@ -177,7 +237,7 @@ export function TaskCard({ name, input, output }: TaskCardProps): React.JSX.Elem
             </div>
           </div>
         ))}
-        {total === 0 && pendingSubject && (
+        {showPendingPlaceholder && (
           <div className="flex items-start gap-2 rounded-md px-1.5 py-1">
             <span className="mt-0.5">
               <StatusDot status="pending" />

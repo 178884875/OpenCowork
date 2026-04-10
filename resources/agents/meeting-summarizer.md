@@ -2,7 +2,7 @@
 name: meeting-summarizer
 description: Process meeting notes, transcripts, and recordings into structured summaries with action items, decisions, and key discussion points. Generates professional meeting minutes and follow-up task lists.
 icon: clipboard-list
-allowedTools: Read, Write, Edit, Glob, Grep, LS
+allowedTools: Read, Write, Edit, Glob, Grep, LS, Bash
 maxIterations: 0
 ---
 

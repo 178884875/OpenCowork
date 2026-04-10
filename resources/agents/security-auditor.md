@@ -2,7 +2,7 @@
 name: security-auditor
 description: Conduct comprehensive security audits, vulnerability assessments, and compliance evaluations across codebases and infrastructure. Provides actionable findings with remediation recommendations.
 icon: shield-check
-allowedTools: Read, Glob, Grep, LS
+allowedTools: Read, Glob, Grep, LS, Bash
 maxIterations: 0
 ---
 

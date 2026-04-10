@@ -54,6 +54,10 @@ export interface SharedAgentRuntimeResult {
   usage: TokenUsage
   aggregatedText: string
   finalOutput: string
+  /** Full conversation transcript at the moment the loop terminated.
+   *  Populated via AgentLoopConfig.captureFinalMessages — callers can
+   *  feed it back into a follow-up run (e.g. to synthesize a report). */
+  finalMessages: UnifiedMessage[]
   error?: string
 }
 
@@ -76,6 +80,15 @@ export async function runSharedAgentRuntime(
 
   let stopReason: SharedAgentRuntimeReason | null = null
   let errorMessage: string | undefined
+  let capturedFinalMessages: UnifiedMessage[] = []
+  const effectiveLoopConfig: AgentLoopConfig = {
+    ...loopConfig,
+    captureFinalMessages: (messages) => {
+      capturedFinalMessages = messages
+      // Still forward to the caller's hook if they provided one.
+      loopConfig.captureFinalMessages?.(messages)
+    }
+  }
 
   const buildHookArgs = (event: AgentEvent): SharedAgentRuntimeHookArgs => ({
     event,
@@ -98,7 +111,7 @@ export async function runSharedAgentRuntime(
   }
 
   try {
-    const loop = runAgentLoop(initialMessages, loopConfig, toolContext, async (toolCall) => {
+    const loop = runAgentLoop(initialMessages, effectiveLoopConfig, toolContext, async (toolCall) => {
       if (isReadOnlyTool?.(toolCall.name)) return true
       if (onApprovalNeeded) return onApprovalNeeded(toolCall)
       return false
@@ -189,7 +202,80 @@ export async function runSharedAgentRuntime(
     aggregatedText: state.aggregatedText,
     finalOutput:
       state.lastAssistantText || state.currentAssistantText.trim() || state.aggregatedText.trim(),
+    finalMessages: capturedFinalMessages,
     ...(errorMessage ? { error: errorMessage } : {})
+  }
+}
+
+/**
+ * Default report-request prompt used by {@link requestFallbackReport}.
+ * Exported so callers can override it with domain-specific wording if needed.
+ */
+export const DEFAULT_FALLBACK_REPORT_PROMPT =
+  'Your previous turn ended without producing any visible text. Your caller has no way to see what you did. ' +
+  'Now, based on everything you executed in this conversation (tool calls, findings, analysis, attempts, and ' +
+  "failures), write a detailed work report. The report MUST include:\n" +
+  '1. What you were asked to do and your interpretation of the task.\n' +
+  '2. The concrete steps you took, in order, with the key evidence you gathered from each tool call.\n' +
+  '3. Your findings, conclusions, or the artifacts you produced (paste or quote the important parts directly).\n' +
+  '4. Anything you could NOT finish, and the reason (blocker, missing info, unclear scope, etc.).\n' +
+  '5. Concrete next steps or recommendations for the caller.\n\n' +
+  'Respond in the same language the task was given in. Output the report body only — do NOT call any tools, ' +
+  'do NOT ask clarifying questions, do NOT add preamble like "Here is the report". Just the report.'
+
+/**
+ * Re-runs the agent with the captured transcript plus an injected user message
+ * asking the model to summarize its work. Tools are disabled so the model is
+ * forced to respond with text. Used as a fallback when the primary loop ended
+ * with an empty {@link SharedAgentRuntimeResult.finalOutput}.
+ *
+ * Returns the generated report text, or null if the retry also produced nothing
+ * (or if there are no captured messages to replay).
+ */
+export async function requestFallbackReport(options: {
+  capturedMessages: UnifiedMessage[]
+  loopConfig: AgentLoopConfig
+  toolContext: ToolContext
+  reportPrompt?: string
+}): Promise<string | null> {
+  const { capturedMessages, loopConfig, toolContext, reportPrompt } = options
+  if (capturedMessages.length === 0) return null
+  if (toolContext.signal.aborted) return null
+
+  const reportRequestMessage: UnifiedMessage = {
+    id: nanoid(),
+    role: 'user',
+    content: reportPrompt ?? DEFAULT_FALLBACK_REPORT_PROMPT,
+    createdAt: Date.now()
+  }
+
+  const followUpConfig: AgentLoopConfig = {
+    ...loopConfig,
+    // Strip tools so the model cannot defer work into another tool call —
+    // it has no choice but to emit the report as text.
+    tools: [],
+    // Single iteration is enough; we only want a text response.
+    maxIterations: 1,
+    // Do not recurse fallback capture.
+    captureFinalMessages: undefined,
+    // Skip context compression on the follow-up; the transcript is already final.
+    contextCompression: undefined,
+    // Drop any pending message queue so teammate messages do not pollute the report.
+    messageQueue: undefined
+  }
+
+  try {
+    const retryRuntime = await runSharedAgentRuntime({
+      initialMessages: [...capturedMessages, reportRequestMessage],
+      loopConfig: followUpConfig,
+      toolContext,
+      isReadOnlyTool: () => true
+    })
+    const text = retryRuntime.finalOutput.trim()
+    return text ? text : null
+  } catch (err) {
+    console.error('[SharedAgentRuntime] fallback report synthesis failed:', err)
+    return null
   }
 }
 

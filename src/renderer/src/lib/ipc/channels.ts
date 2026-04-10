@@ -10,6 +10,7 @@ export const IPC = {
   API_STREAM_END: 'api:stream-end',
   API_STREAM_ERROR: 'api:stream-error',
   API_QUOTA_UPDATE: 'api:quota-update',
+  API_ACCOUNT_RATE_LIMITED: 'api:account-rate-limited',
   API_ABORT: 'api:abort',
 
   // File System
@@ -79,6 +80,7 @@ export const IPC = {
   USAGE_EVENTS_BY_MODEL: 'usage-events:by-model',
   USAGE_EVENTS_BY_PROVIDER: 'usage-events:by-provider',
   USAGE_EVENTS_LIST: 'usage-events:list',
+  USAGE_EVENTS_CLEAR: 'usage-events:clear',
 
   // Plugins
   PLUGIN_LIST_PROVIDERS: 'plugin:list-providers',

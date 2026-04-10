@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Bot, MessagesSquare, Users, Wrench } from 'lucide-react'
+import { Bot, MessagesSquare, ScrollText, Users } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from 'react-i18next'
@@ -10,8 +10,12 @@ import { useTeamStore } from '@renderer/stores/team-store'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { buildOrchestrationRuns } from '@renderer/lib/orchestration/build-runs'
 import { OrchestrationStagePills } from '@renderer/components/chat/OrchestrationStagePills'
-import { ToolCallCard } from '@renderer/components/chat/ToolCallCard'
 import { TranscriptMessageList } from '@renderer/components/chat/TranscriptMessageList'
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger
+} from '@renderer/components/ui/hover-card'
 import { cn } from '@renderer/lib/utils'
 
 export function OrchestrationConsole(): React.JSX.Element {
@@ -101,7 +105,7 @@ export function OrchestrationConsole(): React.JSX.Element {
                 })}
               </span>
             </div>
-            <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground/75">
+            <p className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-sm text-muted-foreground/75">
               {run.summary || run.latestAction}
             </p>
           </div>
@@ -245,62 +249,97 @@ export function OrchestrationConsole(): React.JSX.Element {
                     <TranscriptMessageList messages={selectedMember.transcript} />
                   </section>
                 )}
-
-                <section className="rounded-xl border border-border/60 bg-background/70 p-3">
-                  <div className="mb-3 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/65">
-                    <Wrench className="size-3.5" />
-                    <span>{t('rightPanel.orchestrationToolCalls', { defaultValue: '工具调用' })}</span>
-                  </div>
-                  <div className="space-y-2">
-                    {selectedMember.toolCalls.length > 0 ? (
-                      selectedMember.toolCalls.map((toolCall) => (
-                        <ToolCallCard
-                          key={toolCall.id}
-                          toolUseId={toolCall.id}
-                          name={toolCall.name}
-                          input={toolCall.input}
-                          output={toolCall.output}
-                          status={toolCall.status}
-                          error={toolCall.error}
-                          startedAt={toolCall.startedAt}
-                          completedAt={toolCall.completedAt}
-                        />
-                      ))
-                    ) : (
-                      <div className="rounded-lg border border-dashed border-border/60 bg-background/60 p-3 text-sm text-muted-foreground">
-                        {t('rightPanel.orchestrationToolCallsEmpty', { defaultValue: '当前成员还没有可展示的工具调用' })}
-                      </div>
-                    )}
-                  </div>
-                </section>
               </div>
             ) : null}
           </div>
 
           <div className="border-t border-border/60 px-4 py-3">
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {run.members.map((member, index) => (
-                <button
-                  key={member.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedOrchestrationMemberId(member.id)
-                    setOrchestrationConsoleView('member')
-                  }}
-                  className={cn(
-                    'min-w-[112px] rounded-2xl border px-3 py-2 text-left transition-colors',
-                    selectedMember?.id === member.id
-                      ? 'border-foreground/20 bg-foreground/8'
-                      : 'border-border/60 bg-background/70 hover:bg-muted/30'
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium text-foreground/90">{String(index + 1).padStart(2, '0')}</span>
-                    <span className="text-[10px] text-muted-foreground/65">{member.status}</span>
-                  </div>
-                  <div className="mt-2 truncate text-sm text-foreground/88">{member.name}</div>
-                </button>
-              ))}
+              {run.members.map((member, index) => {
+                const hoverPromptText = (member.prompt || member.description || '').trim()
+                const hoverSummaryText = (member.summary || member.latestAction || '').trim()
+                const hasHoverContent = !!hoverPromptText || !!hoverSummaryText
+                const memberButton = (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedOrchestrationMemberId(member.id)
+                      setOrchestrationConsoleView('member')
+                    }}
+                    className={cn(
+                      'min-w-[112px] rounded-2xl border px-3 py-2 text-left transition-colors',
+                      selectedMember?.id === member.id
+                        ? 'border-foreground/20 bg-foreground/8'
+                        : 'border-border/60 bg-background/70 hover:bg-muted/30'
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-foreground/90">
+                        {String(index + 1).padStart(2, '0')}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground/65">{member.status}</span>
+                    </div>
+                    <div className="mt-2 truncate text-sm text-foreground/88">{member.name}</div>
+                  </button>
+                )
+                if (!hasHoverContent) {
+                  return <div key={member.id}>{memberButton}</div>
+                }
+                return (
+                  <HoverCard key={member.id} openDelay={120} closeDelay={80}>
+                    <HoverCardTrigger asChild>{memberButton}</HoverCardTrigger>
+                    <HoverCardContent
+                      side="top"
+                      align="start"
+                      className="w-[min(28rem,calc(100vw-3rem))] border-border/60 bg-background/98 p-0 text-foreground shadow-2xl backdrop-blur"
+                    >
+                      <div className="space-y-3 p-3">
+                        <div className="flex items-center gap-2 border-b border-border/60 pb-2.5">
+                          <div className="flex size-7 items-center justify-center rounded-full border border-border/60 bg-muted/30 text-foreground/85">
+                            <Bot className="size-3.5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-medium text-foreground/92">
+                              {member.name}
+                            </div>
+                            <div className="mt-0.5 text-[10px] text-muted-foreground/65">
+                              {member.status}
+                            </div>
+                          </div>
+                        </div>
+                        {hoverPromptText ? (
+                          <section className="space-y-1.5">
+                            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/60">
+                              <ScrollText className="size-3" />
+                              <span>
+                                {t('subAgentsPanel.promptLabel', { defaultValue: 'Prompt' })}
+                              </span>
+                            </div>
+                            <div className="max-h-60 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border/60 bg-muted/15 px-2.5 py-2 text-[12px] leading-5 text-foreground/85">
+                              {hoverPromptText}
+                            </div>
+                          </section>
+                        ) : null}
+                        {hoverSummaryText && hoverSummaryText !== hoverPromptText ? (
+                          <section className="space-y-1.5">
+                            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/60">
+                              <MessagesSquare className="size-3" />
+                              <span>
+                                {t('subAgentsPanel.reportStatusSubmitted', {
+                                  defaultValue: '结果'
+                                })}
+                              </span>
+                            </div>
+                            <div className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border/60 bg-background/60 px-2.5 py-2 text-[12px] leading-5 text-foreground/80">
+                              {hoverSummaryText}
+                            </div>
+                          </section>
+                        ) : null}
+                      </div>
+                    </HoverCardContent>
+                  </HoverCard>
+                )
+              })}
             </div>
           </div>
         </div>

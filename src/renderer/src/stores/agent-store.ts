@@ -10,6 +10,7 @@ import { IPC } from '../lib/ipc/channels'
 import { useTeamStore } from './team-store'
 import { sendApprovalResponse } from '../lib/agent/teams/inbox-poller'
 import { sendPlanApprovalResponse } from '../lib/agent/teams/plan-approval-bridge'
+import { summarizeToolInputForHistory } from '../lib/tools/tool-input-sanitizer'
 
 // Approval resolvers live outside the store — they hold non-serializable
 // callbacks and don't need to trigger React re-renders.
@@ -50,10 +51,11 @@ function trimSubAgentTranscript(sa: { transcript: UnifiedMessage[] }): void {
   sa.transcript.splice(0, excess)
 }
 
-function normalizeToolInput(input: Record<string, unknown>): Record<string, unknown> {
+function normalizeToolInput(input: Record<string, unknown>, toolName?: string): Record<string, unknown> {
+  const summarized = toolName ? summarizeToolInputForHistory(toolName, input) : input
   try {
-    const serialized = JSON.stringify(input)
-    if (serialized.length <= MAX_TOOL_INPUT_PREVIEW_CHARS) return input
+    const serialized = JSON.stringify(summarized)
+    if (serialized.length <= MAX_TOOL_INPUT_PREVIEW_CHARS) return summarized
     return {
       _truncated: true,
       preview: truncateText(serialized, MAX_TOOL_INPUT_PREVIEW_CHARS)
@@ -61,6 +63,13 @@ function normalizeToolInput(input: Record<string, unknown>): Record<string, unkn
   } catch {
     return { _truncated: true, preview: '[unserializable input]' }
   }
+}
+
+function normalizeToolCallInput(
+  toolName: string | undefined,
+  input: Record<string, unknown>
+): Record<string, unknown> {
+  return normalizeToolInput(input, toolName)
 }
 
 function limitToolResultContent(
@@ -116,16 +125,19 @@ function limitToolResultContent(
 function normalizeToolCall(tc: ToolCallState): ToolCallState {
   return {
     ...tc,
-    input: normalizeToolInput(tc.input),
+    input: normalizeToolCallInput(tc.name, tc.input),
     output: limitToolResultContent(tc.output),
     error: tc.error ? truncateText(tc.error, MAX_TOOL_ERROR_CHARS) : tc.error
   }
 }
 
-function normalizeToolCallPatch(patch: Partial<ToolCallState>): Partial<ToolCallState> {
+function normalizeToolCallPatch(
+  patch: Partial<ToolCallState>,
+  toolName?: string
+): Partial<ToolCallState> {
   return {
     ...patch,
-    ...(patch.input ? { input: normalizeToolInput(patch.input) } : {}),
+    ...(patch.input ? { input: normalizeToolCallInput(patch.name ?? toolName, patch.input) } : {}),
     ...(patch.output !== undefined ? { output: limitToolResultContent(patch.output) } : {}),
     ...(patch.error ? { error: truncateText(patch.error, MAX_TOOL_ERROR_CHARS) } : {})
   }
@@ -623,8 +635,12 @@ export type { SubAgentState }
 export interface AgentFileSnapshot {
   exists: boolean
   text?: string
+  previewText?: string
+  tailPreviewText?: string
+  textOmitted?: boolean
   hash: string | null
   size: number
+  lineCount?: number
 }
 
 export interface AgentRunFileChange {
@@ -750,8 +766,12 @@ function applyToolCallPatchToBuckets(
   id: string,
   patch: Partial<ToolCallState>
 ): boolean {
-  const normalizedPatch = normalizeToolCallPatch(patch)
   const pendingToolCall = pending.find((item) => item.id === id)
+  const executedToolCall = executed.find((item) => item.id === id)
+  const normalizedPatch = normalizeToolCallPatch(
+    patch,
+    pendingToolCall?.name ?? executedToolCall?.name
+  )
   if (pendingToolCall) {
     if (!toolCallPatchHasChanges(pendingToolCall, normalizedPatch)) return false
     Object.assign(pendingToolCall, normalizedPatch)
@@ -767,7 +787,6 @@ function applyToolCallPatchToBuckets(
     return true
   }
 
-  const executedToolCall = executed.find((item) => item.id === id)
   if (executedToolCall) {
     if (!toolCallPatchHasChanges(executedToolCall, normalizedPatch)) return false
     Object.assign(executedToolCall, normalizedPatch)

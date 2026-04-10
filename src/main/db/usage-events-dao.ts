@@ -269,6 +269,13 @@ export function getUsageByProvider(query: UsageEventsQuery): Record<string, unkn
     .all(...params) as Record<string, unknown>[]
 }
 
+export function deleteUsageEvents(query: UsageEventsQuery): { deleted: number } {
+  const db = getDb()
+  const { clause, params } = buildWhere(query)
+  const info = db.prepare(`DELETE FROM usage_events ${clause}`).run(...params)
+  return { deleted: Number(info.changes ?? 0) }
+}
+
 export function listUsageEvents(query: UsageEventsQuery): UsageEventRow[] {
   const db = getDb()
   const { clause, params } = buildWhere(query)

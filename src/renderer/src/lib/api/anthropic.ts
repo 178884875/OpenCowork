@@ -9,6 +9,7 @@ import type {
 } from './types'
 import { ipcStreamRequest, maskHeaders } from '../ipc/api-stream'
 import { registerProvider } from './provider'
+import { sanitizeMessagesForToolReplay } from '../tools/tool-input-sanitizer'
 
 function buildAnthropicCacheControl(): { type: 'ephemeral' } {
   return { type: 'ephemeral' }
@@ -141,7 +142,10 @@ class AnthropicProvider implements APIProvider {
             ]
           }
         : {}),
-      messages: this.formatMessages(this.normalizeMessagesForAnthropic(messages), promptCacheEnabled),
+      messages: this.formatMessages(
+        this.normalizeMessagesForAnthropic(sanitizeMessagesForToolReplay(messages)),
+        promptCacheEnabled
+      ),
       ...(tools.length > 0
         ? { tools: this.formatTools(tools, promptCacheEnabled), tool_choice: { type: 'auto' } }
         : {}),
@@ -216,7 +220,8 @@ class AnthropicProvider implements APIProvider {
       body: bodyStr,
       signal,
       providerId: config.providerId,
-      providerBuiltinId: config.providerBuiltinId
+      providerBuiltinId: config.providerBuiltinId,
+      accountId: config.accountId
     })) {
       if (!sse.data || sse.data === '[DONE]') continue
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

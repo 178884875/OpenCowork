@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import { Brain, icons } from 'lucide-react'
+import { Brain, FileText, ScrollText, icons } from 'lucide-react'
 
 import { decodeStructuredToolResult } from '@renderer/lib/tools/tool-result-format'
 import { formatTokens, getBillableTotalTokens } from '@renderer/lib/format-tokens'
@@ -9,6 +9,11 @@ import { parseSubAgentMeta } from '@renderer/lib/agent/sub-agents/create-tool'
 import { subAgentRegistry } from '@renderer/lib/agent/sub-agents/registry'
 import { useAgentStore } from '@renderer/stores/agent-store'
 import { useUIStore } from '@renderer/stores/ui-store'
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger
+} from '@renderer/components/ui/hover-card'
 import { cn } from '@renderer/lib/utils'
 import type { ToolResultContent } from '@renderer/lib/api/types'
 
@@ -40,6 +45,19 @@ function formatOrderLabel(toolUseId: string): string {
   const digitSuffix = toolUseId.match(/\d+$/)?.[0]
   if (digitSuffix) return digitSuffix.slice(-2).padStart(2, '0')
   return toolUseId.slice(-2).toUpperCase().padStart(2, '0')
+}
+
+function extractToolResultText(content?: ToolResultContent): string {
+  if (!content) return ''
+  if (typeof content === 'string') return content
+  return content
+    .filter(
+      (block): block is Extract<ToolResultContent[number], { type: 'text' }> =>
+        block.type === 'text'
+    )
+    .map((block) => block.text)
+    .join('\n')
+    .trim()
 }
 
 function DotMatrix({
@@ -80,6 +98,62 @@ function DotMatrix({
   )
 }
 
+function SubAgentHoverContent({
+  displayName,
+  descriptionText,
+  promptText,
+  icon
+}: {
+  displayName: string
+  descriptionText: string
+  promptText: string
+  icon: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <HoverCardContent
+      side="top"
+      align="start"
+      className="w-[min(32rem,calc(100vw-3rem))] border-white/10 bg-[#141414]/98 p-0 text-white shadow-2xl backdrop-blur"
+    >
+      <div className="space-y-3 p-3">
+        <div className="flex items-center gap-2 border-b border-white/10 pb-3">
+          <div className="flex size-8 items-center justify-center rounded-full border border-white/10 bg-[#1b1b1b] text-white/82">
+            {icon}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium text-white/88">{displayName}</div>
+            <div className="mt-0.5 text-[11px] text-white/45">subAgent</div>
+          </div>
+        </div>
+
+        {descriptionText ? (
+          <section className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-white/40">
+              <FileText className="size-3" />
+              <span>描述</span>
+            </div>
+            <div className="whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-[12px] leading-5 text-white/72">
+              {descriptionText}
+            </div>
+          </section>
+        ) : null}
+
+        {promptText ? (
+          <section className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-white/40">
+              <ScrollText className="size-3" />
+              <span>Prompt</span>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-[12px] leading-5 text-white/72">
+              {promptText}
+            </div>
+          </section>
+        ) : null}
+      </div>
+    </HoverCardContent>
+  )
+}
+
 function SubAgentCardInner({
   name,
   toolUseId,
@@ -107,6 +181,7 @@ function SubAgentCardInner({
         errorMessage: item.errorMessage,
         iteration: item.iteration,
         toolCallCount: item.toolCalls.length,
+        toolCalls: item.toolCalls,
         usage: item.usage ?? null,
         startedAt: item.startedAt,
         completedAt: item.completedAt
@@ -114,7 +189,7 @@ function SubAgentCardInner({
     })
   )
 
-  const outputStr = typeof output === 'string' ? output : undefined
+  const outputStr = extractToolResultText(output)
   const parsed = React.useMemo(() => {
     if (!outputStr) return { meta: null, text: '' }
     return parseSubAgentMeta(outputStr)
@@ -159,14 +234,10 @@ function SubAgentCardInner({
     : histMeta?.elapsed
 
   const descriptionText = input.description ? String(input.description) : ''
-  const promptText = [
-    input.prompt ? String(input.prompt) : '',
-    input.query ? String(input.query) : '',
-    input.task ? String(input.task) : '',
-    input.target ? String(input.target) : ''
-  ]
+  const promptText = [input.prompt, input.query, input.task, input.target]
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
     .filter(Boolean)
-    .join(' · ')
+    .join('\n\n')
 
   const iterationCount = tracked?.iteration ?? histMeta?.iterations ?? 0
   const callCount = tracked?.toolCallCount ?? histMeta?.toolCalls.length ?? 0
@@ -176,7 +247,7 @@ function SubAgentCardInner({
     : isError
       ? t('subAgent.failed')
       : t('subAgent.done')
-  const previewText = descriptionText || promptText || statusText
+  const previewText = descriptionText || promptText.replace(/\s+/g, ' ').trim() || statusText
   const orderLabel = formatOrderLabel(toolUseId)
   const icon = getSubAgentIcon(displayName)
   const meterFill = isError
@@ -201,23 +272,24 @@ function SubAgentCardInner({
     useUIStore.getState().openSubAgentExecutionDetail(toolUseId, histText || undefined)
   }
 
-  return (
+  const card = (
     <button
       type="button"
       onClick={handleOpenPanel}
       title={`${t('subAgent.viewDetails')} · ${metaText}`}
       className={cn(
-        'group my-2 w-full overflow-hidden rounded-[9px] px-3 py-2.5 text-left transition-colors',
-        'border border-white/[0.06] bg-[#1f1f1f] hover:border-white/[0.1] hover:bg-[#242424]',
-        isRunning && 'border-emerald-400/20',
-        isError && 'border-destructive/25 bg-[#241919] hover:bg-[#2a1c1c]'
+        'group my-2 w-full rounded-[9px] px-3 py-2.5 text-left transition-colors',
+        'hover:bg-[#242424] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400/35',
+        isRunning && 'bg-[#1f1f1f]',
+        isError && 'bg-[#241919] hover:bg-[#2a1c1c]',
+        !isRunning && !isError && 'bg-[#1f1f1f]'
       )}
     >
       <div className="grid grid-cols-[32px_minmax(0,1fr)_auto] gap-x-3 gap-y-1">
         <div
           className={cn(
-            'row-span-2 flex size-7 items-center justify-center overflow-hidden rounded-full border text-white/90',
-            isRunning ? 'border-emerald-400/35 bg-emerald-400/10' : 'border-white/10 bg-[#141414]',
+            'row-span-2 flex size-7 items-center justify-center overflow-hidden rounded-full border border-white/10 bg-[#141414] text-white/82',
+            isRunning && 'border-emerald-400/35 bg-emerald-400/10',
             isError && 'border-destructive/35 bg-destructive/10 text-destructive'
           )}
         >
@@ -227,15 +299,6 @@ function SubAgentCardInner({
         <div className="min-w-0 self-center">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate text-[13px] font-medium text-white/82">{displayName}</span>
-            <span
-              className={cn(
-                'size-1.5 shrink-0 rounded-full',
-                isError && 'bg-destructive/80',
-                isRunning && 'bg-[#8cff72] shadow-[0_0_6px_rgba(140,255,114,0.55)]',
-                !isError && !isRunning && isCompleted && 'bg-white/38',
-                !isError && !isRunning && !isCompleted && 'bg-white/20'
-              )}
-            />
           </div>
         </div>
 
@@ -255,6 +318,20 @@ function SubAgentCardInner({
         </div>
       </div>
     </button>
+  )
+
+  return descriptionText || promptText ? (
+    <HoverCard>
+      <HoverCardTrigger asChild>{card}</HoverCardTrigger>
+      <SubAgentHoverContent
+        displayName={displayName}
+        descriptionText={descriptionText}
+        promptText={promptText}
+        icon={icon}
+      />
+    </HoverCard>
+  ) : (
+    card
   )
 }
 

@@ -259,7 +259,7 @@ function findSubAgentRecord(
     ...Object.values(activeSubAgents),
     ...Object.values(completedSubAgents),
     ...subAgentHistory
-  ].filter((item) => item.sessionId === activeSessionId)
+  ].filter((item) => !item.sessionId || item.sessionId === activeSessionId)
 
   if (!candidates.length) return null
   return candidates.sort((left, right) => {
@@ -736,7 +736,7 @@ export function DetailPanel({ embedded = false }: { embedded?: boolean }): React
       <Separator />
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-3">
+      <div className="min-h-0 flex-1 overflow-auto p-3">
         <AnimatePresence mode="wait">
           {content?.type === 'team' && (
             <FadeIn key="team" className="h-full">

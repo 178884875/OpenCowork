@@ -5,6 +5,7 @@ import type {
   UnifiedMessage
 } from '@renderer/lib/api/types'
 import { useChatStore } from '@renderer/stores/chat-store'
+import { summarizeToolInputForHistory } from '@renderer/lib/tools/tool-input-sanitizer'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { useBackgroundSessionStore } from '@renderer/stores/background-session-store'
 
@@ -270,18 +271,22 @@ export function appendRuntimeToolUse(
   messageId: string,
   toolUse: ToolUseBlock
 ): void {
+  const normalizedToolUse: ToolUseBlock = {
+    ...toolUse,
+    input: summarizeToolInputForHistory(toolUse.name, toolUse.input)
+  }
   if (isSessionForeground(sessionId)) {
-    useChatStore.getState().appendToolUse(sessionId, messageId, toolUse)
+    useChatStore.getState().appendToolUse(sessionId, messageId, normalizedToolUse)
     return
   }
 
   mutateBufferedMessage(sessionId, messageId, (message) => {
     if (typeof message.content === 'string') {
-      message.content = [{ type: 'text', text: message.content }, cloneContent(toolUse)]
+      message.content = [{ type: 'text', text: message.content }, cloneContent(normalizedToolUse)]
       return
     }
 
-    ;(message.content as ContentBlock[]).push(cloneContent(toolUse))
+    ;(message.content as ContentBlock[]).push(cloneContent(normalizedToolUse))
   })
 }
 
@@ -302,7 +307,7 @@ export function updateRuntimeToolUseInput(
       (item) => item.type === 'tool_use' && (item as ToolUseBlock).id === toolUseId
     ) as ToolUseBlock | undefined
     if (block) {
-      block.input = cloneContent(input)
+      block.input = cloneContent(summarizeToolInputForHistory(block.name, input))
     }
   })
 }

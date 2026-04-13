@@ -9,7 +9,17 @@
       "Bash(pnpm exec:*)",
       "Bash(npm run:*)",
       "Bash(node:*)",
-      "Bash(xxd)"
+      "Bash(xxd)",
+      "Bash(npx eslint:*)",
+      "Bash(cat .eslintrc*)",
+      "Bash(ls eslint* .eslint*)",
+      "Bash(grep -nB 1 \"state\\\\.sessions\\\\s*=\\\\|state\\\\.sessions\\\\.push\\\\|state\\\\.sessions\\\\.splice\\\\|state\\\\.sessions\\\\.unshift\\\\|state\\\\.sessions\\\\.filter\\\\|state\\\\.sessions\\\\.pop\\\\|state\\\\.sessions\\\\.shift\" src/renderer/src/stores/chat-store.ts)",
+      "Bash(grep -rn \"MessageList\\\\s*$\\\\|<MessageList\\\\|<TranscriptMessageList\" src/renderer/src --include=\"*.tsx\")",
+      "Bash(grep -n \"PageTransition\" src/renderer/src/components/animate-ui/*.tsx)",
+      "Bash(grep -n \"PageTransition\\\\|PanelTransition\" src/renderer/src/components/animate-ui/*.tsx)",
+      "Bash(grep -n \"renderer/tool-request\" /f/code/OpenCowork/src/main/ipc/*.ts)",
+      "Bash(grep -E \"\\\\.ts$\")",
+      "Bash(find /f/code/OpenCowork/src/renderer/src/lib/tools -name \"*.ts\" -exec basename {} \\\\;)"
     ]
   }
 }

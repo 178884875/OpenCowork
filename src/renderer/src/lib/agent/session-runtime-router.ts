@@ -9,86 +9,45 @@ import { summarizeToolInputForHistory } from '@renderer/lib/tools/tool-input-san
 import { useUIStore } from '@renderer/stores/ui-store'
 import { useBackgroundSessionStore } from '@renderer/stores/background-session-store'
 
-function cloneMessage(message: UnifiedMessage): UnifiedMessage {
-  try {
-    return JSON.parse(JSON.stringify(message)) as UnifiedMessage
-  } catch {
-    return {
-      ...message,
-      content: Array.isArray(message.content)
-        ? (JSON.parse(JSON.stringify(message.content)) as UnifiedMessage['content'])
-        : message.content,
-      ...(message.usage ? { usage: JSON.parse(JSON.stringify(message.usage)) } : {})
-    }
-  }
-}
-
-function cloneContent<T>(value: T): T {
-  try {
-    return JSON.parse(JSON.stringify(value)) as T
-  } catch {
-    return value
-  }
-}
-
+/**
+ * Strip any <think>...</think> markers streamed by providers that wrap thinking in pseudo-tags.
+ * Mirrors the chat-store helper so buffered writes share the same sanitization.
+ */
 function stripThinkTagMarkers(text: string): string {
   return text.replace(/<\s*\/?\s*think\s*>/gi, '')
 }
 
-function isBufferedMessagePresent(sessionId: string, messageId: string): boolean {
-  const session = useBackgroundSessionStore.getState().sessions[sessionId]
-  if (!session) return false
-  if (session.patchedMessagesById[messageId]) return true
-  return session.addedMessages.some((message) => message.id === messageId)
-}
-
-function getOrCreateBufferedMessage(sessionId: string, messageId: string): UnifiedMessage | null {
-  const backgroundStore = useBackgroundSessionStore.getState()
-  backgroundStore.ensureSessionState(sessionId)
-
-  const session = backgroundStore.sessions[sessionId]
-  if (!session) return null
-
-  const patched = session.patchedMessagesById[messageId]
-  if (patched) return cloneMessage(patched)
-
-  const added = session.addedMessages.find((message) => message.id === messageId)
-  if (added) return cloneMessage(added)
-
-  const source = useChatStore
+/**
+ * Seed resolver used by background mutations. Looks up the current chat-store snapshot so
+ * the background buffer can clone an authoritative source message the first time a delta
+ * references an id it hasn't buffered yet.
+ */
+function resolveChatStoreSeed(sessionId: string, messageId: string): UnifiedMessage | undefined {
+  return useChatStore
     .getState()
     .getSessionMessages(sessionId)
     .find((message) => message.id === messageId)
-  if (!source) return null
-
-  return cloneMessage(source)
 }
 
-function commitBufferedMessage(sessionId: string, message: UnifiedMessage): void {
-  const backgroundStore = useBackgroundSessionStore.getState()
-  if (isBufferedMessagePresent(sessionId, message.id)) {
-    const session = backgroundStore.sessions[sessionId]
-    if (session?.patchedMessagesById[message.id]) {
-      backgroundStore.upsertPatchedMessage(sessionId, message)
-      return
-    }
-
-    backgroundStore.upsertAddedMessage(sessionId, message)
-    return
-  }
-
-  backgroundStore.upsertPatchedMessage(sessionId, message)
-}
-
+/**
+ * Apply a mutator to a buffered background message. Guarantees the mutation is never
+ * silently dropped: if the message isn't already in the buffer and can't be found in
+ * chat-store either, an empty placeholder is created so the delta has somewhere to land.
+ * The buffered snapshot will eventually be merged into chat-store by
+ * flushBackgroundSessionToForeground — see applyBackgroundSnapshot for the merge semantics.
+ */
 function mutateBufferedMessage(
   sessionId: string,
   messageId: string,
   mutator: (message: UnifiedMessage) => void
 ): void {
-  const message = getOrCreateBufferedMessage(sessionId, messageId)
-  if (!message) return
-  mutator(message)
-  commitBufferedMessage(sessionId, message)
+  const bg = useBackgroundSessionStore.getState()
+  bg.mutateBufferedMessageInPlace(
+    sessionId,
+    messageId,
+    () => resolveChatStoreSeed(sessionId, messageId),
+    mutator
+  )
   useBackgroundSessionStore.getState().markSessionUpdate(sessionId)
 }
 
@@ -120,7 +79,7 @@ export function updateRuntimeMessage(
   }
 
   mutateBufferedMessage(sessionId, messageId, (message) => {
-    Object.assign(message, cloneContent(patch))
+    Object.assign(message, patch)
   })
 }
 
@@ -282,11 +241,11 @@ export function appendRuntimeToolUse(
 
   mutateBufferedMessage(sessionId, messageId, (message) => {
     if (typeof message.content === 'string') {
-      message.content = [{ type: 'text', text: message.content }, cloneContent(normalizedToolUse)]
+      message.content = [{ type: 'text', text: message.content }, { ...normalizedToolUse }]
       return
     }
 
-    ;(message.content as ContentBlock[]).push(cloneContent(normalizedToolUse))
+    ;(message.content as ContentBlock[]).push({ ...normalizedToolUse })
   })
 }
 
@@ -307,7 +266,7 @@ export function updateRuntimeToolUseInput(
       (item) => item.type === 'tool_use' && (item as ToolUseBlock).id === toolUseId
     ) as ToolUseBlock | undefined
     if (block) {
-      block.input = cloneContent(summarizeToolInputForHistory(block.name, input))
+      block.input = summarizeToolInputForHistory(block.name, input)
     }
   })
 }
@@ -324,11 +283,11 @@ export function appendRuntimeContentBlock(
 
   mutateBufferedMessage(sessionId, messageId, (message) => {
     if (typeof message.content === 'string') {
-      message.content = [{ type: 'text', text: message.content }, cloneContent(block)]
+      message.content = [{ type: 'text', text: message.content }, { ...block } as ContentBlock]
       return
     }
 
-    ;(message.content as ContentBlock[]).push(cloneContent(block))
+    ;(message.content as ContentBlock[]).push({ ...block } as ContentBlock)
   })
 }
 
@@ -338,34 +297,49 @@ export function addRuntimeMessage(sessionId: string, message: UnifiedMessage): v
     return
   }
 
-  useBackgroundSessionStore.getState().upsertAddedMessage(sessionId, message)
-  useBackgroundSessionStore.getState().markSessionUpdate(sessionId)
+  const bg = useBackgroundSessionStore.getState()
+  bg.seedBufferedMessage(sessionId, message, 'added')
+  bg.markSessionUpdate(sessionId)
 }
 
+/**
+ * Atomically drain the buffered state for `sessionId` and merge it into chat-store.
+ *
+ * The earlier implementation awaited loadRecentSessionMessages and then called
+ * updateMessage for each patched id — which silently failed whenever the id wasn't in
+ * the loaded window, leaking messages. The new implementation:
+ *
+ *   1. Takes a snapshot + clears the buffer atomically (takeSessionSnapshot). Deltas
+ *      arriving during the await go straight to chat-store because isSessionForeground
+ *      is now true for this session.
+ *   2. Loads recent messages (so existing patched ids can be found if they're resident).
+ *   3. Hands the whole snapshot to chat-store.applyBackgroundSnapshot which merges
+ *      everything in a single Immer produce — inserting missing patched ids as new
+ *      messages instead of silently dropping them.
+ */
 export async function flushBackgroundSessionToForeground(sessionId: string): Promise<void> {
   if (!sessionId) return
-  const buffered = useBackgroundSessionStore.getState().sessions[sessionId]
-  if (!buffered) return
+  const snapshot = useBackgroundSessionStore.getState().takeSessionSnapshot(sessionId)
+  if (!snapshot) return
 
-  await useChatStore.getState().loadRecentSessionMessages(sessionId, true)
-  const chatStore = useChatStore.getState()
-  const existingMessageIds = new Set(
-    chatStore.getSessionMessages(sessionId).map((message) => message.id)
-  )
-
-  for (const message of Object.values(buffered.patchedMessagesById)) {
-    chatStore.updateMessage(sessionId, message.id, {
-      content: cloneContent(message.content),
-      ...(message.usage ? { usage: cloneContent(message.usage) } : {}),
-      ...(message.providerResponseId ? { providerResponseId: message.providerResponseId } : {})
+  try {
+    await useChatStore.getState().loadRecentSessionMessages(sessionId, true)
+    useChatStore.getState().applyBackgroundSnapshot(sessionId, {
+      patchedMessagesById: snapshot.patchedMessagesById,
+      addedMessagesById: snapshot.addedMessagesById,
+      addedMessageIds: snapshot.addedMessageIds
     })
+  } catch (err) {
+    console.error('[SessionRuntimeRouter] Failed to flush background snapshot', err)
+    // Restore the snapshot so the data isn't lost on subsequent attempts. seedBufferedMessage
+    // is idempotent, so re-seeding is safe.
+    const bg = useBackgroundSessionStore.getState()
+    for (const [, message] of Object.entries(snapshot.patchedMessagesById)) {
+      bg.seedBufferedMessage(sessionId, message, 'patched')
+    }
+    for (const id of snapshot.addedMessageIds) {
+      const message = snapshot.addedMessagesById[id]
+      if (message) bg.seedBufferedMessage(sessionId, message, 'added')
+    }
   }
-
-  for (const message of buffered.addedMessages) {
-    if (existingMessageIds.has(message.id)) continue
-    chatStore.addMessage(sessionId, cloneMessage(message))
-    existingMessageIds.add(message.id)
-  }
-
-  useBackgroundSessionStore.getState().clearBufferedSession(sessionId)
 }

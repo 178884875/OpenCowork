@@ -73,7 +73,7 @@ export function ToolCallGroup({
   const status = groupStatus(items)
   const isActive = status === 'running' || status === 'streaming' || status === 'pending_approval'
 
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(isActive)
   const wasActiveRef = useRef(isActive)
 
   useEffect(() => {

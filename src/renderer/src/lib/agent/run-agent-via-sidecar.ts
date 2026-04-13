@@ -80,14 +80,18 @@ export function runAgentViaSidecar(
       const unsub = agentBridge.on('agent/event', (payload) => {
         const record = normalizeSidecarRecord(payload)
         const eventRunId = String(record.runId ?? '')
-        if (!eventRunId) return
 
+        // Events without a runId can still be meaningful (e.g. sub-agent broadcast events
+        // the sidecar fires before the run is formally registered). Queue them while we
+        // don't yet have our own runId, and dispatch unconditionally once we do — if the
+        // event turns out to be for a different run, the downstream dispatcher will ignore
+        // it, but we no longer silently drop it at this layer.
         if (!runId) {
           pendingEvents.push({ runId: eventRunId, rawEvent: record.event })
           return
         }
 
-        if (eventRunId !== runId) return
+        if (eventRunId && eventRunId !== runId) return
         dispatchSidecarEvent(record.event)
       })
 
@@ -108,10 +112,14 @@ export function runAgentViaSidecar(
           }
         }
 
-        for (const pending of pendingEvents.splice(0, pendingEvents.length)) {
-          if (pending.runId !== runId) continue
+        // Drain the pending queue in full — do NOT break on `finished`. The original
+        // implementation stopped dispatching as soon as loop_end arrived, discarding
+        // any tail events (including error/loop_end itself in some orderings). finished
+        // only controls when the async iterator terminates, not when we stop dispatching.
+        const pendingSnapshot = pendingEvents.splice(0, pendingEvents.length)
+        for (const pending of pendingSnapshot) {
+          if (pending.runId && pending.runId !== runId) continue
           dispatchSidecarEvent(pending.rawEvent)
-          if (finished) break
         }
 
         while (!finished || queue.length > 0) {

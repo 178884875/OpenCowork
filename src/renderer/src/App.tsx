@@ -42,6 +42,7 @@ import { runTeammate } from './lib/agent/teams/teammate-runner';
 import { nanoid } from 'nanoid';
 import type { UnifiedMessage } from './lib/api/types';
 import { NotifyToastContainer } from './components/notify/NotifyWindow';
+import { ChangelogDialog } from './components/changelog/ChangelogDialog';
 import {
    getGlobalMemorySnapshot,
    loadGlobalMemorySnapshot,
@@ -166,6 +167,7 @@ function App(): React.JSX.Element {
    const shownUpdateVersionsRef = useRef(new Set<string>())
    const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null)
    const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
+   const changelogDialogOpen = useUIStore((s) => s.changelogDialogOpen)
    const [updateDownloadPending, setUpdateDownloadPending] = useState(false)
    const [updateDownloadProgress, setUpdateDownloadProgress] = useState<number | null>(null)
    const teamWorkerParams = useMemo<TeamWorkerParams | null>(() => {
@@ -770,6 +772,11 @@ function App(): React.JSX.Element {
                   </DialogFooter>
                </DialogContent>
             </Dialog>
+
+            <ChangelogDialog
+               open={changelogDialogOpen}
+               onOpenChange={(open) => useUIStore.getState().setChangelogDialogOpen(open)}
+            />
 
             <Toaster position="bottom-left" theme="system" richColors />
             <ConfirmDialogProvider />

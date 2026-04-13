@@ -184,18 +184,17 @@ function buildWidgetDocument(payload: WidgetToolPayload): string {
       html, body {
         margin: 0;
         padding: 0;
-        min-height: 100%;
         background: transparent;
       }
       body {
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         color: #e5e7eb;
+        overflow: hidden;
       }
       #open-cowork-widget-root {
         width: 100%;
-        min-height: 100%;
       }
-      ${payload.kind === 'svg' ? 'body { display: flex; align-items: stretch; justify-content: stretch; } #open-cowork-widget-root > svg { display: block; width: 100%; height: auto; }' : ''}
+      ${payload.kind === 'svg' ? '#open-cowork-widget-root { line-height: 0; font-size: 0; } #open-cowork-widget-root > svg { display: block; width: 100%; height: auto; }' : ''}
     </style>
     <script>
       (() => {
@@ -203,10 +202,28 @@ function buildWidgetDocument(payload: WidgetToolPayload): string {
         const post = (type, extra = {}) => {
           window.parent.postMessage({ source: bridgeSource, type, ...extra }, '*');
         };
+        const getBoundingHeight = (element) => {
+          if (!element) return 0;
+          return element.getBoundingClientRect?.().height || 0;
+        };
+        const getContentHeight = (element) => {
+          if (!element) return 0;
+          return Math.max(
+            getBoundingHeight(element),
+            element.scrollHeight || 0,
+            element.offsetHeight || 0
+          );
+        };
         const reportSize = () => {
-          const bodyHeight = document.body ? document.body.scrollHeight : 0;
-          const docHeight = document.documentElement ? document.documentElement.scrollHeight : 0;
-          post('resize', { height: Math.max(bodyHeight, docHeight, 240) });
+          const root = document.getElementById('open-cowork-widget-root');
+          const content = root?.firstElementChild;
+          const nextHeight =
+            getBoundingHeight(content) ||
+            getBoundingHeight(root) ||
+            getContentHeight(root) ||
+            getBoundingHeight(document.body) ||
+            getContentHeight(document.body);
+          post('resize', { height: Math.max(nextHeight, 32) });
         };
 
         window.sendPrompt = (text) => {
@@ -217,18 +234,16 @@ function buildWidgetDocument(payload: WidgetToolPayload): string {
         };
 
         window.__openCoworkWidgetReady = () => {
-          if (typeof ResizeObserver !== 'undefined') {
+          const root = document.getElementById('open-cowork-widget-root');
+          if (typeof ResizeObserver !== 'undefined' && root) {
             const observer = new ResizeObserver(() => reportSize());
-            if (document.documentElement) observer.observe(document.documentElement);
-            if (document.body) observer.observe(document.body);
-            const root = document.getElementById('open-cowork-widget-root');
-            if (root) observer.observe(root);
+            observer.observe(root);
           }
           post('ready');
           reportSize();
-          setTimeout(reportSize, 32);
-          setTimeout(reportSize, 160);
-          setTimeout(reportSize, 600);
+          window.requestAnimationFrame(reportSize);
+          setTimeout(reportSize, 120);
+          setTimeout(reportSize, 360);
         };
       })();
     </script>
@@ -240,7 +255,7 @@ function buildWidgetDocument(payload: WidgetToolPayload): string {
 </html>`
 }
 
-function WidgetOutputBlock({
+export function WidgetOutputBlock({
   input,
   status
 }: {
@@ -249,8 +264,10 @@ function WidgetOutputBlock({
 }): React.JSX.Element | null {
   const payload = React.useMemo(() => normalizeWidgetPayload(input), [input])
   const iframeRef = React.useRef<HTMLIFrameElement>(null)
+  const resizeRafRef = React.useRef<number | null>(null)
+  const lastAppliedHeightRef = React.useRef<number>(0)
   const [loaded, setLoaded] = React.useState(false)
-  const [frameHeight, setFrameHeight] = React.useState(360)
+  const [frameHeight, setFrameHeight] = React.useState(240)
   const [loadingIndex, setLoadingIndex] = React.useState(0)
   const { sendMessage } = useChatActions()
 
@@ -284,7 +301,17 @@ function WidgetOutputBlock({
       if (type === 'resize') {
         const nextHeight = (data as { height?: unknown }).height
         if (typeof nextHeight === 'number' && Number.isFinite(nextHeight)) {
-          setFrameHeight(Math.max(240, Math.min(Math.ceil(nextHeight) + 2, 720)))
+          const normalizedHeight = Math.max(80, nextHeight)
+          if (Math.abs(normalizedHeight - lastAppliedHeightRef.current) >= 0.5) {
+            lastAppliedHeightRef.current = normalizedHeight
+            if (resizeRafRef.current != null) {
+              window.cancelAnimationFrame(resizeRafRef.current)
+            }
+            resizeRafRef.current = window.requestAnimationFrame(() => {
+              setFrameHeight(normalizedHeight)
+              resizeRafRef.current = null
+            })
+          }
         }
         return
       }
@@ -298,7 +325,13 @@ function WidgetOutputBlock({
     }
 
     window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
+    return () => {
+      window.removeEventListener('message', handleMessage)
+      if (resizeRafRef.current != null) {
+        window.cancelAnimationFrame(resizeRafRef.current)
+        resizeRafRef.current = null
+      }
+    }
   }, [sendMessage])
 
   if (!payload) return null
@@ -307,24 +340,19 @@ function WidgetOutputBlock({
   const loadingMessage = payload.loadingMessages[loadingIndex] ?? DEFAULT_WIDGET_LOADING_MESSAGES[0]
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-1.5">
-        <p className="text-xs font-medium text-muted-foreground">Widget</p>
-        <span className="rounded bg-violet-500/10 px-1 py-0.5 text-[9px] font-mono text-violet-400/80">
-          {payload.title}
-        </span>
-        <span className="text-[9px] text-muted-foreground/40 uppercase">{payload.kind}</span>
-      </div>
-      <div className="relative overflow-hidden rounded-md border bg-white/5">
+    <div className="my-2 space-y-2">
+      <div className="relative overflow-hidden rounded-xl bg-transparent shadow-sm" style={{ width: '100%', border: 'none', backgroundColor: 'transparent' }}>
         {payload.widgetCode ? (
-          <iframe
-            ref={iframeRef}
-            title={payload.title}
-            sandbox="allow-scripts allow-forms"
-            srcDoc={buildWidgetDocument(payload)}
-            className="w-full border-0 bg-transparent transition-[height] duration-200"
-            style={{ height: `${frameHeight}px` }}
-          />
+          <div className="w-full overflow-hidden bg-transparent leading-none" style={{ lineHeight: 0, fontSize: 0 }}>
+            <iframe
+              ref={iframeRef}
+              title={payload.title}
+              sandbox="allow-scripts allow-forms"
+              srcDoc={buildWidgetDocument(payload)}
+              className="block border-0 bg-transparent transition-[height] duration-200"
+              style={{ width: 'calc(100% + 1px)', height: `${frameHeight}px`, marginRight: '-1px', verticalAlign: 'top' }}
+            />
+          </div>
         ) : (
           <div className="flex h-48 items-center justify-center text-xs text-muted-foreground/60">
             Waiting for widget code...
@@ -1693,7 +1721,6 @@ export function ToolCallCard({
   // Auto-expand for errors and mutation tools with output; keep read-heavy tools collapsed
   const shouldAutoExpand =
     status === 'error' ||
-    name === 'visualize_show_widget' ||
     (!!output && EXPAND_TOOLS.has(name)) ||
     (name === 'Bash' && status === 'running')
   const [open, setOpen] = React.useState(shouldAutoExpand)
@@ -1823,9 +1850,6 @@ export function ToolCallCard({
                 <StructuredInput name={name} input={input} />
               )}
               {/* Output — tool-specific rendering */}
-              {name === 'visualize_show_widget' && (
-                <WidgetOutputBlock input={input} status={status} />
-              )}
               {output && name === 'Read' && hasImageBlocks(output) && (
                 <ImageOutputBlock output={output} />
               )}

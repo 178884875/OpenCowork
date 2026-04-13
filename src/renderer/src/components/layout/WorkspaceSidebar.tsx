@@ -3,7 +3,6 @@ import packageJson from '../../../../../package.json'
 import { useTranslation } from 'react-i18next'
 import appIconUrl from '../../../../../resources/icon.png'
 import readmeZh from '../../../../../README.zh.md?raw'
-import changelogMd from '../../../../../CHANGELOG.md?raw'
 import {
   BookOpen,
   BarChart3,
@@ -611,8 +610,8 @@ export function WorkspaceSidebar(): React.JSX.Element {
   }, [t])
 
   const handleOpenChangelog = useCallback(() => {
-    useUIStore.getState().openMarkdownPreview(t('sidebar.changelogTitle'), changelogMd)
-  }, [t])
+    useUIStore.getState().setChangelogDialogOpen(true)
+  }, [])
 
   const handleToggleLanguage = useCallback(() => {
     const next = language === 'zh' ? 'en' : 'zh'

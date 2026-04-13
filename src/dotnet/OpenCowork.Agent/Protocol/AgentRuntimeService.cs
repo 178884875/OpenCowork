@@ -284,9 +284,12 @@ public sealed class AgentRuntimeService
                     FsOperations.RecordRead(path, ctx.ReadFileHistory);
                     return new ToolResultContent
                     {
-                        Content = isNewFile
-                            ? $"File created successfully at: {path}"
-                            : $"The file {path} has been updated successfully."
+                        Content = new JsonObject
+                        {
+                            ["success"] = true,
+                            ["path"] = path,
+                            ["op"] = isNewFile ? "create" : "modify"
+                        }
                     };
                 }
                 catch (Exception ex)

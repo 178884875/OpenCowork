@@ -504,6 +504,8 @@
     "saveAndResend": "Save & Resend"
   },
   "assistantMessage": {
+    "showWorkspace": "Expand workspace ({{count}} tool executions)",
+    "collapseWorkspace": "Collapse workspace ({{count}} tool executions)",
     "showToolCalls": "Show {{count}} tool calls",
     "collapseToolCalls": "Collapse {{count}} tool calls",
     "totalDuration": "Total: {{duration}}",

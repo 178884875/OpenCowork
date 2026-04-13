@@ -30,9 +30,24 @@ export interface PendingInboxItem {
   target?: PendingInboxPreviewTarget
 }
 
+/**
+ * Buffered state for a session whose UI is not currently visible.
+ *
+ * Structure:
+ * - `patchedMessagesById`: in-place modifications of messages that already existed
+ *   in chat-store when streaming started (or could be seeded from chat-store on demand).
+ * - `addedMessagesById` + `addedMessageIds`: brand-new messages created by the agent
+ *   while the session was in the background. The ordered id array preserves insertion
+ *   order for deterministic replay when the session is brought back to the foreground.
+ *
+ * Refactored from the previous design (which used JSON.parse(JSON.stringify(msg))
+ * for every delta and had O(n) findIndex on every append) to use Immer's structural
+ * sharing and Record lookups, removing the per-delta GC pressure entirely.
+ */
 export interface BackgroundBufferedSessionState {
   patchedMessagesById: Record<string, UnifiedMessage>
-  addedMessages: UnifiedMessage[]
+  addedMessagesById: Record<string, UnifiedMessage>
+  addedMessageIds: string[]
   unreadCount: number
   lastEventAt: number | null
 }
@@ -43,8 +58,35 @@ interface BackgroundSessionStore {
   unreadCountsBySession: Record<string, number>
   blockedCountsBySession: Record<string, number>
   ensureSessionState: (sessionId: string) => void
-  upsertPatchedMessage: (sessionId: string, message: UnifiedMessage) => void
-  upsertAddedMessage: (sessionId: string, message: UnifiedMessage) => void
+  /**
+   * Insert a message into the buffer as either a patched clone (of an existing chat-store
+   * message) or a brand-new added message. No-op if the message id is already buffered.
+   */
+  seedBufferedMessage: (
+    sessionId: string,
+    message: UnifiedMessage,
+    kind: 'patched' | 'added'
+  ) => void
+  /**
+   * Locate a buffered message (patched or added) and apply the mutator in-place via Immer.
+   * If the message isn't in the buffer yet, a seed is created using `seedResolver` — which
+   * is called with no access to chat-store here to avoid a cyclic import. Callers are
+   * responsible for passing a resolver that can look up the current chat-store snapshot.
+   * If `seedResolver` returns undefined, an empty assistant placeholder is created so the
+   * mutation is never silently dropped.
+   */
+  mutateBufferedMessageInPlace: (
+    sessionId: string,
+    messageId: string,
+    seedResolver: () => UnifiedMessage | undefined,
+    mutator: (message: UnifiedMessage) => void
+  ) => void
+  /**
+   * Atomically clear and return the buffered state for a session. Used when flushing
+   * the buffer back to the chat-store so that any deltas arriving during the flush go
+   * to the new foreground path (chat-store) instead of being overwritten by the flush.
+   */
+  takeSessionSnapshot: (sessionId: string) => BackgroundBufferedSessionState | null
   markSessionUpdate: (sessionId: string) => void
   clearBufferedSession: (sessionId: string) => void
   addInboxItem: (item: Omit<PendingInboxItem, 'id' | 'createdAt'> & { id?: string }) => string
@@ -56,7 +98,8 @@ interface BackgroundSessionStore {
 function createEmptySessionState(): BackgroundBufferedSessionState {
   return {
     patchedMessagesById: {},
-    addedMessages: [],
+    addedMessagesById: {},
+    addedMessageIds: [],
     unreadCount: 0,
     lastEventAt: null
   }
@@ -86,18 +129,17 @@ function isSamePreviewTarget(
   )
 }
 
-function cloneMessage(message: UnifiedMessage): UnifiedMessage {
-  try {
-    return JSON.parse(JSON.stringify(message)) as UnifiedMessage
-  } catch {
-    return {
-      ...message,
-      content: Array.isArray(message.content)
-        ? (JSON.parse(JSON.stringify(message.content)) as UnifiedMessage['content'])
-        : message.content,
-      ...(message.usage ? { usage: JSON.parse(JSON.stringify(message.usage)) } : {})
-    }
+/**
+ * Structured clone of a message. Used sparingly — only when seeding the buffer from a
+ * chat-store message (so subsequent mutations don't leak into the foreground) and when
+ * taking a snapshot for flush. The per-delta mutation path goes through Immer and does
+ * NOT clone.
+ */
+function cloneMessageStructured(message: UnifiedMessage): UnifiedMessage {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(message)
   }
+  return JSON.parse(JSON.stringify(message)) as UnifiedMessage
 }
 
 export const useBackgroundSessionStore = create<BackgroundSessionStore>()(
@@ -113,26 +155,76 @@ export const useBackgroundSessionStore = create<BackgroundSessionStore>()(
       })
     },
 
-    upsertPatchedMessage: (sessionId, message) => {
+    seedBufferedMessage: (sessionId, message, kind) => {
       set((state) => {
-        const session =
-          state.sessions[sessionId] ?? (state.sessions[sessionId] = createEmptySessionState())
-        session.patchedMessagesById[message.id] = cloneMessage(message)
+        const session = (state.sessions[sessionId] ??= createEmptySessionState())
+        if (kind === 'patched') {
+          if (session.patchedMessagesById[message.id]) return
+          session.patchedMessagesById[message.id] = cloneMessageStructured(message)
+          return
+        }
+        // kind === 'added'
+        if (session.addedMessagesById[message.id]) return
+        session.addedMessagesById[message.id] = cloneMessageStructured(message)
+        session.addedMessageIds.push(message.id)
       })
     },
 
-    upsertAddedMessage: (sessionId, message) => {
+    mutateBufferedMessageInPlace: (sessionId, messageId, seedResolver, mutator) => {
       set((state) => {
-        const session =
-          state.sessions[sessionId] ?? (state.sessions[sessionId] = createEmptySessionState())
-        const existingIndex = session.addedMessages.findIndex((item) => item.id === message.id)
-        const cloned = cloneMessage(message)
-        if (existingIndex >= 0) {
-          session.addedMessages[existingIndex] = cloned
-        } else {
-          session.addedMessages.push(cloned)
+        const session = (state.sessions[sessionId] ??= createEmptySessionState())
+
+        // 1. Already buffered as a patch — mutate in place.
+        const patched = session.patchedMessagesById[messageId]
+        if (patched) {
+          mutator(patched)
+          return
         }
+
+        // 2. Already buffered as an added message — mutate in place.
+        const added = session.addedMessagesById[messageId]
+        if (added) {
+          mutator(added)
+          return
+        }
+
+        // 3. Need to seed. Prefer resolver-provided snapshot (usually from chat-store).
+        //    If the message isn't resolvable anywhere, create an empty placeholder so
+        //    deltas are never silently dropped — they'll be merged back as a new message
+        //    when the session flushes to the foreground.
+        const seed = seedResolver()
+        const cloned: UnifiedMessage = seed
+          ? cloneMessageStructured(seed)
+          : {
+              id: messageId,
+              role: 'assistant',
+              content: [],
+              createdAt: Date.now()
+            }
+        session.patchedMessagesById[messageId] = cloned
+        mutator(cloned)
       })
+    },
+
+    takeSessionSnapshot: (sessionId) => {
+      const session = get().sessions[sessionId]
+      if (!session) return null
+
+      // Take a structural snapshot BEFORE mutating state, so what we return is stable.
+      const snapshot: BackgroundBufferedSessionState = {
+        patchedMessagesById: { ...session.patchedMessagesById },
+        addedMessagesById: { ...session.addedMessagesById },
+        addedMessageIds: [...session.addedMessageIds],
+        unreadCount: session.unreadCount,
+        lastEventAt: session.lastEventAt
+      }
+
+      set((state) => {
+        delete state.sessions[sessionId]
+        delete state.unreadCountsBySession[sessionId]
+      })
+
+      return snapshot
     },
 
     markSessionUpdate: (sessionId) => {

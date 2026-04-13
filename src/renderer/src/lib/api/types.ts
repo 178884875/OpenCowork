@@ -176,6 +176,12 @@ export interface UnifiedMessage {
   providerResponseId?: string
   /** Optional source marker for non-manual message insertion paths. */
   source?: 'team' | 'queued'
+  /**
+   * Monotonic counter bumped by the chat-store every time the message is mutated.
+   * Used by React.memo equality checks to skip expensive deep content scans.
+   * Not persisted to the database.
+   */
+  _revision?: number
 }
 
 // --- Streaming Events ---

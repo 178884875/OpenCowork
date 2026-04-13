@@ -250,7 +250,14 @@ export class SidecarManager {
       path.join(process.resourcesPath, 'resources', 'sidecar', binaryName),
       path.join(process.resourcesPath, 'resources', 'sidecar', runtime, binaryName),
       path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'sidecar', binaryName),
-      path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'sidecar', runtime, binaryName)
+      path.join(
+        process.resourcesPath,
+        'app.asar.unpacked',
+        'resources',
+        'sidecar',
+        runtime,
+        binaryName
+      )
     ]
 
     for (const candidate of prodCandidates) {
@@ -586,7 +593,8 @@ export function registerSidecarHandlers(): void {
           : BrowserWindow.getAllWindows()
 
         const targetWindow = candidateWindows.find(
-          (win) => !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed()
+          (win) =>
+            !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed()
         )
 
         if (!targetWindow) {
@@ -672,7 +680,7 @@ export function registerSidecarHandlers(): void {
                 beforeText,
                 afterText: writeArgs.content
               })
-              return { success: true }
+              return { success: true, op: beforeExists ? 'modify' : 'create' }
             } catch (err) {
               return { error: String(err) }
             }
@@ -689,7 +697,8 @@ export function registerSidecarHandlers(): void {
           : BrowserWindow.getAllWindows()
 
         const targetWindow = candidateWindows.find(
-          (win) => !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed()
+          (win) =>
+            !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed()
         )
 
         if (!targetWindow) {
@@ -725,7 +734,8 @@ export function registerSidecarHandlers(): void {
           : BrowserWindow.getAllWindows()
 
         const targetWindow = candidateWindows.find(
-          (win) => !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed()
+          (win) =>
+            !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed()
         )
 
         if (!targetWindow) {

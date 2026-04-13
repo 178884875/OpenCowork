@@ -265,6 +265,7 @@ export const IPC = {
 
   // Clipboard
   CLIPBOARD_WRITE_IMAGE: 'clipboard:write-image',
+  WINDOW_CAPTURE_REGION: 'window:capture-region',
 
   // Images
   IMAGE_PERSIST_GENERATED: 'image:persist-generated',

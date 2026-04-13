@@ -53,6 +53,7 @@ import { toast } from 'sonner'
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
 import { IPC } from '@renderer/lib/ipc/channels'
 import { sessionToMarkdown } from '@renderer/lib/utils/export-chat'
+import { writeImageBlobToClipboard } from '@renderer/lib/utils/image-clipboard'
 import { AnimatePresence, motion } from 'motion/react'
 import { PageTransition, PanelTransition } from '@renderer/components/animate-ui'
 import { useShallow } from 'zustand/react/shallow'
@@ -645,62 +646,32 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
     if (!node || !session) return
     setExporting(true)
 
-    // Inject temporary styles to force all content to fit within container width.
-    // html-to-image clones the DOM and may lose layout constraints, causing overflow.
-    const styleEl = document.createElement('style')
-    styleEl.setAttribute('data-export-image', '')
-    styleEl.textContent = `
-      [data-message-content] * {
-        max-width: 100% !important;
-        overflow-wrap: break-word !important;
-        word-break: break-word !important;
-      }
-      [data-message-content] pre,
-      [data-message-content] code {
-        white-space: pre-wrap !important;
-        word-break: break-all !important;
-      }
-      [data-message-content] table {
-        table-layout: fixed !important;
-        width: 100% !important;
-      }
-      [data-message-content] img,
-      [data-message-content] svg {
-        max-width: 100% !important;
-        height: auto !important;
-      }
-    `
-    document.head.appendChild(styleEl)
-
     try {
-      // Wait for reflow so the browser applies the injected styles
-      await new Promise<void>((r) => requestAnimationFrame(() => r()))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 
-      const bgRaw = getComputedStyle(document.documentElement)
-        .getPropertyValue('--background')
-        .trim()
-      const bgColor = bgRaw ? `hsl(${bgRaw})` : '#ffffff'
-      const { toPng } = await import('html-to-image')
-      const captureWidth = node.clientWidth
-      const dataUrl = await toPng(node, {
-        backgroundColor: bgColor,
-        pixelRatio: 2,
-        width: captureWidth,
-        style: {
-          overflow: 'hidden',
-          maxWidth: `${captureWidth}px`,
-          width: `${captureWidth}px`
-        }
-      })
-
-      const base64 = dataUrl.split(',')[1]
-      const result = (await ipcClient.invoke(IPC.CLIPBOARD_WRITE_IMAGE, { data: base64 })) as {
-        success?: boolean
+      const rect = node.getBoundingClientRect()
+      const captureResult = (await ipcClient.invoke(IPC.WINDOW_CAPTURE_REGION, {
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height
+      })) as {
+        data?: string
+        mediaType?: string
         error?: string
       }
-      if (!result?.success) {
-        throw new Error(result?.error || 'Clipboard write failed')
+
+      if (captureResult.error || !captureResult.data) {
+        throw new Error(captureResult.error || 'Window capture failed')
       }
+
+      const blob = new Blob([
+        Uint8Array.from(atob(captureResult.data), (char) => char.charCodeAt(0))
+      ], {
+        type: captureResult.mediaType || 'image/png'
+      })
+
+      await writeImageBlobToClipboard(blob)
       toast.success(t('layout.imageCopied', { defaultValue: 'Image copied to clipboard' }))
     } catch (err) {
       console.error('Export image failed:', err)
@@ -708,7 +679,6 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
         description: String(err)
       })
     } finally {
-      document.head.removeChild(styleEl)
       setExporting(false)
     }
   }
@@ -1104,20 +1074,36 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
                               </Tooltip>
                             </div>
                           </div>
-                          <MessageList
-                            onRetry={retryLastMessage}
-                            onContinue={continueLastToolExecution}
-                            onEditUserMessage={editAndResend}
-                            onDeleteMessage={deleteMessage}
-                          />
-                          <InputArea
-                            onSend={(text, images) => void sendMessage(text, images)}
-                            onStop={stopStreaming}
-                            onSelectFolder={mode !== 'chat' ? handleOpenFolderDialog : undefined}
-                            workingFolder={activeWorkingFolder}
-                            hideWorkingFolderIndicator
-                            isStreaming={isStreaming}
-                          />
+                          {/*
+                            Session boundary wrapper: a keyed div ensures that switching
+                            the active session unmounts the ENTIRE subtree (MessageList +
+                            InputArea) and remounts a fresh one. Keys directly on sibling
+                            components weren't reliably triggering unmount inside this
+                            AnimatePresence + motion.div tree; wrapping them under a
+                            single keyed container forces React's reconciliation to
+                            treat the whole subtree as a new element when the session
+                            changes, which prevents stale refs, zombie VList instances,
+                            and any stacked DOM carried over from the previous session.
+                          */}
+                          <div
+                            key={activeSessionId ?? 'empty'}
+                            className="flex min-h-0 flex-1 flex-col"
+                          >
+                            <MessageList
+                              onRetry={retryLastMessage}
+                              onContinue={continueLastToolExecution}
+                              onEditUserMessage={editAndResend}
+                              onDeleteMessage={deleteMessage}
+                            />
+                            <InputArea
+                              onSend={(text, images) => void sendMessage(text, images)}
+                              onStop={stopStreaming}
+                              onSelectFolder={mode !== 'chat' ? handleOpenFolderDialog : undefined}
+                              workingFolder={activeWorkingFolder}
+                              hideWorkingFolderIndicator
+                              isStreaming={isStreaming}
+                            />
+                          </div>
                           {mode !== 'chat' && (
                             <WorkingFolderSelectorDialog
                               open={folderDialogOpen}

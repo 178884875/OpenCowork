@@ -104,12 +104,18 @@ function lineCount(text: string): number {
   return normalized.length === 0 ? 0 : normalized.split('\n').length
 }
 
-function snapshotText(snapshot: AgentRunFileChange['before'] | AgentRunFileChange['after']): string {
+function snapshotText(
+  snapshot: AgentRunFileChange['before'] | AgentRunFileChange['after']
+): string {
   return snapshot.text ?? snapshot.previewText ?? ''
 }
 
-function snapshotLineTotal(snapshot: AgentRunFileChange['before'] | AgentRunFileChange['after']): number {
-  return typeof snapshot.lineCount === 'number' ? snapshot.lineCount : lineCount(snapshotText(snapshot))
+function snapshotLineTotal(
+  snapshot: AgentRunFileChange['before'] | AgentRunFileChange['after']
+): number {
+  return typeof snapshot.lineCount === 'number'
+    ? snapshot.lineCount
+    : lineCount(snapshotText(snapshot))
 }
 
 function canRenderInlineSnapshot(
@@ -293,14 +299,20 @@ function ChangeStats({
   name: string
   input: Record<string, unknown>
   trackedChange?: AgentRunFileChange
+  writeOp?: 'create' | 'modify'
 }): React.JSX.Element | null {
   const { t } = useTranslation('chat')
   const trackedStats = React.useMemo(() => {
     if (!trackedChange || trackedChange.op === 'create') return null
-    if (!canRenderInlineSnapshot(trackedChange.before) || !canRenderInlineSnapshot(trackedChange.after)) {
+    if (
+      !canRenderInlineSnapshot(trackedChange.before) ||
+      !canRenderInlineSnapshot(trackedChange.after)
+    ) {
       return null
     }
-    return summarizeDiff(computeDiff(snapshotText(trackedChange.before), snapshotText(trackedChange.after)))
+    return summarizeDiff(
+      computeDiff(snapshotText(trackedChange.before), snapshotText(trackedChange.after))
+    )
   }, [trackedChange])
   const resolvedEdit = React.useMemo(() => resolveEditPayload(input), [input])
   const resolvedWrite = React.useMemo(() => resolveWritePayload(input), [input])
@@ -342,7 +354,10 @@ function ChangeStats({
     return (
       <span className="flex items-center gap-1 text-[10px]">
         <span className="text-muted-foreground/50">
-          {t('fileChange.charTransition', { from: resolvedEdit.oldChars, to: resolvedEdit.newChars })}
+          {t('fileChange.charTransition', {
+            from: resolvedEdit.oldChars,
+            to: resolvedEdit.newChars
+          })}
         </span>
       </span>
     )
@@ -467,7 +482,10 @@ function SnapshotSummaryNotice({
     <div className="px-3 py-2 text-[11px] text-muted-foreground/65 space-y-2">
       <div className="space-y-1">
         <p>Large file snapshot summarized to avoid storing full before/after text in memory.</p>
-        <p className="font-mono text-[10px] text-muted-foreground/45" style={{ fontFamily: MONO_FONT }}>
+        <p
+          className="font-mono text-[10px] text-muted-foreground/45"
+          style={{ fontFamily: MONO_FONT }}
+        >
           {details}
         </p>
       </div>
@@ -563,7 +581,8 @@ function TrackedEditDiff({ change }: { change: AgentRunFileChange }): React.JSX.
   const [isLoading, setIsLoading] = React.useState(false)
   const [loadError, setLoadError] = React.useState<string | null>(null)
 
-  const canRenderInline = canRenderInlineSnapshot(change.before) && canRenderInlineSnapshot(change.after)
+  const canRenderInline =
+    canRenderInlineSnapshot(change.before) && canRenderInlineSnapshot(change.after)
 
   React.useEffect(() => {
     if (!expanded) {
@@ -603,7 +622,12 @@ function TrackedEditDiff({ change }: { change: AgentRunFileChange }): React.JSX.
           setContent({ beforeText: result.beforeText, afterText: result.afterText })
           return
         }
-        if (result && typeof result === 'object' && 'error' in result && typeof result.error === 'string') {
+        if (
+          result &&
+          typeof result === 'object' &&
+          'error' in result &&
+          typeof result.error === 'string'
+        ) {
           setLoadError(result.error)
           return
         }
@@ -623,7 +647,7 @@ function TrackedEditDiff({ change }: { change: AgentRunFileChange }): React.JSX.
     return () => {
       cancelled = true
     }
-  }, [canRenderInline, change])
+  }, [canRenderInline, change, expanded])
 
   const toolbar = (
     <Button type="button" size="xs" variant="ghost" onClick={() => setExpanded((value) => !value)}>
@@ -827,7 +851,9 @@ export function FileChangeCard({
   trackedChange
 }: FileChangeCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  const shouldAutoCollapse = name !== 'Write' && status === 'completed' && !error
+  const resolvedEdit = React.useMemo(() => resolveEditPayload(input), [input])
+  const resolvedWrite = React.useMemo(() => resolveWritePayload(input), [input])
+  const shouldAutoCollapse = status === 'completed' && !error
   const [collapsed, setCollapsed] = React.useState(shouldAutoCollapse)
   const acceptFileChange = useAgentStore((state) => state.acceptFileChange)
   const rollbackFileChange = useAgentStore((state) => state.rollbackFileChange)
@@ -847,8 +873,6 @@ export function FileChangeCard({
   const outputStr = typeof output === 'string' ? output : undefined
   const isFileActionable =
     trackedChange?.status === 'open' || trackedChange?.status === 'conflicted'
-  const resolvedEdit = React.useMemo(() => resolveEditPayload(input), [input])
-  const resolvedWrite = React.useMemo(() => resolveWritePayload(input), [input])
   const parsedOutput = outputStr ? decodeStructuredToolResult(outputStr) : null
   const parsedOutputError =
     parsedOutput && !Array.isArray(parsedOutput) && typeof parsedOutput.error === 'string'
@@ -859,6 +883,13 @@ export function FileChangeCard({
     !Array.isArray(parsedOutput) &&
     parsedOutput.success === true
   )
+  const writeOp =
+    trackedChange?.op ??
+    (parsedOutput &&
+    !Array.isArray(parsedOutput) &&
+    (parsedOutput.op === 'create' || parsedOutput.op === 'modify')
+      ? (parsedOutput.op as 'create' | 'modify')
+      : undefined)
   const isOutputError = outputStr
     ? Boolean(parsedOutputError) || (!parsedOutput && outputStr.length > 0)
     : false
@@ -962,15 +993,24 @@ export function FileChangeCard({
             className="overflow-hidden border-t border-inherit bg-muted/20 dark:bg-zinc-950"
           >
             {name === 'Edit' && trackedChange && <TrackedEditDiff change={trackedChange} />}
-            {name === 'Edit' &&
-              !trackedChange &&
-              status !== 'completed' &&
-              status !== 'error' && <PendingEditPreview input={input} />}
+            {name === 'Edit' && !trackedChange && status !== 'completed' && status !== 'error' && (
+              <PendingEditPreview input={input} />
+            )}
             {name === 'Edit' &&
               !trackedChange &&
               status !== 'streaming' &&
               status !== 'running' &&
-              !!(resolvedEdit.oldPreview || resolvedEdit.newPreview) && <PendingEditPreview input={input} />}
+              !!(
+                resolvedEdit.oldText ||
+                resolvedEdit.newText ||
+                resolvedEdit.oldPreview ||
+                resolvedEdit.newPreview
+              ) && (
+                <InlineDiff
+                  oldStr={resolvedEdit.oldText || resolvedEdit.oldPreview}
+                  newStr={resolvedEdit.newText || resolvedEdit.newPreview}
+                />
+              )}
             {name === 'Write' &&
               trackedChange?.op === 'modify' &&
               canRenderInlineSnapshot(trackedChange.before) &&
@@ -986,13 +1026,15 @@ export function FileChangeCard({
                 !canRenderInlineSnapshot(trackedChange.after)) && (
                 <SnapshotSummaryNotice before={trackedChange.before} after={trackedChange.after} />
               )}
-            {name === 'Write' && trackedChange?.op === 'create' && canRenderInlineSnapshot(trackedChange.after) && (
-              <NewFileContent
-                content={snapshotText(trackedChange.after)}
-                filePath={filePath}
-                isStreaming={status === 'streaming'}
-              />
-            )}
+            {name === 'Write' &&
+              trackedChange?.op === 'create' &&
+              canRenderInlineSnapshot(trackedChange.after) && (
+                <NewFileContent
+                  content={snapshotText(trackedChange.after)}
+                  filePath={filePath}
+                  isStreaming={status === 'streaming'}
+                />
+              )}
             {name === 'Write' &&
               trackedChange?.op === 'create' &&
               !canRenderInlineSnapshot(trackedChange.after) && (
@@ -1007,6 +1049,12 @@ export function FileChangeCard({
               !trackedChange &&
               status !== 'streaming' &&
               status !== 'running' &&
+              writeOp === 'modify' && <PendingWritePreview input={input} isStreaming={false} />}
+            {name === 'Write' &&
+              !trackedChange &&
+              status !== 'streaming' &&
+              status !== 'running' &&
+              writeOp !== 'modify' &&
               !!resolvedWrite.preview && (
                 <NewFileContent
                   content={resolvedWrite.text || resolvedWrite.preview}

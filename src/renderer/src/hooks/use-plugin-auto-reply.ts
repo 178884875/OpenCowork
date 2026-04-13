@@ -432,7 +432,9 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
     cachedPromptSnapshot.planMode === false &&
     cachedPromptSnapshot.workingFolder === session.workingFolder &&
     cachedPromptSnapshot.projectId === session.projectId &&
-    cachedPromptSnapshot.sshConnectionId === session.sshConnectionId
+    cachedPromptSnapshot.sshConnectionId === session.sshConnectionId &&
+    // Discard stale snapshots that lack plugin tools (issue #73).
+    cachedPromptSnapshot.toolDefs.some((t) => t.name === 'PluginSendMessage')
 
   let effectiveToolDefs = allToolDefs
   let systemPrompt = cachedPromptSnapshot?.systemPrompt ?? ''

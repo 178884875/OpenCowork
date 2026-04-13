@@ -67,7 +67,9 @@ interface LayeredSshError {
 }
 
 const sshSessions = new Map<string, SshSession>()
-;(globalThis as typeof globalThis & { __openCoworkSshSessions?: typeof sshSessions }).__openCoworkSshSessions = sshSessions
+;(
+  globalThis as typeof globalThis & { __openCoworkSshSessions?: typeof sshSessions }
+).__openCoworkSshSessions = sshSessions
 let nextSessionId = 1
 const MAX_OUTPUT_BUFFER_BYTES = 1024 * 1024
 const SFTP_LIST_DIR_TIMEOUT_MS = 15000
@@ -506,7 +508,11 @@ function buildConnectConfig(connection: SshConfigConnection): ConnectConfig {
   return config
 }
 
-function toLayeredError(stage: LayeredSshError['stage'], message: string, cause?: unknown): LayeredSshError {
+function toLayeredError(
+  stage: LayeredSshError['stage'],
+  message: string,
+  cause?: unknown
+): LayeredSshError {
   return { stage, message, cause }
 }
 
@@ -514,7 +520,10 @@ function isAuthFailureMessage(message: string): boolean {
   return message.includes('All configured authentication methods failed')
 }
 
-function formatLayeredError(err: unknown, fallbackAuthType?: SshConfigConnection['authType']): string {
+function formatLayeredError(
+  err: unknown,
+  fallbackAuthType?: SshConfigConnection['authType']
+): string {
   if (err && typeof err === 'object' && 'stage' in err && 'message' in err) {
     const layered = err as LayeredSshError
     const raw = layered.message || ''
@@ -538,8 +547,10 @@ function formatLayeredError(err: unknown, fallbackAuthType?: SshConfigConnection
 
   const message = err instanceof Error ? err.message : String(err)
   if (message.includes('ECONNREFUSED')) return '连接被拒绝，请检查主机和端口。'
-  if (message.includes('ETIMEDOUT') || message.includes('timeout')) return '连接超时，请检查网络可达性。'
-  if (message.includes('ENOTFOUND') || message.includes('getaddrinfo')) return '主机不可解析，请检查主机名或 IP。'
+  if (message.includes('ETIMEDOUT') || message.includes('timeout'))
+    return '连接超时，请检查网络可达性。'
+  if (message.includes('ENOTFOUND') || message.includes('getaddrinfo'))
+    return '主机不可解析，请检查主机名或 IP。'
   if (isAuthFailureMessage(message)) {
     if (fallbackAuthType === 'password') return '密码认证失败，请检查密码。'
     if (fallbackAuthType === 'privateKey') return '私钥认证失败，请检查密钥文件和口令。'
@@ -548,7 +559,10 @@ function formatLayeredError(err: unknown, fallbackAuthType?: SshConfigConnection
   return message
 }
 
-function createDerivedConnection(base: SshConfigConnection, patch: Partial<SshConfigConnection>): SshConfigConnection {
+function createDerivedConnection(
+  base: SshConfigConnection,
+  patch: Partial<SshConfigConnection>
+): SshConfigConnection {
   return {
     ...base,
     ...patch,
@@ -566,7 +580,9 @@ function createDerivedConnection(base: SshConfigConnection, patch: Partial<SshCo
   }
 }
 
-function parseOpenSshJumpString(raw: string): { username?: string; host: string; port?: number } | null {
+function parseOpenSshJumpString(
+  raw: string
+): { username?: string; host: string; port?: number } | null {
   const value = raw.trim()
   if (!value) return null
   const match = value.match(/^(?:(?<username>[^@]+)@)?(?<host>[^:]+?)(?::(?<port>\d+))?$/)
@@ -579,7 +595,11 @@ function parseOpenSshJumpString(raw: string): { username?: string; host: string;
   }
 }
 
-function openSshHostToConnection(alias: string, hostConfig: OpenSshHostConfig, target: SshConfigConnection): SshConfigConnection {
+function openSshHostToConnection(
+  alias: string,
+  hostConfig: OpenSshHostConfig,
+  target: SshConfigConnection
+): SshConfigConnection {
   return createDerivedConnection(target, {
     id: `alias:${alias}`,
     name: alias,
@@ -641,7 +661,9 @@ async function connectClient(client: Client, config: ConnectConfig): Promise<voi
   })
 }
 
-async function connectWithProxyJump(connection: SshConfigConnection): Promise<{ client: Client; jumpClient?: Client }> {
+async function connectWithProxyJump(
+  connection: SshConfigConnection
+): Promise<{ client: Client; jumpClient?: Client }> {
   const targetConfig = buildConnectConfig(connection)
   const jumpTarget = resolveProxyJumpTarget(connection)
   if (!jumpTarget) {
@@ -2027,10 +2049,12 @@ export function registerSshHandlers(): void {
       }
     ) => {
       try {
+        let op: 'create' | 'modify' = 'create'
         await withFileSession(args.connectionId, async (session) => {
           const sftp = await getSftp(session)
           const resolvedPath = await resolveSftpPath(session, args.path)
           const before = await readSshTextSnapshot(args.connectionId, resolvedPath)
+          op = before.exists ? 'modify' : 'create'
 
           // Ensure parent directory exists
           const dir = path.posix.dirname(resolvedPath)
@@ -2055,7 +2079,7 @@ export function registerSshHandlers(): void {
             afterText: args.content
           })
         })
-        return { success: true }
+        return { success: true, op }
       } catch (err) {
         return { error: String(err) }
       }

@@ -712,6 +712,36 @@ if (gotSingleInstanceLock) {
     })
 
     ipcMain.handle(
+      'window:capture-region',
+      async (event, args: { x: number; y: number; width: number; height: number }) => {
+        try {
+          const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()
+          if (!win) return { error: 'No active window found' }
+
+          const [contentWidth, contentHeight] = win.getContentSize()
+          const x = Math.max(0, Math.min(Math.floor(args.x), Math.max(0, contentWidth - 1)))
+          const y = Math.max(0, Math.min(Math.floor(args.y), Math.max(0, contentHeight - 1)))
+          const width = Math.max(1, Math.min(Math.ceil(args.width), contentWidth - x))
+          const height = Math.max(1, Math.min(Math.ceil(args.height), contentHeight - y))
+
+          if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+            return { error: 'Invalid capture bounds' }
+          }
+
+          const image = await win.webContents.capturePage({ x, y, width, height })
+          if (image.isEmpty()) return { error: 'Failed to capture window region' }
+
+          return {
+            data: image.toPNG().toString('base64'),
+            mediaType: 'image/png'
+          }
+        } catch (err) {
+          return { error: String(err) }
+        }
+      }
+    )
+
+    ipcMain.handle(
       'image:persist-generated',
       async (
         _event,

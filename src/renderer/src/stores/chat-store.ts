@@ -232,11 +232,46 @@ function clearPendingMessageFlushes(messageIds: string[]): void {
   }
 }
 
+// --- Session index helpers ---
+// sessionsById maps session id -> index into the sessions array, so all per-session
+// lookups are O(1). It must be rebuilt by syncSessionsById whenever the shape of the
+// sessions array changes (push, splice, filter, wholesale replacement).
+function syncSessionsById(state: { sessions: Session[]; sessionsById: Record<string, number> }): void {
+  const next: Record<string, number> = {}
+  for (let i = 0; i < state.sessions.length; i++) {
+    next[state.sessions[i].id] = i
+  }
+  state.sessionsById = next
+}
+
+function getSessionByIdFromState(
+  state: { sessions: Session[]; sessionsById: Record<string, number> },
+  sessionId: string
+): Session | undefined {
+  const idx = state.sessionsById[sessionId]
+  if (idx === undefined) return undefined
+  const candidate = state.sessions[idx]
+  // Defensive: if the index is stale (e.g. external mutation slipped through), fall back to a linear scan.
+  if (candidate && candidate.id === sessionId) return candidate
+  return state.sessions.find((s) => s.id === sessionId)
+}
+
+/** Bump the monotonic revision counter used by React.memo equality checks. */
+function bumpMessageRevision(msg: UnifiedMessage): void {
+  msg._revision = (msg._revision ?? 0) + 1
+}
+
 // --- Store ---
 
 interface ChatStore {
   projects: Project[]
   sessions: Session[]
+  /**
+   * sessionId -> index into `sessions`. Maintained by syncSessionsById whenever the sessions
+   * array shape changes. Enables O(1) per-session lookups (hot path: flushStreamDeltas,
+   * MessageList selector), replacing previous O(n) sessions.find() scans.
+   */
+  sessionsById: Record<string, number>
   activeProjectId: string | null
   activeSessionId: string | null
   _loaded: boolean
@@ -321,6 +356,21 @@ interface ChatStore {
     input: Record<string, unknown>
   ) => void
   appendContentBlock: (sessionId: string, msgId: string, block: ContentBlock) => void
+
+  /**
+   * Atomically merge a background-session snapshot into the foreground chat-store.
+   * Called by flushBackgroundSessionToForeground after a session is brought back to the front.
+   * Handles both patched (existing message updates) and added (new messages) without relying
+   * on the loaded window — if a patched message isn't currently resident, it's inserted as new.
+   */
+  applyBackgroundSnapshot: (
+    sessionId: string,
+    snapshot: {
+      patchedMessagesById: Record<string, UnifiedMessage>
+      addedMessagesById: Record<string, UnifiedMessage>
+      addedMessageIds: string[]
+    }
+  ) => void
 
   // Streaming state (per-session)
   streamingMessageId: string | null
@@ -843,6 +893,7 @@ export const useChatStore = create<ChatStore>()(
   immer((set, get) => ({
     projects: [],
     sessions: [],
+    sessionsById: {},
     activeProjectId: null,
     activeSessionId: null,
     streamingMessageId: null,
@@ -1007,6 +1058,7 @@ export const useChatStore = create<ChatStore>()(
           }
           return !shouldDelete
         })
+        syncSessionsById(state)
 
         if (
           state.activeSessionId &&
@@ -1380,6 +1432,7 @@ export const useChatStore = create<ChatStore>()(
         set((state) => {
           state.projects = projects
           state.sessions = sessions
+          syncSessionsById(state)
           state._loaded = true
 
           nextActiveSessionId = state.activeSessionId ?? sessions[0]?.id ?? null
@@ -1477,6 +1530,7 @@ export const useChatStore = create<ChatStore>()(
       }
       set((state) => {
         state.sessions.push(newSession)
+        syncSessionsById(state)
         state.activeSessionId = id
         if (targetProjectId) {
           state.activeProjectId = targetProjectId
@@ -1522,7 +1576,10 @@ export const useChatStore = create<ChatStore>()(
         const idx = state.sessions.findIndex((s) => s.id === id)
         const deletedSessionInState = idx >= 0 ? state.sessions[idx] : undefined
         const deletedProjectId = deletedSessionInState?.projectId ?? fallbackProjectId
-        if (idx !== -1) state.sessions.splice(idx, 1)
+        if (idx !== -1) {
+          state.sessions.splice(idx, 1)
+          syncSessionsById(state)
+        }
 
         if (wasActiveSession) {
           const sameProjectSessions = deletedProjectId
@@ -1821,6 +1878,7 @@ export const useChatStore = create<ChatStore>()(
       }
       set((state) => {
         state.sessions.push(normalizedSession)
+        syncSessionsById(state)
         state.activeSessionId = normalizedSession.id
         if (targetProjectId) {
           state.activeProjectId = targetProjectId
@@ -1891,6 +1949,7 @@ export const useChatStore = create<ChatStore>()(
 
       set((state) => {
         state.sessions.push(normalizedSession)
+        syncSessionsById(state)
         state.activeSessionId = normalizedSession.id
         if (targetProjectId) {
           state.activeProjectId = targetProjectId
@@ -1955,6 +2014,7 @@ export const useChatStore = create<ChatStore>()(
       const ids = get().sessions.map((s) => s.id)
       set((state) => {
         state.sessions = []
+        state.sessionsById = {}
         state.activeSessionId = null
       })
       // Clean up agent-store, team-store, plan-store, task-store for all sessions
@@ -2037,6 +2097,7 @@ export const useChatStore = create<ChatStore>()(
       }
       set((state) => {
         state.sessions.push(newSession)
+        syncSessionsById(state)
         state.activeSessionId = newId
         if (source.projectId) {
           state.activeProjectId = source.projectId
@@ -2194,7 +2255,7 @@ export const useChatStore = create<ChatStore>()(
       let sortOrder = 0
       let shouldPersist = false
       set((state) => {
-        const session = state.sessions.find((s) => s.id === sessionId)
+        const session = getSessionByIdFromState(state, sessionId)
         if (!session) return
         shouldPersist = true
         sortOrder = session.messageCount
@@ -2204,6 +2265,7 @@ export const useChatStore = create<ChatStore>()(
           session.loadedRangeStart = session.messageCount
           session.loadedRangeEnd = session.messageCount
         }
+        msg._revision = (msg._revision ?? 0) + 1
         session.messages.push(msg)
         session.messageCount += 1
         session.loadedRangeEnd = session.messageCount
@@ -2219,13 +2281,16 @@ export const useChatStore = create<ChatStore>()(
 
     updateMessage: (sessionId, msgId, patch) => {
       set((state) => {
-        const session = state.sessions.find((s) => s.id === sessionId)
+        const session = getSessionByIdFromState(state, sessionId)
         if (!session) return
         const msg = session.messages.find((m) => m.id === msgId)
-        if (msg) Object.assign(msg, patch)
+        if (msg) {
+          Object.assign(msg, patch)
+          bumpMessageRevision(msg)
+        }
       })
       // Persist updated message
-      const session = get().sessions.find((s) => s.id === sessionId)
+      const session = getSessionByIdFromState(get(), sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
       if (msg) dbUpdateMessage(msgId, msg.content, msg.usage)
     },
@@ -2246,10 +2311,11 @@ export const useChatStore = create<ChatStore>()(
       if (!encryptedContent) return
 
       set((state) => {
-        const session = state.sessions.find((s) => s.id === sessionId)
+        const session = getSessionByIdFromState(state, sessionId)
         if (!session) return
         const msg = session.messages.find((m) => m.id === msgId)
         if (!msg) return
+        bumpMessageRevision(msg)
 
         const now = Date.now()
         if (typeof msg.content === 'string') {
@@ -2307,14 +2373,14 @@ export const useChatStore = create<ChatStore>()(
         }
       })
 
-      const session = get().sessions.find((s) => s.id === sessionId)
+      const session = getSessionByIdFromState(get(), sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
       if (msg) dbFlushMessage(msg)
     },
 
     completeThinking: (sessionId, msgId) => {
       set((state) => {
-        const session = state.sessions.find((s) => s.id === sessionId)
+        const session = getSessionByIdFromState(state, sessionId)
         if (!session) return
         const msg = session.messages.find((m) => m.id === msgId)
         if (!msg || typeof msg.content === 'string') return
@@ -2325,16 +2391,17 @@ export const useChatStore = create<ChatStore>()(
             block.completedAt = Date.now()
           }
         }
+        bumpMessageRevision(msg)
       })
       // Immediate persist after thinking completes
-      const session = get().sessions.find((s) => s.id === sessionId)
+      const session = getSessionByIdFromState(get(), sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
       if (msg) dbFlushMessageImmediate(msg)
     },
 
     appendToolUse: (sessionId, msgId, toolUse) => {
       set((state) => {
-        const session = state.sessions.find((s) => s.id === sessionId)
+        const session = getSessionByIdFromState(state, sessionId)
         if (!session) return
         const msg = session.messages.find((m) => m.id === msgId)
         if (!msg) return
@@ -2348,16 +2415,17 @@ export const useChatStore = create<ChatStore>()(
         } else {
           ;(msg.content as ContentBlock[]).push(normalizedToolUse)
         }
+        bumpMessageRevision(msg)
       })
       // Persist immediately for tool use blocks
-      const session = get().sessions.find((s) => s.id === sessionId)
+      const session = getSessionByIdFromState(get(), sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
       if (msg) dbFlushMessageImmediate(msg)
     },
 
     updateToolUseInput: (sessionId, msgId, toolUseId, input) => {
       set((state) => {
-        const session = state.sessions.find((s) => s.id === sessionId)
+        const session = getSessionByIdFromState(state, sessionId)
         if (!session) return
         const msg = session.messages.find((m) => m.id === msgId)
         if (!msg || typeof msg.content === 'string') return
@@ -2365,16 +2433,19 @@ export const useChatStore = create<ChatStore>()(
         const block = (msg.content as ContentBlock[]).find(
           (b) => b.type === 'tool_use' && (b as ToolUseBlock).id === toolUseId
         ) as ToolUseBlock | undefined
-        if (block) block.input = summarizeToolInputForHistory(block.name, input)
+        if (block) {
+          block.input = summarizeToolInputForHistory(block.name, input)
+          bumpMessageRevision(msg)
+        }
       })
-      const session = get().sessions.find((s) => s.id === sessionId)
+      const session = getSessionByIdFromState(get(), sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
       if (msg) dbFlushMessage(msg)
     },
 
     appendContentBlock: (sessionId, msgId, block) => {
       set((state) => {
-        const session = state.sessions.find((s) => s.id === sessionId)
+        const session = getSessionByIdFromState(state, sessionId)
         if (!session) return
         const msg = session.messages.find((m) => m.id === msgId)
         if (!msg) return
@@ -2384,10 +2455,73 @@ export const useChatStore = create<ChatStore>()(
         } else {
           ;(msg.content as ContentBlock[]).push(block)
         }
+        bumpMessageRevision(msg)
       })
-      const session = get().sessions.find((s) => s.id === sessionId)
+      const session = getSessionByIdFromState(get(), sessionId)
       const msg = session?.messages.find((m) => m.id === msgId)
       if (msg) dbFlushMessageImmediate(msg)
+    },
+
+    applyBackgroundSnapshot: (sessionId, snapshot) => {
+      let mergedAny = false
+      set((state) => {
+        const session = getSessionByIdFromState(state, sessionId)
+        if (!session) return
+
+        // 1. Apply patched messages: existing -> override fields, missing -> insert as new.
+        //    This eliminates the "silent updateMessage failure when id isn't in the loaded window" bug.
+        for (const [msgId, bufferedMsg] of Object.entries(snapshot.patchedMessagesById)) {
+          const existing = session.messages.find((m) => m.id === msgId)
+          if (existing) {
+            existing.content = bufferedMsg.content
+            if (bufferedMsg.usage) existing.usage = bufferedMsg.usage
+            if (bufferedMsg.providerResponseId) {
+              existing.providerResponseId = bufferedMsg.providerResponseId
+            }
+            bumpMessageRevision(existing)
+            mergedAny = true
+          } else {
+            const cloned: UnifiedMessage = { ...bufferedMsg, _revision: 1 }
+            session.messages.push(cloned)
+            session.messageCount = Math.max(session.messageCount, session.messages.length)
+            session.loadedRangeEnd = session.messageCount
+            session.lastKnownMessageCount = session.messageCount
+            mergedAny = true
+          }
+        }
+
+        // 2. Apply added messages in insertion order; skip duplicates.
+        for (const msgId of snapshot.addedMessageIds) {
+          if (session.messages.some((m) => m.id === msgId)) continue
+          const msg = snapshot.addedMessagesById[msgId]
+          if (!msg) continue
+          const cloned: UnifiedMessage = { ...msg, _revision: 1 }
+          session.messages.push(cloned)
+          session.messageCount = Math.max(session.messageCount, session.messages.length)
+          session.loadedRangeEnd = session.messageCount
+          session.lastKnownMessageCount = session.messageCount
+          mergedAny = true
+        }
+
+        if (mergedAny) {
+          session.updatedAt = Date.now()
+        }
+      })
+
+      if (!mergedAny) return
+
+      // Persist merged messages to DB (fire-and-forget, debounced per message).
+      const session = getSessionByIdFromState(get(), sessionId)
+      if (!session) return
+      const mergedIds = new Set<string>([
+        ...Object.keys(snapshot.patchedMessagesById),
+        ...snapshot.addedMessageIds
+      ])
+      for (const msg of session.messages) {
+        if (!mergedIds.has(msg.id)) continue
+        dbFlushMessageImmediate(msg)
+      }
+      dbUpdateSession(sessionId, { updatedAt: session.updatedAt })
     },
 
     setStreamingMessageId: (sessionId, id) =>
@@ -2414,12 +2548,13 @@ export const useChatStore = create<ChatStore>()(
       }),
 
     getActiveSession: () => {
-      const { sessions, activeSessionId } = get()
-      return sessions.find((s) => s.id === activeSessionId)
+      const state = get()
+      if (!state.activeSessionId) return undefined
+      return getSessionByIdFromState(state, state.activeSessionId)
     },
 
     getSessionMessages: (sessionId) => {
-      const session = get().sessions.find((s) => s.id === sessionId)
+      const session = getSessionByIdFromState(get(), sessionId)
       return session?.messages ?? []
     },
 
@@ -2450,6 +2585,7 @@ export const useChatStore = create<ChatStore>()(
             promptSnapshot: undefined
           }
         })
+        syncSessionsById(state)
         state.streamingMessages = targetSessionId
           ? Object.fromEntries(
               Object.entries(state.streamingMessages).filter(([key]) => key === targetSessionId)
@@ -2498,66 +2634,87 @@ function flushStreamDeltas(): void {
   _streamDeltaRafId = null
   if (_pendingStreamDeltas.length === 0) return
 
-  // Drain the buffer
+  // Drain the buffer and group by session so each session is only looked up once
+  // regardless of how many deltas it received this frame.
   const deltas = _pendingStreamDeltas.splice(0)
-  const affectedMsgIds = new Set<string>()
+  const bySession = new Map<string, StreamDelta[]>()
+  for (const delta of deltas) {
+    let arr = bySession.get(delta.sessionId)
+    if (!arr) {
+      arr = []
+      bySession.set(delta.sessionId, arr)
+    }
+    arr.push(delta)
+  }
+
+  const affectedMessages: Array<{ sessionId: string; msgId: string }> = []
 
   useChatStore.setState((state) => {
     const now = Date.now()
-    for (const delta of deltas) {
-      const session = state.sessions.find((s) => s.id === delta.sessionId)
+    for (const [sessionId, sessionDeltas] of bySession) {
+      const session = getSessionByIdFromState(state, sessionId)
       if (!session) continue
-      const msg = session.messages.find((m) => m.id === delta.msgId)
-      if (!msg) continue
-      affectedMsgIds.add(delta.msgId)
 
-      if (delta.kind === 'text') {
-        if (typeof msg.content === 'string') {
-          msg.content += delta.text
-        } else {
-          const blocks = msg.content as ContentBlock[]
-          const lastBlock = blocks[blocks.length - 1]
-          if (lastBlock?.type === 'text') {
-            ;(lastBlock as TextBlock).text += delta.text
+      // Build a single per-session message lookup (covers repeated msgIds in one batch)
+      const msgMap = new Map<string, UnifiedMessage>()
+      for (const msg of session.messages) msgMap.set(msg.id, msg)
+
+      for (const delta of sessionDeltas) {
+        const msg = msgMap.get(delta.msgId)
+        if (!msg) continue
+
+        if (delta.kind === 'text') {
+          if (typeof msg.content === 'string') {
+            msg.content += delta.text
           } else {
-            blocks.push({ type: 'text', text: delta.text })
-          }
-        }
-      } else {
-        // thinking delta
-        if (typeof msg.content === 'string') {
-          msg.content = [{ type: 'thinking', thinking: delta.thinking, startedAt: now }]
-        } else {
-          const blocks = msg.content as ContentBlock[]
-          let target: ThinkingBlock | null = null
-          for (let i = blocks.length - 1; i >= 0; i--) {
-            const b = blocks[i]
-            if (b.type === 'thinking' && !(b as ThinkingBlock).completedAt) {
-              target = b as ThinkingBlock
-              break
+            const blocks = msg.content as ContentBlock[]
+            const lastBlock = blocks[blocks.length - 1]
+            if (lastBlock?.type === 'text') {
+              ;(lastBlock as TextBlock).text += delta.text
+            } else {
+              blocks.push({ type: 'text', text: delta.text })
             }
           }
-          if (target) {
-            target.thinking = stripThinkTagMarkers(`${target.thinking}${delta.thinking}`)
+        } else {
+          // thinking delta
+          if (typeof msg.content === 'string') {
+            msg.content = [{ type: 'thinking', thinking: delta.thinking, startedAt: now }]
           } else {
-            blocks.push({ type: 'thinking', thinking: delta.thinking, startedAt: now })
+            const blocks = msg.content as ContentBlock[]
+            let target: ThinkingBlock | null = null
+            for (let i = blocks.length - 1; i >= 0; i--) {
+              const b = blocks[i]
+              if (b.type === 'thinking' && !(b as ThinkingBlock).completedAt) {
+                target = b as ThinkingBlock
+                break
+              }
+            }
+            if (target) {
+              target.thinking = stripThinkTagMarkers(`${target.thinking}${delta.thinking}`)
+            } else {
+              blocks.push({ type: 'thinking', thinking: delta.thinking, startedAt: now })
+            }
           }
         }
+
+        bumpMessageRevision(msg)
+        affectedMessages.push({ sessionId, msgId: delta.msgId })
       }
     }
   })
 
-  // Debounced DB persist (already debounced at 500 ms — safe to call per-frame)
-  if (affectedMsgIds.size > 0) {
-    const sessions = useChatStore.getState().sessions
-    for (const msgId of affectedMsgIds) {
-      for (const session of sessions) {
-        const msg = session.messages.find((m) => m.id === msgId)
-        if (msg) {
-          dbFlushMessage(msg)
-          break
-        }
-      }
+  // Debounced DB persist. Resolve each (sessionId, msgId) pair in O(1) via the index.
+  if (affectedMessages.length > 0) {
+    const state = useChatStore.getState()
+    const seen = new Set<string>()
+    for (const { sessionId, msgId } of affectedMessages) {
+      const key = `${sessionId}\u0000${msgId}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const session = getSessionByIdFromState(state, sessionId)
+      if (!session) continue
+      const msg = session.messages.find((m) => m.id === msgId)
+      if (msg) dbFlushMessage(msg)
     }
   }
 }

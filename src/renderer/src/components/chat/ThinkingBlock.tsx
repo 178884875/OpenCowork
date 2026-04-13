@@ -4,6 +4,11 @@ import { ChevronRight, ChevronDown } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { MONO_FONT } from '@renderer/lib/constants'
+import {
+  openMarkdownHref,
+  resolveLocalFilePath,
+  openLocalFilePath
+} from '@renderer/lib/preview/viewers/markdown-components'
 import { motion, AnimatePresence } from 'motion/react'
 
 interface ThinkingBlockProps {
@@ -96,9 +101,40 @@ export function ThinkingBlock({
                 <Markdown
                   remarkPlugins={[remarkGfm]}
                   components={{
+                    a: ({ href, children, ...props }) => (
+                      <a
+                        {...props}
+                        href={href}
+                        className="text-primary underline underline-offset-2 hover:text-primary/80 break-all"
+                        onClick={(event) => {
+                          if (!href) return
+                          const handled = openMarkdownHref(href)
+                          if (handled) event.preventDefault()
+                        }}
+                      >
+                        {children}
+                      </a>
+                    ),
                     code: ({ children, className, ...props }) => {
                       const isInline = !className
                       if (isInline) {
+                        const code = String(children ?? '').replace(/\n$/, '')
+                        const resolvedPath = resolveLocalFilePath(code)
+                        if (resolvedPath) {
+                          return (
+                            <button
+                              type="button"
+                              className="cursor-pointer rounded bg-muted px-1 py-0.5 text-xs font-mono text-primary underline-offset-2 hover:underline"
+                              style={{ fontFamily: MONO_FONT }}
+                              title={resolvedPath}
+                              onClick={() => {
+                                void openLocalFilePath(code)
+                              }}
+                            >
+                              {children}
+                            </button>
+                          )
+                        }
                         return (
                           <code
                             className="rounded bg-muted px-1 py-0.5 text-xs font-mono"

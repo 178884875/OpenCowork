@@ -1553,7 +1553,22 @@ export function useChatActions(): {
 
   useEffect(() => {
     if (!activeSessionId) return
-    void flushBackgroundSessionToForeground(activeSessionId)
+    let cancelled = false
+    // IIFE so we can await inside useEffect. The cancelled flag avoids applying the
+    // snapshot if the user switches away again mid-flush (rare but possible during
+    // rapid session hopping). The flush itself is idempotent — if cancelled fires the
+    // snapshot has already been atomically drained by takeSessionSnapshot, so the data
+    // is not lost.
+    ;(async () => {
+      try {
+        await flushBackgroundSessionToForeground(activeSessionId)
+      } catch (err) {
+        if (!cancelled) console.error('[useChatActions] flush background failed', err)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [activeSessionId])
 
   const sendMessage = useCallback(
@@ -1960,11 +1975,16 @@ export function useChatActions(): {
         // Clarify / Cowork / Code mode: agent loop with tools
         const session = useChatStore.getState().sessions.find((s) => s.id === sessionId)
 
-        // Dynamic plugin tool registration based on active channels
+        // Dynamic plugin tool registration.
+        // Plugin-bound sessions (auto-reply from DingTalk/Feishu/WeChat etc.) must
+        // always have plugin tools available, regardless of the per-project "active
+        // channels" toggle — otherwise the agent sees `Available channel tools: …`
+        // in its user_rules but cannot actually call them. See issue #73.
         const activeChannels = useChannelStore.getState().getActiveChannels()
-        if (activeChannels.length > 0 && !isPluginToolsRegistered()) {
+        const needsPluginTools = activeChannels.length > 0 || !!session?.pluginId
+        if (needsPluginTools && !isPluginToolsRegistered()) {
           registerPluginTools()
-        } else if (activeChannels.length === 0 && isPluginToolsRegistered()) {
+        } else if (!needsPluginTools && isPluginToolsRegistered()) {
           unregisterPluginTools()
         }
 
@@ -2135,7 +2155,12 @@ export function useChatActions(): {
           cachedPromptSnapshot.planMode === isPlanMode &&
           (cachedPromptSnapshot.projectId ?? null) === (session?.projectId ?? null) &&
           (cachedPromptSnapshot.workingFolder ?? null) === (session?.workingFolder ?? null) &&
-          (cachedPromptSnapshot.sshConnectionId ?? null) === (session?.sshConnectionId ?? null)
+          (cachedPromptSnapshot.sshConnectionId ?? null) === (session?.sshConnectionId ?? null) &&
+          // Plugin-bound sessions require plugin tools in the cached snapshot.
+          // A stale snapshot (built when plugin tools were unregistered) must be
+          // discarded so the system prompt + tool list are rebuilt. Issue #73.
+          (!session?.pluginId ||
+            cachedPromptSnapshot.toolDefs.some((t) => t.name === 'PluginSendMessage'))
 
         const autoSelectedFastWithoutTools =
           settings.mainModelSelectionMode === 'auto' &&

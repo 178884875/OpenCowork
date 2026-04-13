@@ -24,7 +24,18 @@ const AGENTS_DIR = path.join(os.homedir(), '.open-cowork', 'agents')
 const FALLBACK_CRON_AGENT = {
   name: DEFAULT_AGENT,
   description: 'Scheduled task agent for cron jobs',
-  allowedTools: ['Read', 'Write', 'Edit', 'LS', 'Glob', 'Grep', 'Bash', 'Notify'],
+  allowedTools: [
+    'Read',
+    'Write',
+    'Edit',
+    'LS',
+    'Glob',
+    'Grep',
+    'Bash',
+    'Notify',
+    'PluginSendMessage',
+    'PluginReplyMessage'
+  ],
   maxIterations: 15,
   model: undefined as string | undefined,
   temperature: undefined as number | undefined,
@@ -41,7 +52,9 @@ const SUPPORTED_BACKGROUND_TOOLS = new Set([
   'Glob',
   'Grep',
   'Bash',
-  'Notify'
+  'Notify',
+  'PluginSendMessage',
+  'PluginReplyMessage'
 ])
 
 type ProviderType =
@@ -735,7 +748,9 @@ function normalizeMessagesForReplay(messages: UnifiedMessage[]): UnifiedMessage[
     }
     const blocks = message.content as ContentBlock[]
     const replayableToolUseIds = new Set(
-      blocks.filter((block): block is ToolUseBlock => block.type === 'tool_use').map((block) => block.id)
+      blocks
+        .filter((block): block is ToolUseBlock => block.type === 'tool_use')
+        .map((block) => block.id)
     )
     const pairedToolUseIds = new Set<string>()
     if (replayableToolUseIds.size > 0) {
@@ -2146,7 +2161,6 @@ function countOccurrences(content: string, value: string): number {
   return content.split(value).length - 1
 }
 
-
 function buildToolHandlers(): Record<string, ToolHandler> {
   const readHandler: ToolHandler = {
     definition: {
@@ -2200,9 +2214,17 @@ function buildToolHandlers(): Record<string, ToolHandler> {
     },
     execute: async (input, ctx) => {
       const resolvedPath = resolveToolPath(input.file_path, ctx.workingFolder)
+      const beforeExists = await fs.promises
+        .access(resolvedPath)
+        .then(() => true)
+        .catch(() => false)
       await fs.promises.mkdir(path.dirname(resolvedPath), { recursive: true })
       await fs.promises.writeFile(resolvedPath, String(input.content ?? ''), 'utf8')
-      return encodeStructuredToolResult({ success: true, path: resolvedPath })
+      return encodeStructuredToolResult({
+        success: true,
+        path: resolvedPath,
+        op: beforeExists ? 'modify' : 'create'
+      })
     }
   }
 
@@ -2361,6 +2383,7 @@ function buildToolHandlers(): Record<string, ToolHandler> {
           }
         }
       } catch {
+        // fall through to local grep
       }
 
       const regex = new RegExp(String(input.pattern ?? ''), 'i')
@@ -2538,6 +2561,103 @@ function buildToolHandlers(): Record<string, ToolHandler> {
     }
   }
 
+  // ── Plugin channel messaging tools (issue #73) ──
+  // When a cron job has pluginId + pluginChatId, the agent should be able to
+  // call PluginSendMessage / PluginReplyMessage directly instead of relying
+  // solely on Notify's implicit routing.
+
+  const pluginSendMessageHandler: ToolHandler = {
+    definition: {
+      name: 'PluginSendMessage',
+      description:
+        'Send a message to a chat/group via a messaging channel (Feishu, DingTalk, WeChat, etc.).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          plugin_id: { type: 'string', description: 'The channel instance ID to use' },
+          chat_id: { type: 'string', description: 'The chat/group ID to send the message to' },
+          content: { type: 'string', description: 'The message content to send' }
+        },
+        required: ['plugin_id', 'chat_id', 'content']
+      }
+    },
+    execute: async (input, ctx) => {
+      const pluginId = String(input.plugin_id ?? ctx.pluginId ?? '')
+      const chatId = String(input.chat_id ?? ctx.pluginChatId ?? '')
+      const content = String(input.content ?? '')
+      if (!pluginId || !chatId || !content) {
+        return encodeToolError('plugin_id, chat_id and content are required')
+      }
+      // Delivery-once guard
+      if (ctx.callerAgent === 'CronAgent' && ctx.sharedState?.deliveryUsed) {
+        return encodeStructuredToolResult({
+          success: true,
+          skipped: true,
+          reason: 'Already delivered results this run. Only one delivery call is allowed.'
+        })
+      }
+      if (ctx.callerAgent === 'CronAgent' && ctx.sharedState) {
+        ctx.sharedState.deliveryUsed = true
+      }
+      try {
+        const result = await executePluginAction({
+          pluginId,
+          action: 'sendMessage',
+          params: { chatId, content }
+        })
+        return encodeStructuredToolResult(result)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return encodeToolError(`PluginSendMessage failed: ${msg}`)
+      }
+    }
+  }
+
+  const pluginReplyMessageHandler: ToolHandler = {
+    definition: {
+      name: 'PluginReplyMessage',
+      description: 'Reply to a specific message via a messaging channel.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          plugin_id: { type: 'string', description: 'The channel instance ID to use' },
+          message_id: { type: 'string', description: 'The message ID to reply to' },
+          content: { type: 'string', description: 'The reply content' }
+        },
+        required: ['plugin_id', 'message_id', 'content']
+      }
+    },
+    execute: async (input, ctx) => {
+      const pluginId = String(input.plugin_id ?? ctx.pluginId ?? '')
+      const messageId = String(input.message_id ?? '')
+      const content = String(input.content ?? '')
+      if (!pluginId || !messageId || !content) {
+        return encodeToolError('plugin_id, message_id and content are required')
+      }
+      if (ctx.callerAgent === 'CronAgent' && ctx.sharedState?.deliveryUsed) {
+        return encodeStructuredToolResult({
+          success: true,
+          skipped: true,
+          reason: 'Already delivered results this run. Only one delivery call is allowed.'
+        })
+      }
+      if (ctx.callerAgent === 'CronAgent' && ctx.sharedState) {
+        ctx.sharedState.deliveryUsed = true
+      }
+      try {
+        const result = await executePluginAction({
+          pluginId,
+          action: 'replyMessage',
+          params: { messageId, content }
+        })
+        return encodeStructuredToolResult(result)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return encodeToolError(`PluginReplyMessage failed: ${msg}`)
+      }
+    }
+  }
+
   return {
     Read: readHandler,
     Write: writeHandler,
@@ -2546,7 +2666,9 @@ function buildToolHandlers(): Record<string, ToolHandler> {
     Glob: globHandler,
     Grep: grepHandler,
     Bash: bashHandler,
-    Notify: notifyHandler
+    Notify: notifyHandler,
+    PluginSendMessage: pluginSendMessageHandler,
+    PluginReplyMessage: pluginReplyMessageHandler
   }
 }
 
@@ -2905,7 +3027,13 @@ function loadJobSnapshot(jobId: string): {
   id: string
   sessionId: string | null
   name: string
-  schedule: { kind: 'at' | 'every' | 'cron'; at: number | null; every: number | null; expr: string | null; tz: string }
+  schedule: {
+    kind: 'at' | 'every' | 'cron'
+    at: number | null
+    every: number | null
+    expr: string | null
+    tz: string
+  }
   prompt: string
   agentId: string | null
   model: string | null
@@ -3168,11 +3296,11 @@ async function runCronAgentInternal(
 
   const channelInfo =
     pluginId && pluginChatId
-      ? `\n## Channel Reply Routing\nThis cron job was created from plugin channel \`${pluginId}\`.\nChat ID: \`${pluginChatId}\`\nWhen you have results to report, use **Notify**. It will automatically route to the original plugin channel.`
+      ? `\n## Channel Reply Routing\nThis cron job was created from plugin channel \`${pluginId}\`.\nChat ID: \`${pluginChatId}\`\nWhen you have results to report, use **PluginSendMessage** with plugin_id="${pluginId}" and chat_id="${pluginChatId}" to send the results back through the channel. Alternatively, **Notify** will also route to the channel automatically.`
       : ''
   const deliveryInstructions =
     pluginId && pluginChatId
-      ? 'When finished, call **Notify** EXACTLY ONCE to send a friendly result summary back through the original plugin channel. After calling Notify, STOP.'
+      ? `When finished, call **PluginSendMessage** EXACTLY ONCE with plugin_id="${pluginId}" and chat_id="${pluginChatId}" to send a friendly result summary back through the channel. After sending, STOP.`
       : 'When finished, call **Notify** EXACTLY ONCE to send a friendly desktop result summary. After calling Notify, STOP.'
 
   const cronContext = `You are a scheduled task assistant running cron job (ID: ${jobId}).\nAgent: ${definition.name}\n${deliveryTarget ? `Target session: ${deliveryTarget}` : ''}${channelInfo}\n\n## Your Task\n${prompt}\n\n## Delivery Instructions\n${deliveryInstructions}\n\nMatch the language of the task prompt in your delivery message (Chinese task → Chinese reply, English task → English reply). Be concise and friendly.\n\nBegin working on this task now.`

@@ -31,41 +31,16 @@ interface MessageItemProps {
   hiddenToolUseIds?: Set<string>
 }
 
-function getToolUseInputSignal(input: Record<string, unknown>): string {
-  const entries = Object.entries(input)
-  if (entries.length === 0) return '0'
-
-  return entries
-    .map(([key, value]) => {
-      if (typeof value === 'string') return `${key}:s:${value.length}:${value.slice(-24)}`
-      if (typeof value === 'number') return `${key}:n:${value}`
-      if (typeof value === 'boolean') return `${key}:b:${value ? 1 : 0}`
-      if (Array.isArray(value)) return `${key}:a:${value.length}`
-      if (value && typeof value === 'object') {
-        return `${key}:o:${Object.keys(value as Record<string, unknown>).length}`
-      }
-      return `${key}:${typeof value}`
-    })
-    .join('|')
-}
-
-function getContentSignal(content: UnifiedMessage['content']): string {
-  if (typeof content === 'string') return `s:${content.length}:${content.slice(-32)}`
-  const last = content[content.length - 1]
-  if (!last) return 'a:0'
-  if (last.type === 'text') return `a:${content.length}:t:${last.text.length}:${last.text.slice(-32)}`
-  if (last.type === 'thinking') {
-    return `a:${content.length}:h:${last.thinking.length}:${last.completedAt ?? 0}`
-  }
-  if (last.type === 'tool_use') {
-    return `a:${content.length}:u:${last.id}:${getToolUseInputSignal(last.input)}`
-  }
-  if (last.type === 'tool_result') {
-    return `a:${content.length}:r:${last.toolUseId}:${typeof last.content === 'string' ? last.content.length : last.content.length}`
-  }
-  if (last.type === 'image_error') return `a:${content.length}:e:${last.code}:${last.message.length}`
-  if (last.type === 'agent_error') return `a:${content.length}:ae:${last.code}:${last.message.length}`
-  return `a:${content.length}:i:${last.source.type}:${last.source.url ?? last.source.data?.length ?? 0}`
+// NOTE: getContentSignal / getToolUseInputSignal used to be called by areEqual for
+// every render, scanning the tail of each message's content on every memo check. With
+// multiple agents streaming in parallel that turned into a hot path (N messages × deep
+// scans × RAF tick). The store now stamps a monotonic `_revision` counter on any message
+// it mutates (bumpMessageRevision in chat-store.ts), so areEqual can do a single integer
+// compare instead. These helpers are kept only for messages that somehow arrive without
+// a _revision (e.g. legacy DB rows loaded before the field existed).
+function getContentFallbackSignal(content: UnifiedMessage['content']): string {
+  if (typeof content === 'string') return `s:${content.length}`
+  return `a:${content.length}`
 }
 
 function formatTime(ts: number): string {
@@ -213,6 +188,39 @@ function areToolResultsEqual(
 }
 
 function areEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
+  // Fast path: same object reference => nothing to compare.
+  if (prev.message === next.message) {
+    return (
+      prev.messageId === next.messageId &&
+      prev.isStreaming === next.isStreaming &&
+      prev.isLastUserMessage === next.isLastUserMessage &&
+      prev.isLastAssistantMessage === next.isLastAssistantMessage &&
+      prev.showContinue === next.showContinue &&
+      prev.disableAnimation === next.disableAnimation &&
+      prev.onRetryAssistantMessage === next.onRetryAssistantMessage &&
+      prev.onContinueAssistantMessage === next.onContinueAssistantMessage &&
+      prev.onEditUserMessage === next.onEditUserMessage &&
+      prev.onDeleteMessage === next.onDeleteMessage &&
+      areToolResultsEqual(prev.toolResults, next.toolResults) &&
+      prev.liveToolCallMap === next.liveToolCallMap &&
+      prev.renderMode === next.renderMode &&
+      prev.orchestrationRun === next.orchestrationRun &&
+      prev.hiddenToolUseIds === next.hiddenToolUseIds
+    )
+  }
+
+  // Revision-based equality: any mutation to the message in chat-store bumps _revision,
+  // so comparing (_revision, usage-revision, id) is sufficient without scanning content.
+  const prevRev = prev.message._revision
+  const nextRev = next.message._revision
+  const bothHaveRevision = prevRev !== undefined && nextRev !== undefined
+
+  const contentEqual = bothHaveRevision
+    ? prevRev === nextRev
+    : getContentFallbackSignal(prev.message.content) ===
+      getContentFallbackSignal(next.message.content)
+
+  // Usage signature still needs a structural compare (small object, cheap).
   const prevUsageSignal = prev.message.usage
     ? `${prev.message.usage.inputTokens}:${prev.message.usage.billableInputTokens ?? ''}:${prev.message.usage.outputTokens}:${prev.message.usage.cacheCreationTokens ?? 0}:${prev.message.usage.cacheCreation5mTokens ?? 0}:${prev.message.usage.cacheCreation1hTokens ?? 0}:${prev.message.usage.cacheReadTokens ?? 0}:${prev.message.usage.reasoningTokens ?? 0}:${prev.message.usage.totalDurationMs ?? 0}`
     : ''
@@ -234,7 +242,7 @@ function areEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
     prev.message.role === next.message.role &&
     prev.message.createdAt === next.message.createdAt &&
     prev.message.source === next.message.source &&
-    getContentSignal(prev.message.content) === getContentSignal(next.message.content) &&
+    contentEqual &&
     prevUsageSignal === nextUsageSignal &&
     areToolResultsEqual(prev.toolResults, next.toolResults) &&
     prev.liveToolCallMap === next.liveToolCallMap &&

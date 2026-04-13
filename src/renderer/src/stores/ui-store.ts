@@ -169,6 +169,8 @@ interface UIStore {
   closeTasksPage: () => void
   shortcutsOpen: boolean
   setShortcutsOpen: (open: boolean) => void
+  changelogDialogOpen: boolean
+  setChangelogDialogOpen: (open: boolean) => void
   conversationGuideOpen: boolean
   setConversationGuideOpen: (open: boolean) => void
   pendingInsertText: string | null
@@ -408,6 +410,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
   closeTasksPage: () => set({ tasksPageOpen: false }),
   shortcutsOpen: false,
   setShortcutsOpen: (open) => set({ shortcutsOpen: open }),
+  changelogDialogOpen: false,
+  setChangelogDialogOpen: (open) => set({ changelogDialogOpen: open }),
   conversationGuideOpen: false,
   setConversationGuideOpen: (open) => set({ conversationGuideOpen: open }),
   pendingInsertText: null,

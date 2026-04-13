@@ -745,7 +745,7 @@ export function registerFsHandlers(): void {
           beforeText,
           afterText: args.content
         })
-        return { success: true }
+        return { success: true, op: beforeExists ? 'modify' : 'create' }
       } catch (err) {
         return { error: String(err) }
       }

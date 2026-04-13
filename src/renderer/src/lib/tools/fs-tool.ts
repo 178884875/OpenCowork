@@ -260,7 +260,13 @@ const writeHandler: ToolHandler = {
         sshWriteArgs(ctx, resolvedPath, input.content, 'Write')
       )
       if (isErrorResult(result)) throw new Error(`Write failed: ${result.error}`)
-      return encodeStructuredToolResult({ success: true, path: resolvedPath })
+      return encodeStructuredToolResult({
+        success: true,
+        path: resolvedPath,
+        ...(result && typeof result === 'object' && 'op' in result && typeof result.op === 'string'
+          ? { op: result.op }
+          : {})
+      })
     }
     const result = await ctx.ipc.invoke(
       IPC.FS_WRITE_FILE,
@@ -270,7 +276,13 @@ const writeHandler: ToolHandler = {
       throw new Error(`Write failed: ${result.error}`)
     }
 
-    return encodeStructuredToolResult({ success: true, path: resolvedPath })
+    return encodeStructuredToolResult({
+      success: true,
+      path: resolvedPath,
+      ...(result && typeof result === 'object' && 'op' in result && typeof result.op === 'string'
+        ? { op: result.op }
+        : {})
+    })
   },
   requiresApproval: (input, ctx) => {
     const filePath = resolveToolPath(input.file_path, ctx.workingFolder)
@@ -325,9 +337,7 @@ const editHandler: ToolHandler = {
     }
 
     const readCh = isSsh(ctx) ? IPC.SSH_FS_READ_FILE : IPC.FS_READ_FILE
-    const readArgs = isSsh(ctx)
-      ? sshArgs(ctx, { path: resolvedPath })
-      : { path: resolvedPath }
+    const readArgs = isSsh(ctx) ? sshArgs(ctx, { path: resolvedPath }) : { path: resolvedPath }
     const contentResult = await ctx.ipc.invoke(readCh, readArgs)
     if (isErrorResult(contentResult)) {
       return encodeToolError(`Read failed: ${contentResult.error}`)

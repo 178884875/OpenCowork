@@ -60,7 +60,8 @@ import {
   AlertDialogTitle
 } from '@renderer/components/ui/alert-dialog'
 import { toast } from 'sonner'
-import { useChatStore, type SessionMode } from '@renderer/stores/chat-store'
+import { useStoreWithEqualityFn } from 'zustand/traditional'
+import { useChatStore, type SessionMode, type Session } from '@renderer/stores/chat-store'
 import { useProviderStore } from '@renderer/stores/provider-store'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { useAgentStore } from '@renderer/stores/agent-store'
@@ -90,40 +91,61 @@ interface SessionListItem {
   pluginId?: string
 }
 
+// Shallow-equality check across the sidebar-visible fields. Invoked by Zustand on every
+// chat-store mutation; returns true when nothing the sidebar cares about has changed,
+// causing the hook to skip rendering. This replaces the previous approach of building a
+// pipe-joined digest string per mutation.
+function areSessionListsEqualForSidebar(a: Session[], b: Session[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x === y) continue
+    if (
+      x.id !== y.id ||
+      x.title !== y.title ||
+      x.icon !== y.icon ||
+      x.mode !== y.mode ||
+      x.createdAt !== y.createdAt ||
+      x.updatedAt !== y.updatedAt ||
+      !!x.pinned !== !!y.pinned ||
+      x.messageCount !== y.messageCount ||
+      !!x.messagesLoaded !== !!y.messagesLoaded ||
+      x.pluginId !== y.pluginId
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
 export function AppSidebar(): React.JSX.Element {
   const { t } = useTranslation('layout')
-  const sessionDigest = useChatStore((s) =>
-    s.sessions
-      .map((session) =>
-        [
-          session.id,
-          session.title,
-          session.icon ?? '',
-          session.mode,
-          session.createdAt,
-          session.updatedAt,
-          session.pinned ? 1 : 0,
-          session.messageCount,
-          session.messagesLoaded ? 1 : 0,
-          session.pluginId ?? ''
-        ].join('|')
-      )
-      .join('¦')
+  // Subscribe to the raw sessions array, but short-circuit re-renders via a custom shallow
+  // comparator over the fields actually displayed in the sidebar. message content churn
+  // (which bumps session object identity through Immer path-copy) no longer triggers
+  // sidebar re-renders because messageCount/updatedAt/etc. are untouched by delta flushes.
+  const sessionsRaw = useStoreWithEqualityFn(
+    useChatStore,
+    (s) => s.sessions,
+    areSessionListsEqualForSidebar
   )
-  const sessions = useMemo<SessionListItem[]>(() => {
-    void sessionDigest
-    return useChatStore.getState().sessions.map((session) => ({
-      id: session.id,
-      title: session.title,
-      icon: session.icon,
-      mode: session.mode,
-      createdAt: session.createdAt,
-      updatedAt: session.updatedAt,
-      pinned: session.pinned,
-      messageCount: session.messageCount,
-      pluginId: session.pluginId
-    }))
-  }, [sessionDigest])
+  const sessions = useMemo<SessionListItem[]>(
+    () =>
+      sessionsRaw.map((session) => ({
+        id: session.id,
+        title: session.title,
+        icon: session.icon,
+        mode: session.mode,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        pinned: session.pinned,
+        messageCount: session.messageCount,
+        pluginId: session.pluginId
+      })),
+    [sessionsRaw]
+  )
   const activeSessionId = useChatStore((s) => s.activeSessionId)
   const streamingSessionIdsSig = useChatStore((s) => Object.keys(s.streamingMessages).sort().join('\u0000'))
   const createSession = useChatStore((s) => s.createSession)

@@ -166,30 +166,26 @@ export function MessageList({
   onDeleteMessage
 }: MessageListProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  const {
-    activeSessionId: currentActiveSessionId,
-    targetSessionId,
-    streamingMessageId,
-    activeSessionLoaded,
-    activeSessionMessageCount,
-    activeWorkingFolder,
-    loadedRangeStart,
-    messages
-  } = useChatStore(
-    useShallow((s) => {
-      const targetSessionId = sessionId ?? s.activeSessionId
-      const targetSession = s.sessions.find((session) => session.id === targetSessionId)
-      return {
-        activeSessionId: s.activeSessionId,
-        targetSessionId,
-        streamingMessageId: targetSessionId ? (s.streamingMessages[targetSessionId] ?? null) : null,
-        activeSessionLoaded: targetSession?.messagesLoaded ?? true,
-        activeSessionMessageCount: targetSession?.messageCount ?? 0,
-        activeWorkingFolder: targetSession?.workingFolder,
-        loadedRangeStart: targetSession?.loadedRangeStart ?? 0,
-        messages: targetSession?.messages ?? EMPTY_MESSAGES
-      }
-    })
+  // Split the monolithic `useShallow` selector into narrow per-field selectors. Each one
+  // compares with Object.is, so unrelated session mutations no longer rerun selectors on
+  // every RAF flush. The `messages` ref specifically only advances when THIS session's
+  // messages slice gets replaced in chat-store (which happens on any content mutation
+  // for the target session). This is what lets React.memo on MessageItem actually kick
+  // in when other sessions are streaming in parallel.
+  const currentActiveSessionId = useChatStore((s) => s.activeSessionId)
+  const targetSessionId = sessionId ?? currentActiveSessionId
+  const targetSession = useChatStore((s) => {
+    if (!targetSessionId) return undefined
+    const idx = s.sessionsById[targetSessionId]
+    return idx === undefined ? undefined : s.sessions[idx]
+  })
+  const messages = targetSession?.messages ?? EMPTY_MESSAGES
+  const activeSessionLoaded = targetSession?.messagesLoaded ?? true
+  const activeSessionMessageCount = targetSession?.messageCount ?? 0
+  const activeWorkingFolder = targetSession?.workingFolder
+  const loadedRangeStart = targetSession?.loadedRangeStart ?? 0
+  const streamingMessageId = useChatStore((s) =>
+    targetSessionId ? (s.streamingMessages[targetSessionId] ?? null) : null
   )
   const activeSessionId = targetSessionId
   const isMainChatSession = !sessionId && Boolean(activeSessionId) && activeSessionId === currentActiveSessionId
@@ -453,6 +449,11 @@ export function MessageList({
 
   React.useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return
+    // Background sessions (mini window, search preview, non-active chats) don't need a
+    // ResizeObserver at all — they never perform streaming auto-scroll. Previously we
+    // still created one per mounted MessageList, so N background chats + main chat meant
+    // N ResizeObserver callbacks competing for the same RAF budget during streaming.
+    if (!isMainChatSession) return
 
     const observer = new ResizeObserver(() => {
       if (!canSessionTriggerStreamingAutoScroll || !isAtStreamingBottom()) return
@@ -465,7 +466,12 @@ export function MessageList({
       observer.disconnect()
       resizeObserverRef.current = null
     }
-  }, [canSessionTriggerStreamingAutoScroll, isAtStreamingBottom, requestScrollToBottom])
+  }, [
+    isMainChatSession,
+    canSessionTriggerStreamingAutoScroll,
+    isAtStreamingBottom,
+    requestScrollToBottom
+  ])
 
   React.useEffect(() => {
     updateResizeObserver()

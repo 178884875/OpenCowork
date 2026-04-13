@@ -283,6 +283,16 @@ function normalizeContinuationErrorMessage(message: string): string {
   return withoutProviderPrefix || withoutHttpPrefix || trimmed
 }
 
+function shouldSuppressTransientRuntimeError(message: string | null | undefined): boolean {
+  const normalized = message?.trim()
+  if (!normalized) return false
+
+  return (
+    /CancellationTokenSource has been disposed/i.test(normalized) ||
+    (/Cannot access a disposed object\./i.test(normalized) && /CancellationTokenSource/i.test(normalized))
+  )
+}
+
 function reconcileSubAgentCompletionFromTaskToolCall(
   sessionId: string,
   toolCall: ToolCallState
@@ -3063,6 +3073,9 @@ export function useChatActions(): {
                 streamDeltaBuffer.flushNow()
                 const errorMessage = normalizeContinuationErrorMessage(event.error.message)
                 console.error('[Agent Loop Error]', event.error)
+                if (shouldSuppressTransientRuntimeError(errorMessage)) {
+                  break
+                }
                 toast.error('Agent Error', { description: errorMessage })
                 if (!isSessionForeground(sessionId!)) {
                   const sessionTitle =
@@ -3095,19 +3108,21 @@ export function useChatActions(): {
               err instanceof Error ? err.message : String(err)
             )
             console.error('[Agent Loop Exception]', err)
-            toast.error('Agent failed', { description: errMsg })
-            if (!isSessionForeground(sessionId!)) {
-              const sessionTitle =
-                useChatStore.getState().sessions.find((item) => item.id === sessionId)?.title ??
-                '后台会话'
-              useBackgroundSessionStore.getState().addInboxItem({
-                sessionId: sessionId!,
-                type: 'error',
-                title: '运行错误',
-                description: `${sessionTitle} · ${errMsg}`
-              })
+            if (!shouldSuppressTransientRuntimeError(errMsg)) {
+              toast.error('Agent failed', { description: errMsg })
+              if (!isSessionForeground(sessionId!)) {
+                const sessionTitle =
+                  useChatStore.getState().sessions.find((item) => item.id === sessionId)?.title ??
+                  '后台会话'
+                useBackgroundSessionStore.getState().addInboxItem({
+                  sessionId: sessionId!,
+                  type: 'error',
+                  title: '运行错误',
+                  description: `${sessionTitle} · ${errMsg}`
+                })
+              }
+              appendRuntimeTextDelta(sessionId!, assistantMsgId, `\n\n> **Error:** ${errMsg}`)
             }
-            appendRuntimeTextDelta(sessionId!, assistantMsgId, `\n\n> **Error:** ${errMsg}`)
             if (err instanceof ApiStreamError) {
               setLastDebugInfo(assistantMsgId, err.debugInfo as RequestDebugInfo)
             }
@@ -3496,12 +3511,14 @@ export function useChatActions(): {
           ? normalizeContinuationErrorMessage(rawMessage.replace(/^.*?(\{.*\})\s*$/s, '$1'))
           : normalizedMessage
       console.error('[Continue Tool Execution]', err)
-      toast.error('继续执行失败', { description: apiErrorDetail })
-      appendRuntimeTextDelta(
-        sessionId,
-        resumedAssistantMessageId,
-        `\n\n> **Error:** ${apiErrorDetail}`
-      )
+      if (!shouldSuppressTransientRuntimeError(apiErrorDetail)) {
+        toast.error('继续执行失败', { description: apiErrorDetail })
+        appendRuntimeTextDelta(
+          sessionId,
+          resumedAssistantMessageId,
+          `\n\n> **Error:** ${apiErrorDetail}`
+        )
+      }
     } finally {
       if (!handedOffToSendMessage) {
         if (useChatStore.getState().streamingMessages[sessionId] === resumedAssistantMessageId) {
@@ -4152,6 +4169,9 @@ async function runSimpleChat(
           streamDeltaBuffer.flushNow()
           const errorMessage = event.error?.message ?? 'Unknown error'
           console.error('[Chat Error]', event.error)
+          if (shouldSuppressTransientRuntimeError(errorMessage)) {
+            break
+          }
           toast.error('Chat Error', { description: errorMessage })
           if (!isSessionForeground(sessionId)) {
             const sessionTitle =
@@ -4173,19 +4193,21 @@ async function runSimpleChat(
     if (!signal.aborted) {
       const errMsg = err instanceof Error ? err.message : String(err)
       console.error('[Chat Exception]', err)
-      toast.error('Chat failed', { description: errMsg })
-      if (!isSessionForeground(sessionId)) {
-        const sessionTitle =
-          useChatStore.getState().sessions.find((item) => item.id === sessionId)?.title ??
-          '后台会话'
-        useBackgroundSessionStore.getState().addInboxItem({
-          sessionId,
-          type: 'error',
-          title: '运行错误',
-          description: `${sessionTitle} · ${errMsg}`
-        })
+      if (!shouldSuppressTransientRuntimeError(errMsg)) {
+        toast.error('Chat failed', { description: errMsg })
+        if (!isSessionForeground(sessionId)) {
+          const sessionTitle =
+            useChatStore.getState().sessions.find((item) => item.id === sessionId)?.title ??
+            '后台会话'
+          useBackgroundSessionStore.getState().addInboxItem({
+            sessionId,
+            type: 'error',
+            title: '运行错误',
+            description: `${sessionTitle} · ${errMsg}`
+          })
+        }
+        appendRuntimeTextDelta(sessionId, assistantMsgId, `\n\n> **Error:** ${errMsg}`)
       }
-      appendRuntimeTextDelta(sessionId, assistantMsgId, `\n\n> **Error:** ${errMsg}`)
       if (err instanceof ApiStreamError) {
         setLastDebugInfo(assistantMsgId, {
           ...(err.debugInfo as RequestDebugInfo),

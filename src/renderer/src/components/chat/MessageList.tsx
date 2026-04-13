@@ -2,14 +2,7 @@ import * as React from 'react'
 import { type VListHandle, VList } from 'virtua'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import {
-  MessageSquare,
-  CircleHelp,
-  Briefcase,
-  Code2,
-  ShieldCheck,
-  ArrowDown
-} from 'lucide-react'
+import { MessageSquare, CircleHelp, Briefcase, Code2, ShieldCheck, ArrowDown } from 'lucide-react'
 import type { ToolResultContent, UnifiedMessage } from '@renderer/lib/api/types'
 import { useChatStore } from '@renderer/stores/chat-store'
 import { useUIStore } from '@renderer/stores/ui-store'
@@ -60,6 +53,7 @@ interface MessageListProps {
   onContinue?: () => void
   onEditUserMessage?: (messageId: string, draft: EditableUserMessageDraft) => void
   onDeleteMessage?: (messageId: string) => void
+  exportAll?: boolean
 }
 
 type RenderableMessage = ChatRenderableMessageMeta
@@ -158,13 +152,15 @@ const VirtualMessageRow = React.memo(function VirtualMessageRow({
   )
 })
 
-export function MessageList({
-  sessionId,
-  onRetry,
-  onContinue,
-  onEditUserMessage,
-  onDeleteMessage
-}: MessageListProps): React.JSX.Element {
+export function MessageList(props: MessageListProps): React.JSX.Element {
+  const {
+    sessionId,
+    onRetry,
+    onContinue,
+    onEditUserMessage,
+    onDeleteMessage,
+    exportAll = false
+  } = props
   const { t } = useTranslation('chat')
   // Split the monolithic `useShallow` selector into narrow per-field selectors. Each one
   // compares with Object.is, so unrelated session mutations no longer rerun selectors on
@@ -188,7 +184,8 @@ export function MessageList({
     targetSessionId ? (s.streamingMessages[targetSessionId] ?? null) : null
   )
   const activeSessionId = targetSessionId
-  const isMainChatSession = !sessionId && Boolean(activeSessionId) && activeSessionId === currentActiveSessionId
+  const isMainChatSession =
+    !sessionId && Boolean(activeSessionId) && activeSessionId === currentActiveSessionId
   const mode = useUIStore((s) => s.mode)
   const hasStreamingMessage = useChatStore((s) =>
     activeSessionId ? Boolean(s.streamingMessages[activeSessionId]) : false
@@ -203,7 +200,8 @@ export function MessageList({
   const { activeTeam, teamHistory } = useTeamStore(
     useShallow((s) => ({ activeTeam: s.activeTeam, teamHistory: s.teamHistory }))
   )
-  const isSessionRunning = useAgentStore((s) => s.isSessionActive(activeSessionId)) || hasStreamingMessage
+  const isSessionRunning =
+    useAgentStore((s) => s.isSessionActive(activeSessionId)) || hasStreamingMessage
   const canSessionTriggerStreamingAutoScroll = isMainChatSession && isSessionRunning
 
   // Keep a stable snapshot of messages that only advances when NOT streaming.
@@ -288,7 +286,6 @@ export function MessageList({
         : EMPTY_ORCHESTRATION_STATE,
     // `messages` intentionally excluded: orchestration only changes at tool
     // boundaries (non-streaming), so stableMessagesRef.current is sufficient.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       activeSessionId,
       activeSubAgents,
@@ -480,7 +477,8 @@ export function MessageList({
   const loadOlderMessages = React.useCallback(async (): Promise<void> => {
     if (!activeSessionId || olderUnloadedMessageCount === 0 || isAutoLoadingOlderRef.current) return
     const ref = listRef.current
-    const anchorElement = containerRef.current?.querySelector<HTMLElement>('[data-message-id]') ?? null
+    const anchorElement =
+      containerRef.current?.querySelector<HTMLElement>('[data-message-id]') ?? null
     preserveScrollOnPrependRef.current = ref
       ? {
           offset: ref.scrollOffset,
@@ -491,7 +489,9 @@ export function MessageList({
       : null
     isAutoLoadingOlderRef.current = true
     try {
-      await useChatStore.getState().loadOlderSessionMessages(activeSessionId, LOAD_MORE_MESSAGE_STEP)
+      await useChatStore
+        .getState()
+        .loadOlderSessionMessages(activeSessionId, LOAD_MORE_MESSAGE_STEP)
     } finally {
       isAutoLoadingOlderRef.current = false
     }
@@ -512,7 +512,10 @@ export function MessageList({
   React.useEffect(() => {
     if (!activeSessionId) return
     const viewportHeight = containerRef.current?.clientHeight ?? window.innerHeight ?? 0
-    const estimatedLimit = Math.max(5, Math.ceil(viewportHeight / INITIAL_MESSAGE_ESTIMATED_HEIGHT) + 2)
+    const estimatedLimit = Math.max(
+      5,
+      Math.ceil(viewportHeight / INITIAL_MESSAGE_ESTIMATED_HEIGHT) + 2
+    )
     void useChatStore.getState().loadRecentSessionMessages(activeSessionId, false, estimatedLimit)
   }, [activeSessionId])
 
@@ -536,7 +539,14 @@ export function MessageList({
     }
 
     pendingInitialScrollSessionIdRef.current = null
-  }, [activeSessionId, isSessionRunning, messages.length, requestScrollToBottom, streamingMessageId, syncBottomState])
+  }, [
+    activeSessionId,
+    isSessionRunning,
+    messages.length,
+    requestScrollToBottom,
+    streamingMessageId,
+    syncBottomState
+  ])
 
   React.useLayoutEffect(() => {
     const pending = preserveScrollOnPrependRef.current
@@ -655,19 +665,29 @@ export function MessageList({
           <div className="rounded-2xl bg-muted/40 p-4">{hint.icon}</div>
           <div>
             <p className="text-base font-semibold text-foreground/80">{t(hint.titleKey)}</p>
-            <p className="mt-1.5 max-w-[320px] text-sm text-muted-foreground/60">{t(hint.descKey)}</p>
+            <p className="mt-1.5 max-w-[320px] text-sm text-muted-foreground/60">
+              {t(hint.descKey)}
+            </p>
           </div>
         </div>
         <div className="flex max-w-[400px] flex-wrap justify-center gap-2">
           {(mode === 'chat'
-            ? [t('messageList.explainAsync'), t('messageList.compareRest'), t('messageList.writeRegex')]
+            ? [
+                t('messageList.explainAsync'),
+                t('messageList.compareRest'),
+                t('messageList.writeRegex')
+              ]
             : activeWorkingFolder
               ? [
                   t('messageList.summarizeProject'),
                   t('messageList.findBugs'),
                   t('messageList.addErrorHandling')
                 ]
-              : [t('messageList.reviewCodebase'), t('messageList.addTests'), t('messageList.refactorError')]
+              : [
+                  t('messageList.reviewCodebase'),
+                  t('messageList.addTests'),
+                  t('messageList.refactorError')
+                ]
           ).map((prompt) => (
             <button
               key={prompt}
@@ -677,6 +697,44 @@ export function MessageList({
               {prompt}
             </button>
           ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (exportAll) {
+    return (
+      <div ref={containerRef} className="relative flex-1" data-message-list>
+        <div data-message-content>
+          {renderableMessages.map((row, rowIndex) => {
+            const message = messageLookup.get(row.messageId)
+            if (!message) return null
+
+            return (
+              <VirtualMessageRow
+                key={row.messageId}
+                rowIndex={rowIndex}
+                message={message}
+                isStreaming={streamingMessageId === row.messageId}
+                isLastUserMessage={row.isLastUserMessage}
+                isLastAssistantMessage={row.isLastAssistantMessage}
+                showContinue={row.showContinue}
+                disableAnimation
+                toolResults={toolResultsLookup.get(row.messageId)}
+                orchestrationRun={
+                  orchestrationState.byMessageId.get(row.messageId)?.primaryRun ?? null
+                }
+                hiddenToolUseIds={
+                  orchestrationState.byMessageId.get(row.messageId)?.hiddenToolUseIds
+                }
+                anchorMessageId={null}
+                onRetry={onRetry}
+                onContinue={onContinue}
+                onEditUserMessage={onEditUserMessage}
+                onDeleteMessage={onDeleteMessage}
+              />
+            )
+          })}
         </div>
       </div>
     )
@@ -703,7 +761,8 @@ export function MessageList({
                       className="rounded-md border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
                       onClick={() => void loadOlderMessages()}
                     >
-                      {t('messageList.loadMoreMessages', { defaultValue: '加载更早消息' })} ({olderUnloadedMessageCount})
+                      {t('messageList.loadMoreMessages', { defaultValue: '加载更早消息' })} (
+                      {olderUnloadedMessageCount})
                     </button>
                   </div>
                 </div>

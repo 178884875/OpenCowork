@@ -53,7 +53,7 @@ import { toast } from 'sonner'
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
 import { IPC } from '@renderer/lib/ipc/channels'
 import { sessionToMarkdown } from '@renderer/lib/utils/export-chat'
-import { writeImageBlobToClipboard } from '@renderer/lib/utils/image-clipboard'
+import { dataUrlToBlob, writeImageBlobToClipboard } from '@renderer/lib/utils/image-clipboard'
 import { AnimatePresence, motion } from 'motion/react'
 import { PageTransition, PanelTransition } from '@renderer/components/animate-ui'
 import { useShallow } from 'zustand/react/shallow'
@@ -207,6 +207,7 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
 
   const [copiedAll, setCopiedAll] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [exportRendering, setExportRendering] = useState(false)
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
 
   const runningSubAgentNamesSig = useAgentStore((s) => s.runningSubAgentNamesSig)
@@ -641,37 +642,73 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
   }
 
   const handleExportImage = async (): Promise<void> => {
-    const node = document.querySelector('[data-message-content]') as HTMLElement | null
     const session = useChatStore.getState().sessions.find((s) => s.id === activeSessionId)
-    if (!node || !session) return
+    if (!session || !activeSessionId) return
     setExporting(true)
 
+    const styleEl = document.createElement('style')
+    styleEl.setAttribute('data-export-image', '')
+    styleEl.textContent = `
+      [data-message-content] * {
+        max-width: 100% !important;
+        overflow-wrap: break-word !important;
+        word-break: break-word !important;
+      }
+      [data-message-content] pre,
+      [data-message-content] code {
+        white-space: pre-wrap !important;
+        word-break: break-all !important;
+      }
+      [data-message-content] table {
+        table-layout: fixed !important;
+        width: 100% !important;
+      }
+      [data-message-content] img,
+      [data-message-content] svg {
+        max-width: 100% !important;
+        height: auto !important;
+      }
+    `
+    document.head.appendChild(styleEl)
+
     try {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      await useChatStore.getState().loadSessionMessages(activeSessionId, true)
+      setExportRendering(true)
 
-      const rect = node.getBoundingClientRect()
-      const captureResult = (await ipcClient.invoke(IPC.WINDOW_CAPTURE_REGION, {
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height
-      })) as {
-        data?: string
-        mediaType?: string
-        error?: string
-      }
-
-      if (captureResult.error || !captureResult.data) {
-        throw new Error(captureResult.error || 'Window capture failed')
-      }
-
-      const blob = new Blob([
-        Uint8Array.from(atob(captureResult.data), (char) => char.charCodeAt(0))
-      ], {
-        type: captureResult.mediaType || 'image/png'
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => resolve())
+        })
       })
 
-      await writeImageBlobToClipboard(blob)
+      const node = document.querySelector('[data-message-content]') as HTMLElement | null
+      if (!node) {
+        throw new Error('Export target not found')
+      }
+
+      const bgRaw = getComputedStyle(document.documentElement)
+        .getPropertyValue('--background')
+        .trim()
+      const bgColor = bgRaw ? `hsl(${bgRaw})` : '#ffffff'
+      const { toPng } = await import('html-to-image')
+      const captureWidth = node.clientWidth
+      const captureHeight = Math.max(node.scrollHeight, node.offsetHeight)
+      const dataUrl = await toPng(node, {
+        backgroundColor: bgColor,
+        pixelRatio: 2,
+        width: captureWidth,
+        height: captureHeight,
+        canvasWidth: captureWidth * 2,
+        canvasHeight: captureHeight * 2,
+        style: {
+          overflow: 'visible',
+          maxWidth: `${captureWidth}px`,
+          width: `${captureWidth}px`,
+          height: `${captureHeight}px`
+        }
+      })
+
+      await writeImageBlobToClipboard(dataUrlToBlob(dataUrl))
       toast.success(t('layout.imageCopied', { defaultValue: 'Image copied to clipboard' }))
     } catch (err) {
       console.error('Export image failed:', err)
@@ -679,6 +716,8 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
         description: String(err)
       })
     } finally {
+      setExportRendering(false)
+      document.head.removeChild(styleEl)
       setExporting(false)
     }
   }
@@ -1094,6 +1133,7 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
                               onContinue={continueLastToolExecution}
                               onEditUserMessage={editAndResend}
                               onDeleteMessage={deleteMessage}
+                              exportAll={exportRendering}
                             />
                             <InputArea
                               onSend={(text, images) => void sendMessage(text, images)}
@@ -1218,13 +1258,15 @@ export function Layout({ updateInfo, onOpenUpdateDialog }: LayoutProps): React.J
               />
               <InputArea
                 sessionId={miniSessionWindowSessionId}
-                onSend={(text, images) => void sendMessage(text, images, undefined, miniSessionWindowSessionId)}
+                onSend={(text, images) =>
+                  void sendMessage(text, images, undefined, miniSessionWindowSessionId)
+                }
                 onStop={stopStreaming}
                 workingFolder={miniWindowSession?.workingFolder}
                 hideWorkingFolderIndicator
                 isStreaming={Boolean(
                   miniSessionWindowSessionId &&
-                    useChatStore.getState().streamingMessages[miniSessionWindowSessionId]
+                  useChatStore.getState().streamingMessages[miniSessionWindowSessionId]
                 )}
               />
             </div>

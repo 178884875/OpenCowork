@@ -130,9 +130,7 @@ function StepsPanelContent({
   data: StepsPanelData
   className?: string
 }): React.JSX.Element {
-  const { t } = useTranslation('cowork')
-  const { plan, todos, planTasks, standaloneTasks, progress, standaloneProgress, teamTasks, teamName, isRunning, hasContent } =
-    data
+  const { plan, todos, planTasks, standaloneTasks, progress, standaloneProgress, teamTasks, teamName } = data
 
   return (
     <div className={cn('space-y-2', className)}>
@@ -150,11 +148,7 @@ function StepsPanelContent({
               {progress.completed}/{progress.total}
             </Badge>
           </div>
-          <TodoList
-            todos={planTasks}
-            progress={progress}
-            isRunning={isRunning && teamTasks.length === 0}
-          />
+          <TodoList todos={planTasks} progress={progress} />
         </div>
       )}
 
@@ -162,25 +156,13 @@ function StepsPanelContent({
       {standaloneTasks.length > 0 && (
         <>
           {plan && planTasks.length > 0 && <Separator />}
-          <TodoList
-            todos={standaloneTasks}
-            progress={standaloneProgress}
-            isRunning={isRunning && teamTasks.length === 0}
-          />
+          <TodoList todos={standaloneTasks} progress={standaloneProgress} />
         </>
       )}
 
       {(planTasks.length > 0 || standaloneTasks.length > 0 || todos.length > 0) &&
         teamTasks.length > 0 && <Separator />}
-      {teamTasks.length > 0 && (
-        <TeamTaskList tasks={teamTasks} teamName={teamName} isRunning={isRunning} />
-      )}
-      {isRunning && !hasContent && (
-        <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" />
-          {t('steps.agentWorking')}
-        </div>
-      )}
+      {teamTasks.length > 0 && <TeamTaskList tasks={teamTasks} teamName={teamName} />}
     </div>
   )
 }
@@ -231,7 +213,6 @@ function InlinePreviewTag({
 }
 
 export function InlineStepsPanel({ sessionId }: { sessionId?: string | null }): React.JSX.Element | null {
-  const { t } = useTranslation('cowork')
   const { t: tLayout } = useTranslation('layout')
   const data = useStepsPanelData(sessionId)
   const [expanded, setExpanded] = useState(false)
@@ -298,7 +279,7 @@ export function InlineStepsPanel({ sessionId }: { sessionId?: string | null }): 
 
   const visiblePreviewItems = activePreviewItems.slice(0, 3)
   const hiddenPreviewCount = Math.max(0, activePreviewItems.length - visiblePreviewItems.length)
-  const showCollapsedPreview = !expanded && (visiblePreviewItems.length > 0 || data.isRunning)
+  const showCollapsedPreview = !expanded && visiblePreviewItems.length > 0
 
   return (
     <div>
@@ -385,12 +366,7 @@ export function InlineStepsPanel({ sessionId }: { sessionId?: string | null }): 
                       </li>
                     )}
                   </ul>
-                ) : (
-                  <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
-                    <Loader2 className="size-3.5 animate-spin" />
-                    {t('steps.agentWorking')}
-                  </div>
-                )}
+                ) : null}
               </div>
             </motion.div>
           )}
@@ -421,12 +397,10 @@ export function InlineStepsPanel({ sessionId }: { sessionId?: string | null }): 
 
 function TodoList({
   todos,
-  progress,
-  isRunning
+  progress
 }: {
   todos: TaskItem[]
   progress: { total: number; completed: number; percentage: number }
-  isRunning: boolean
 }): React.JSX.Element {
   const { t } = useTranslation('cowork')
   return (
@@ -476,13 +450,6 @@ function TodoList({
           </ul>
         </>
       )}
-
-      {isRunning && todos.length === 0 && (
-        <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" />
-          {t('steps.agentWorking')}
-        </div>
-      )}
     </div>
   )
 }
@@ -503,12 +470,10 @@ function TeamTaskStatusIcon({ status }: { status: TeamTask['status'] }): React.J
 
 function TeamTaskList({
   tasks,
-  teamName,
-  isRunning
+  teamName
 }: {
   tasks: TeamTask[]
   teamName: string
-  isRunning: boolean
 }): React.JSX.Element {
   const { t } = useTranslation('cowork')
   const completedCount = tasks.filter((task) => task.status === 'completed').length
@@ -573,13 +538,6 @@ function TeamTaskList({
           </li>
         ))}
       </ul>
-
-      {isRunning && tasks.length === 0 && (
-        <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" />
-          {t('steps.teamWorking')}
-        </div>
-      )}
     </div>
   )
 }

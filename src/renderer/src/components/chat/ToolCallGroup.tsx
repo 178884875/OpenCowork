@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, ChevronDown, Loader2 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
@@ -73,15 +73,7 @@ export function ToolCallGroup({
   const status = groupStatus(items)
   const isActive = status === 'running' || status === 'streaming' || status === 'pending_approval'
 
-  const [expanded, setExpanded] = useState(isActive)
-  const wasActiveRef = useRef(isActive)
-
-  useEffect(() => {
-    const nextExpanded = isActive ? true : wasActiveRef.current && !isActive ? false : null
-    wasActiveRef.current = isActive
-    if (nextExpanded === null) return
-    setExpanded((prev) => (prev === nextExpanded ? prev : nextExpanded))
-  }, [isActive])
+  const [expanded, setExpanded] = useState(true)
 
   const summaryLabel = groupSummaryLabel(toolName, items, t)
 

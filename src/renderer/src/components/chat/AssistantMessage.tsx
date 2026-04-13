@@ -870,42 +870,13 @@ export function AssistantMessage({
     () => summarizeWorkspaceTools(normalizedContent),
     [normalizedContent]
   )
-  const hasActiveWorkspaceExecution = useMemo(() => {
-    if (!normalizedContent) return false
-
-    return normalizedContent.some((block) => {
-      if (block.type !== 'tool_use' || !isWorkspaceCollapsibleTool(block.name)) return false
-
-      const liveStatus = effectiveLiveToolCallMap?.get(block.id)?.status
-      if (
-        liveStatus === 'running' ||
-        liveStatus === 'streaming' ||
-        liveStatus === 'pending_approval'
-      ) {
-        return true
-      }
-
-      if (isStreaming && !toolResults?.has(block.id)) {
-        return true
-      }
-
-      return false
-    })
-  }, [effectiveLiveToolCallMap, isStreaming, normalizedContent, toolResults])
-  const shouldAutoCollapseWorkspace = workspaceToolCount >= 2 && !isStreaming && !hasActiveWorkspaceExecution
-  const [toolsCollapsed, setToolsCollapsed] = useState(shouldAutoCollapseWorkspace)
-  const hasWorkspaceCollapseOverrideRef = React.useRef(false)
+  const [toolsCollapsed, setToolsCollapsed] = useState(false)
   const lastWorkspaceMessageIdRef = React.useRef(msgId)
   useEffect(() => {
-    if (lastWorkspaceMessageIdRef.current !== msgId) {
-      lastWorkspaceMessageIdRef.current = msgId
-      hasWorkspaceCollapseOverrideRef.current = false
-      setToolsCollapsed(shouldAutoCollapseWorkspace)
-      return
-    }
-    if (hasWorkspaceCollapseOverrideRef.current) return
-    setToolsCollapsed(shouldAutoCollapseWorkspace)
-  }, [msgId, shouldAutoCollapseWorkspace])
+    if (lastWorkspaceMessageIdRef.current === msgId) return
+    lastWorkspaceMessageIdRef.current = msgId
+    setToolsCollapsed(false)
+  }, [msgId])
   const hasStructuredThinkingBlocks = useMemo(
     () => normalizedContent?.some((block) => block.type === 'thinking') ?? false,
     [normalizedContent]
@@ -1238,10 +1209,7 @@ export function AssistantMessage({
         ) : null}
         {workspaceToolCount >= 2 && (
           <button
-            onClick={() => {
-              hasWorkspaceCollapseOverrideRef.current = true
-              setToolsCollapsed((v) => !v)
-            }}
+            onClick={() => setToolsCollapsed((v) => !v)}
             className="flex w-full items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-left transition-colors hover:bg-muted/30"
           >
             <div className="min-w-0">

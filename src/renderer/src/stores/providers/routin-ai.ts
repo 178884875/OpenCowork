@@ -41,6 +41,7 @@ export const routinAiPreset: BuiltinProviderPreset = {
       inputPrice: 0.6,
       outputPrice: 3,
       cacheHitPrice: 0.1,
+      type: 'anthropic',
       supportsThinking: true,
       thinkingConfig: {
         bodyParams: { thinking: { type: 'enabled' } },
@@ -863,26 +864,6 @@ export const routinAiPreset: BuiltinProviderPreset = {
       cacheHitPrice: 0.026,
       supportsThinking: true,
       thinkingConfig: { bodyParams: { enable_thinking: true } }
-    },
-    // ── Moonshot / Kimi ──
-    {
-      id: 'kimi-k2.5',
-      name: 'Kimi K2.5',
-      icon: 'kimi',
-      enabled: true,
-      contextLength: 262_144,
-      maxOutputTokens: 32_768,
-      supportsVision: true,
-      supportsFunctionCall: true,
-      inputPrice: 0.23,
-      outputPrice: 3,
-      cacheHitPrice: 0.023,
-      supportsThinking: true,
-      thinkingConfig: {
-        bodyParams: { thinking: { type: 'enabled' } },
-        disabledBodyParams: { thinking: { type: 'disabled' } },
-        forceTemperature: 1
-      }
     },
     // ── Google Gemini ──
     {

@@ -507,6 +507,13 @@ interface ShellOutputSummary {
   stderrLines?: number
   errorLikeLines?: number
   warningLikeLines?: number
+  totalMs?: number
+  spawnMs?: number
+  firstChunkMs?: number
+  shell?: string
+  executionEngine?: 'main' | 'sidecar'
+  timedOut?: boolean
+  aborted?: boolean
 }
 
 function ShellTextPane({
@@ -679,6 +686,26 @@ function BashOutputBlock({
                     {summary.totalLines} lines
                   </span>
                 )}
+                {summary.shell && (
+                  <span className="rounded bg-muted/70 px-1 py-0.5 dark:bg-zinc-800/60">
+                    {summary.shell.split(/[\\/]/).pop()}
+                  </span>
+                )}
+                {typeof summary.totalMs === 'number' && (
+                  <span className="rounded bg-muted/70 px-1 py-0.5 dark:bg-zinc-800/60">
+                    total {summary.totalMs}ms
+                  </span>
+                )}
+                {typeof summary.spawnMs === 'number' && (
+                  <span className="rounded bg-muted/70 px-1 py-0.5 dark:bg-zinc-800/60">
+                    spawn {summary.spawnMs}ms
+                  </span>
+                )}
+                {typeof summary.firstChunkMs === 'number' && (
+                  <span className="rounded bg-muted/70 px-1 py-0.5 dark:bg-zinc-800/60">
+                    first output {summary.firstChunkMs}ms
+                  </span>
+                )}
                 {typeof summary.errorLikeLines === 'number' && summary.errorLikeLines > 0 && (
                   <span className="rounded bg-red-500/10 px-1 py-0.5 text-red-700/85 dark:text-red-300/80">
                     {summary.errorLikeLines} error-like
@@ -687,6 +714,16 @@ function BashOutputBlock({
                 {typeof summary.warningLikeLines === 'number' && summary.warningLikeLines > 0 && (
                   <span className="rounded bg-amber-500/10 px-1 py-0.5 text-amber-700/85 dark:text-amber-300/80">
                     {summary.warningLikeLines} warning-like
+                  </span>
+                )}
+                {summary.timedOut && (
+                  <span className="rounded bg-red-500/10 px-1 py-0.5 text-red-700/85 dark:text-red-300/80">
+                    timed out
+                  </span>
+                )}
+                {summary.aborted && (
+                  <span className="rounded bg-muted/70 px-1 py-0.5 dark:bg-zinc-800/60">
+                    aborted
                   </span>
                 )}
               </div>
@@ -1240,6 +1277,7 @@ function TaskListOutputBlock({ output }: { output: string }): React.JSX.Element 
         id: string
         subject: string
         status: string
+        description?: string | null
         owner?: string | null
       }>
     }
@@ -1266,19 +1304,33 @@ function TaskListOutputBlock({ output }: { output: string }): React.JSX.Element 
       </div>
       <div className="rounded-md border bg-muted/10 divide-y divide-border/50 text-[12px]">
         {parsed.map((task) => (
-          <div key={task.id} className="flex items-center gap-2 px-2.5 py-1.5">
-            {statusIcon(task.status)}
-            <span
-              className={cn(
-                'flex-1',
-                task.status === 'completed' && 'line-through text-muted-foreground/50'
+          <div key={task.id} className="flex items-start gap-2 px-2.5 py-1.5">
+            <span className="mt-0.5 shrink-0">{statusIcon(task.status)}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    'min-w-0 flex-1 font-medium',
+                    task.status === 'completed' && 'line-through text-muted-foreground/50'
+                  )}
+                >
+                  {task.subject}
+                </span>
+                {task.owner && (
+                  <span className="shrink-0 text-[9px] text-muted-foreground/40">{task.owner}</span>
+                )}
+              </div>
+              {typeof task.description === 'string' && task.description.trim() && (
+                <p
+                  className={cn(
+                    'mt-0.5 text-[11px] leading-relaxed text-muted-foreground/60',
+                    task.status === 'completed' && 'line-through text-muted-foreground/40'
+                  )}
+                >
+                  {task.description}
+                </p>
               )}
-            >
-              {task.subject}
-            </span>
-            {task.owner && (
-              <span className="text-[9px] text-muted-foreground/40">{task.owner}</span>
-            )}
+            </div>
           </div>
         ))}
       </div>
@@ -1876,7 +1928,14 @@ function StructuredInput({
 }
 
 // Tools that auto-expand when they have output (mutation/action tools)
-const EXPAND_TOOLS = new Set(['Delete', 'Bash', 'TaskCreate', 'TaskList', 'visualize_show_widget'])
+const EXPAND_TOOLS = new Set([
+  'Delete',
+  'Bash',
+  'TaskCreate',
+  'TaskUpdate',
+  'TaskList',
+  'visualize_show_widget'
+])
 
 export function ToolStatusDot({
   status

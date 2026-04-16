@@ -1,9 +1,14 @@
-import { useState, useEffect, useRef } from 'react'
+import { memo, useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, ChevronDown } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { MONO_FONT } from '@renderer/lib/constants'
+import { useSettingsStore } from '@renderer/stores/settings-store'
+import {
+  getLiveOutputDotClass,
+  getLiveOutputThinkingClass
+} from '@renderer/lib/live-output-animation'
 import {
   openMarkdownHref,
   resolveLocalFilePath,
@@ -18,18 +23,18 @@ interface ThinkingBlockProps {
   completedAt?: number
 }
 
-export function ThinkingBlock({
+export const ThinkingBlock = memo(function ThinkingBlock({
   thinking,
   isStreaming = false,
   startedAt,
   completedAt
 }: ThinkingBlockProps): React.JSX.Element {
-  const { t } = useTranslation('chat')
-  const isThinking = isStreaming && thinking.length > 0 && !completedAt
+  const { t, i18n } = useTranslation('chat')
+  const liveOutputAnimationStyle = useSettingsStore((s) => s.liveOutputAnimationStyle)
+  const isThinking = isStreaming && !completedAt
+  const hasThinkingContent = thinking.trim().length > 0
 
-  const [expanded, setExpanded] = useState(false)
-  const wasThinkingRef = useRef(isThinking)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const [collapsed, setCollapsed] = useState(false)
   const [liveElapsed, setLiveElapsed] = useState(0)
 
   // Live timer while thinking
@@ -41,19 +46,7 @@ export function ThinkingBlock({
     return () => clearInterval(interval)
   }, [isThinking, startedAt])
 
-  useEffect(() => {
-    const nextExpanded = isThinking ? true : wasThinkingRef.current && !isThinking ? false : null
-    wasThinkingRef.current = isThinking
-    if (nextExpanded === null) return
-    setExpanded((prev) => (prev === nextExpanded ? prev : nextExpanded))
-  }, [isThinking])
-
-  // Auto-scroll to bottom while thinking is streaming
-  useEffect(() => {
-    if (isThinking && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [isThinking, thinking])
+  const expanded = isThinking || (hasThinkingContent && !collapsed)
 
   // Compute duration label from persisted timestamps
   const persistedDuration =
@@ -68,10 +61,20 @@ export function ThinkingBlock({
           ? t('thinking.thinkingEllipsis')
           : t('thinking.thoughts')
 
+  const compactElapsedLabel =
+    liveElapsed > 0
+      ? i18n.language.startsWith('zh')
+        ? `${liveElapsed} 秒`
+        : `${liveElapsed}s`
+      : ''
+
   return (
     <div className="my-5">
       <button
-        onClick={() => setExpanded((v) => !v)}
+        onClick={() => {
+          if (isThinking) return
+          setCollapsed((v) => !v)
+        }}
         className="flex items-center gap-1 text-sm text-muted-foreground/60 hover:text-muted-foreground transition-colors group"
       >
         <span className="group-hover:text-primary/80 transition-colors">{durationLabel}</span>
@@ -91,73 +94,96 @@ export function ThinkingBlock({
             transition={{ type: 'spring', stiffness: 400, damping: 30 }}
             className="overflow-hidden"
           >
-            <div
-              ref={scrollRef}
-              className="mt-1.5 pl-2 border-l-2 border-muted text-sm text-muted-foreground/80 leading-relaxed max-h-80 overflow-y-auto"
-            >
+            <div className="mt-1.5 text-sm text-muted-foreground/80 leading-relaxed">
               {isThinking ? (
-                <div className="whitespace-pre-wrap break-words">{thinking}</div>
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className={`thinking-live-status ${getLiveOutputThinkingClass(liveOutputAnimationStyle)}`}
+                >
+                  <span className="thinking-live-dots" aria-hidden="true">
+                    <span
+                      className={getLiveOutputDotClass(liveOutputAnimationStyle)}
+                      style={{ animationDelay: '0ms' }}
+                    />
+                    <span
+                      className={getLiveOutputDotClass(liveOutputAnimationStyle)}
+                      style={{ animationDelay: '150ms' }}
+                    />
+                    <span
+                      className={getLiveOutputDotClass(liveOutputAnimationStyle)}
+                      style={{ animationDelay: '300ms' }}
+                    />
+                  </span>
+                  <span className="thinking-live-label">
+                    {t('thinking.pending', { defaultValue: 'Thinking' })}
+                  </span>
+                  {liveElapsed > 0 && (
+                    <span className="thinking-live-meta" aria-label={durationLabel}>
+                      {compactElapsedLabel}
+                    </span>
+                  )}
+                </div>
               ) : (
-                <Markdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    a: ({ href, children, ...props }) => (
-                      <a
-                        {...props}
-                        href={href}
-                        className="text-primary underline underline-offset-2 hover:text-primary/80 break-all"
-                        onClick={(event) => {
-                          if (!href) return
-                          const handled = openMarkdownHref(href)
-                          if (handled) event.preventDefault()
-                        }}
-                      >
-                        {children}
-                      </a>
-                    ),
-                    code: ({ children, className, ...props }) => {
-                      const isInline = !className
-                      if (isInline) {
-                        const code = String(children ?? '').replace(/\n$/, '')
-                        const resolvedPath = resolveLocalFilePath(code)
-                        if (resolvedPath) {
+                <div className="max-h-80 overflow-y-auto border-l border-border/45 pl-2.5">
+                  <Markdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      a: ({ href, children, ...props }) => (
+                        <a
+                          {...props}
+                          href={href}
+                          className="text-primary underline underline-offset-2 hover:text-primary/80 break-all"
+                          onClick={(event) => {
+                            if (!href) return
+                            const handled = openMarkdownHref(href)
+                            if (handled) event.preventDefault()
+                          }}
+                        >
+                          {children}
+                        </a>
+                      ),
+                      code: ({ children, className, ...props }) => {
+                        const isInline = !className
+                        if (isInline) {
+                          const code = String(children ?? '').replace(/\n$/, '')
+                          const resolvedPath = resolveLocalFilePath(code)
+                          if (resolvedPath) {
+                            return (
+                              <button
+                                type="button"
+                                className="cursor-pointer rounded bg-muted px-1 py-0.5 text-xs font-mono text-primary underline-offset-2 hover:underline"
+                                style={{ fontFamily: MONO_FONT }}
+                                title={resolvedPath}
+                                onClick={() => {
+                                  void openLocalFilePath(code)
+                                }}
+                              >
+                                {children}
+                              </button>
+                            )
+                          }
                           return (
-                            <button
-                              type="button"
-                              className="cursor-pointer rounded bg-muted px-1 py-0.5 text-xs font-mono text-primary underline-offset-2 hover:underline"
+                            <code
+                              className="rounded bg-muted px-1 py-0.5 text-xs font-mono"
                               style={{ fontFamily: MONO_FONT }}
-                              title={resolvedPath}
-                              onClick={() => {
-                                void openLocalFilePath(code)
-                              }}
+                              {...props}
                             >
                               {children}
-                            </button>
+                            </code>
                           )
                         }
                         return (
-                          <code
-                            className="rounded bg-muted px-1 py-0.5 text-xs font-mono"
-                            style={{ fontFamily: MONO_FONT }}
-                            {...props}
-                          >
+                          <code className={className} style={{ fontFamily: MONO_FONT }} {...props}>
                             {children}
                           </code>
                         )
                       }
-                      return (
-                        <code className={className} style={{ fontFamily: MONO_FONT }} {...props}>
-                          {children}
-                        </code>
-                      )
-                    }
-                  }}
-                >
-                  {thinking}
-                </Markdown>
-              )}
-              {isThinking && (
-                <span className="inline-block w-1.5 h-3.5 bg-primary/40 animate-pulse ml-0.5 rounded-sm" />
+                    }}
+                  >
+                    {thinking}
+                  </Markdown>
+                </div>
               )}
             </div>
           </motion.div>
@@ -165,4 +191,6 @@ export function ThinkingBlock({
       </AnimatePresence>
     </div>
   )
-}
+})
+
+ThinkingBlock.displayName = 'ThinkingBlock'

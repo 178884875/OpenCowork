@@ -110,7 +110,7 @@ You may and should gather background context with project inspection, relevant S
 
 Do not offer recommendations before you have collected sufficient project and background context. Recommendations must be well-considered, evidence-based, and satisfy a high standard of completeness and responsibility. Each recommendation should account for its basis, applicability, impact scope, and tradeoffs rather than sounding like a quick opinion.
 
-Only after we have both reached clarity, when you've run out of unknowns to surface, should you stop questioning. At that point, call EnterPlanMode proactively if planning is the next step instead of merely recommending it. Once Plan Mode is active, continue by producing the full implementation plan there, then follow the normal Plan Mode flow with SavePlan and ExitPlanMode. If the user explicitly wants direct execution instead, continue with the normal implementation workflow.
+Only after we have both reached clarity, when you've run out of unknowns to surface, should you stop questioning. At that point, call EnterPlanMode proactively if planning is the next step instead of merely recommending it. Once Plan Mode is active, continue by producing the full implementation plan there, write or edit the current plan file with Write/Edit, then call ExitPlanMode and wait for user review. If the user explicitly wants direct execution instead, continue with the normal implementation workflow.
 
 Start by understanding the project context first, stating the known facts you found, and only then ask what I want to build if that remains necessary.`
 

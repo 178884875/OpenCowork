@@ -69,6 +69,7 @@ import { ModelSwitcher } from './ModelSwitcher'
 import { FileAwareEditor, type FileAwareEditorHandle } from './FileAwareEditor'
 import { listCommands, type CommandCatalogItem } from '@renderer/lib/commands/command-loader'
 import { useMcpStore } from '@renderer/stores/mcp-store'
+import { usePlanStore } from '@renderer/stores/plan-store'
 import {
   clearPendingSessionMessages,
   dispatchNextQueuedMessageForSession,
@@ -449,8 +450,8 @@ export function InputArea({
       typeof ResizeObserver === 'undefined'
         ? null
         : new ResizeObserver(() => {
-          updateAutoMaxInputHeight()
-        })
+            updateAutoMaxInputHeight()
+          })
     const container = containerRef.current
     const root = rootRef.current
     const messageListEl = root?.parentElement?.querySelector(
@@ -559,10 +560,13 @@ export function InputArea({
     const idx = targetSessionId ? s.sessionsById[targetSessionId] : undefined
     const targetSession = idx !== undefined ? s.sessions[idx] : undefined
     const projectId = targetSession?.projectId ?? s.activeProjectId
-    const activeProject = projectId ? s.projects.find((project) => project.id === projectId) : undefined
+    const activeProject = projectId
+      ? s.projects.find((project) => project.id === projectId)
+      : undefined
     return targetSession?.sshConnectionId ?? activeProject?.sshConnectionId ?? null
   })
   const [homeLongRunningMode, setHomeLongRunningMode] = useLocalState(false)
+  const showInlineClearConversation = false
   const {
     activeSessionId,
     hasMessages,
@@ -596,7 +600,7 @@ export function InputArea({
   const inputDraftHydrated = useInputDraftStore((s) => s.hydrated)
   const persistedDraft = useInputDraftStore(
     React.useCallback(
-      (state) => (activeDraftKey ? state.draftsByKey[activeDraftKey] ?? null : null),
+      (state) => (activeDraftKey ? (state.draftsByKey[activeDraftKey] ?? null) : null),
       [activeDraftKey]
     )
   )
@@ -1066,8 +1070,8 @@ export function InputArea({
       }
       const suffix =
         text.slice(mention.end).startsWith(' ') ||
-          text.slice(mention.end).startsWith('\n') ||
-          mention.end >= text.length
+        text.slice(mention.end).startsWith('\n') ||
+        mention.end >= text.length
           ? ''
           : ' '
 
@@ -1102,6 +1106,9 @@ export function InputArea({
   const needsWorkingFolder = mode !== 'chat' && !workingFolder
   const planMode = useUIStore((s) =>
     draftSessionId ? Boolean(s.planModesBySession[draftSessionId]) : false
+  )
+  const pendingReviewPlanId = usePlanStore((s) =>
+    draftSessionId ? (s.pendingReviewBySession[draftSessionId] ?? null) : null
   )
 
   React.useEffect(() => {
@@ -1220,7 +1227,10 @@ export function InputArea({
     if (!inputDraftHydrated) return
 
     draftReadyKeyRef.current = null
-    applyEditorStateFromSerializedText(persistedDraft?.text ?? '', persistedDraft?.selectedFiles ?? [])
+    applyEditorStateFromSerializedText(
+      persistedDraft?.text ?? '',
+      persistedDraft?.selectedFiles ?? []
+    )
     setAttachedImages(persistedDraft?.images ? cloneImageAttachments(persistedDraft.images) : [])
     setSelectedSkill(persistedDraft?.skill ?? null)
     setHighlightedFileId(null)
@@ -1301,9 +1311,9 @@ export function InputArea({
     (filePaths: string[], selection?: { start: number; end: number }) => {
       const nextSelection = selection ??
         editorRef.current?.getSelectionOffsets() ?? {
-        start: editorSelection.start,
-        end: editorSelection.end
-      }
+          start: editorSelection.start,
+          end: editorSelection.end
+        }
       const filesToInsert: SelectedFileItem[] = []
       let mergedFiles = selectedFilesRef.current
 
@@ -1840,11 +1850,11 @@ export function InputArea({
                     <span className="truncate text-[10px] text-muted-foreground/80">
                       {isQueueDispatchPaused
                         ? t('input.queuePausedHint', {
-                          defaultValue: '已暂停，点击继续发送'
-                        })
+                            defaultValue: '已暂停，点击继续发送'
+                          })
                         : t('input.queueRunningHint', {
-                          defaultValue: '当前任务结束后按顺序发送'
-                        })}
+                            defaultValue: '当前任务结束后按顺序发送'
+                          })}
                     </span>
                   </button>
                   <div className="flex shrink-0 items-center gap-1">
@@ -2135,10 +2145,11 @@ export function InputArea({
                     <button
                       key={idx}
                       type="button"
-                      className={`flex-1 px-4 py-3 rounded-t-lg border-2 border-b-0 transition-all ${selectedOptionIndex === idx
+                      className={`flex-1 px-4 py-3 rounded-t-lg border-2 border-b-0 transition-all ${
+                        selectedOptionIndex === idx
                           ? 'border-primary bg-primary/5 -mb-[2px] border-b-2 border-b-background'
                           : 'border-transparent hover:bg-muted/30'
-                        }`}
+                      }`}
                       onClick={() => {
                         setSelectedOptionIndex(idx)
                         // Scroll content to top when switching tabs
@@ -2149,10 +2160,11 @@ export function InputArea({
                     >
                       <div className="flex items-center justify-center gap-2">
                         <span
-                          className={`inline-flex items-center justify-center size-6 rounded-full text-xs font-bold ${selectedOptionIndex === idx
+                          className={`inline-flex items-center justify-center size-6 rounded-full text-xs font-bold ${
+                            selectedOptionIndex === idx
                               ? 'bg-primary text-primary-foreground'
                               : 'bg-muted text-muted-foreground'
-                            }`}
+                          }`}
                         >
                           {idx + 1}
                         </span>
@@ -2233,10 +2245,14 @@ export function InputArea({
                 files={selectedFiles}
                 disabled={disabled || isOptimizing}
                 placeholder={
-                  effectivePlaceholder ??
-                  (shouldRecommendInit
-                    ? t('input.placeholderInitWorkspace')
-                    : t(placeholderKeys[mode] ?? 'input.placeholder'))
+                  pendingReviewPlanId
+                    ? t('input.placeholderPlanReview', {
+                        defaultValue: '输入这份计划的修改建议，或点击上方卡片直接实施计划...'
+                      })
+                    : (effectivePlaceholder ??
+                      (shouldRecommendInit
+                        ? t('input.placeholderInitWorkspace')
+                        : t(placeholderKeys[mode] ?? 'input.placeholder')))
                 }
                 suggestionText={suggestionText}
                 showSuggestion={Boolean(
@@ -2307,10 +2323,11 @@ export function InputArea({
                           <button
                             key={file.path}
                             type="button"
-                            className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${isSelected
+                            className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                              isSelected
                                 ? 'bg-accent text-accent-foreground'
                                 : 'hover:bg-muted/50 text-foreground'
-                              }`}
+                            }`}
                             onMouseDown={(event) => {
                               event.preventDefault()
                               insertSelectedFile(file.path)
@@ -2359,10 +2376,11 @@ export function InputArea({
                           <button
                             key={command.name}
                             type="button"
-                            className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${isSelected
+                            className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                              isSelected
                                 ? 'bg-accent text-accent-foreground'
                                 : 'hover:bg-muted/50 text-foreground'
-                              }`}
+                            }`}
                             onMouseDown={(event) => {
                               event.preventDefault()
                               insertSlashCommand(command.name)
@@ -2406,11 +2424,10 @@ export function InputArea({
           <input
             ref={fileInputRef}
             type="file"
-            accept={ACCEPTED_IMAGE_TYPES.join(',')}
             multiple
             className="hidden"
             onChange={(e) => {
-              if (e.target.files) addImages(Array.from(e.target.files))
+              handleDropFiles(e.target.files)
               e.target.value = ''
             }}
           />
@@ -2469,6 +2486,9 @@ export function InputArea({
                     onSelectCommand={(name) => {
                       insertSlashCommand(name)
                     }}
+                    onAttachMedia={() => {
+                      fileInputRef.current?.click()
+                    }}
                     disabled={disabled || isStreaming}
                     projectId={activeProjectId}
                   />
@@ -2485,13 +2505,18 @@ export function InputArea({
                       className={cn(
                         'size-8 transition-colors hover:bg-muted/50',
                         isHomeComposer ? 'rounded-full' : 'rounded-lg',
-                        effectiveLongRunningMode ? 'text-violet-600 dark:text-violet-400' : 'text-muted-foreground hover:text-foreground',
+                        effectiveLongRunningMode
+                          ? 'text-violet-600 dark:text-violet-400'
+                          : 'text-muted-foreground hover:text-foreground',
                         isHomeComposer && !effectiveLongRunningMode && 'hover:bg-white/5'
                       )}
                       onClick={handleToggleLongRunningMode}
                       disabled={disabled || isStreaming}
                     >
-                      <Sparkles className="size-4" fill={effectiveLongRunningMode ? 'currentColor' : 'none'} />
+                      <Sparkles
+                        className="size-4"
+                        fill={effectiveLongRunningMode ? 'currentColor' : 'none'}
+                      />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
@@ -2499,27 +2524,6 @@ export function InputArea({
                       ? t('input.longRunningModeOn', { defaultValue: '长时间运行模式：开启' })
                       : t('input.longRunningModeOff', { defaultValue: '长时间运行模式：关闭' })}
                   </TooltipContent>
-                </Tooltip>
-              )}
-
-              {/* Image upload button */}
-              {supportsVision && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={cn(
-                        'size-8 rounded-lg text-muted-foreground hover:text-foreground',
-                        isHomeComposer && 'rounded-full hover:bg-white/5'
-                      )}
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={disabled}
-                    >
-                      <ImagePlus className="size-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{t('input.attachImages')}</TooltipContent>
                 </Tooltip>
               )}
 
@@ -2555,7 +2559,7 @@ export function InputArea({
               )}
 
               {/* Clear messages */}
-              {hasMessages && !isStreaming && (
+              {showInlineClearConversation && hasMessages && !isStreaming && (
                 <AlertDialog>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -2579,10 +2583,10 @@ export function InputArea({
                       <AlertDialogDescription>
                         {queuedMessages.length > 0
                           ? t('input.clearConfirmDescWithQueue', {
-                            defaultValue:
-                              '这将删除此对话中的所有消息，并清空当前会话的 {{count}} 条待发送消息。此操作不可撤销。',
-                            count: queuedMessages.length
-                          })
+                              defaultValue:
+                                '这将删除此对话中的所有消息，并清空当前会话的 {{count}} 条待发送消息。此操作不可撤销。',
+                              count: queuedMessages.length
+                            })
                           : t('input.clearConfirmDesc')}
                       </AlertDialogDescription>
                     </AlertDialogHeader>

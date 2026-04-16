@@ -17,6 +17,11 @@ import { executePluginAction } from '../ipc/channel-handlers'
 import { safeSendToAllWindows } from '../window-ipc'
 import { getDb } from '../db/database'
 import { getSidecarManager } from '../ipc/sidecar-manager'
+import {
+  resolveResponsesWebsocketConfig,
+  type ResponsesWebsocketMode
+} from '../../shared/openai-responses-websocket'
+import { ResponsesWebSocketSessionManager } from '../lib/responses-websocket-session-manager'
 
 const DEFAULT_AGENT = 'CronAgent'
 const DEFAULT_BASH_TIMEOUT_MS = 600_000
@@ -36,6 +41,7 @@ const insecureHttpsAgent = new https.Agent({ rejectUnauthorized: false })
 const secureHttpsAgent = new https.Agent()
 const insecureProxyAgents = new Map<string, HttpsProxyAgent<string>>()
 const secureProxyAgents = new Map<string, HttpsProxyAgent<string>>()
+const responsesWsManager = new ResponsesWebSocketSessionManager('cron')
 
 const FALLBACK_CRON_AGENT = {
   name: DEFAULT_AGENT,
@@ -164,6 +170,8 @@ interface AIModelConfig {
   enablePromptCache?: boolean
   enableSystemPromptCache?: boolean
   serviceTier?: string
+  websocketUrl?: string
+  websocketMode?: ResponsesWebsocketMode
 }
 
 interface AIProviderConfigRecord {
@@ -183,6 +191,8 @@ interface AIProviderConfigRecord {
   instructionsPrompt?: string
   defaultModel?: string
   authMode?: string
+  websocketUrl?: string
+  websocketMode?: ResponsesWebsocketMode
   oauth?: {
     accountId?: string
   }
@@ -218,6 +228,8 @@ interface ProviderConfig {
   sessionId?: string
   computerUseEnabled?: boolean
   accountId?: string
+  websocketUrl?: string
+  websocketMode?: ResponsesWebsocketMode
 }
 
 interface StreamEvent {
@@ -584,6 +596,8 @@ function buildProviderConfigById(
     model?.requestOverrides,
     modelId
   )
+  const websocketUrl = model?.websocketUrl ?? provider.websocketUrl
+  const websocketMode = model?.websocketMode ?? provider.websocketMode
   return {
     type: requestType,
     apiKey: provider.apiKey,
@@ -609,6 +623,8 @@ function buildProviderConfigById(
       ? { enableSystemPromptCache: model.enableSystemPromptCache }
       : {}),
     ...(model?.serviceTier ? { serviceTier: model.serviceTier } : {}),
+    ...(websocketUrl ? { websocketUrl } : {}),
+    ...(websocketMode ? { websocketMode } : {}),
     maxTokens: getEffectiveMaxTokens(settings, model),
     temperature: Number(settings.temperature ?? 0.7)
   }
@@ -1166,7 +1182,11 @@ function getProxyAgent(proxyUrl: string, allowInsecureTls: boolean): HttpsProxyA
   return agent
 }
 
-function resolveRequestAgent(targetUrl: URL, useSystemProxy: boolean, allowInsecureTls: boolean) {
+function resolveRequestAgent(
+  targetUrl: URL,
+  useSystemProxy: boolean,
+  allowInsecureTls: boolean
+): HttpsProxyAgent<string> | https.Agent | undefined {
   if (useSystemProxy) {
     const proxyUrl = getSystemProxyUrl()
     if (proxyUrl) return getProxyAgent(proxyUrl, allowInsecureTls)
@@ -1680,17 +1700,6 @@ async function* sendOpenAIResponses(
   if (config.userAgent) headers['User-Agent'] = config.userAgent
   if (config.serviceTier) headers.service_tier = config.serviceTier
   applyHeaderOverrides(headers, config)
-  const response = await sendFetchRequest(
-    url,
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal
-    },
-    config.allowInsecureTls ?? true,
-    config.useSystemProxy ?? false
-  )
   let emittedThinkingDelta = false
   const emittedThinkingEncrypted = new Set<string>()
   const tryBuildThinkingDeltaEvent = (thinking: unknown): StreamEvent | null => {
@@ -1709,9 +1718,9 @@ async function* sendOpenAIResponses(
       thinkingEncryptedProvider: 'openai-responses'
     }
   }
-  for await (const sse of parseSSEStream(response)) {
-    if (!sse.data || sse.data === '[DONE]') continue
-    let data: {
+  const handleResponseEvent = (
+    eventType: string | undefined,
+    data: {
       delta?: string
       text?: string
       call_id?: string
@@ -1734,89 +1743,65 @@ async function* sendOpenAIResponses(
           output_tokens_details?: { reasoning_tokens?: number }
         }
       }
-    } | null = null
-    try {
-      data = JSON.parse(sse.data) as {
-        delta?: string
-        text?: string
-        call_id?: string
-        name?: string
-        arguments?: string
-        item?: {
-          type?: string
-          call_id?: string
-          name?: string
-          encrypted_content?: string
-          reasoning?: { encrypted_content?: string }
-        }
-        response?: {
-          id?: string
-          status?: string
-          usage?: {
-            input_tokens?: number
-            output_tokens?: number
-            input_tokens_details?: { cached_tokens?: number }
-            output_tokens_details?: { reasoning_tokens?: number }
-          }
-        }
-      }
-    } catch {
-      continue
-    }
-    if (!data) continue
-    switch (sse.event) {
+    } | null
+  ): StreamEvent[] => {
+    if (!data) return []
+    switch (eventType) {
       case 'response.output_text.delta':
         if (firstTokenAt === null) firstTokenAt = Date.now()
-        yield { type: 'text_delta', text: data.delta }
-        break
+        return [{ type: 'text_delta', text: data.delta }]
       case 'response.reasoning_summary_text.delta': {
         if (firstTokenAt === null) firstTokenAt = Date.now()
         const thinkingEvent = tryBuildThinkingDeltaEvent(data.delta)
-        if (thinkingEvent) yield thinkingEvent
-        break
+        return thinkingEvent ? [thinkingEvent] : []
       }
       case 'response.reasoning_summary_text.done': {
         if (firstTokenAt === null) firstTokenAt = Date.now()
         if (!emittedThinkingDelta) {
           const thinkingEvent = tryBuildThinkingDeltaEvent(data.text ?? data.delta)
-          if (thinkingEvent) yield thinkingEvent
+          return thinkingEvent ? [thinkingEvent] : []
         }
-        break
+        return []
       }
       case 'response.output_item.added':
         if (data.item?.type === 'function_call') {
-          yield {
-            type: 'tool_call_start',
-            toolCallId: data.item.call_id,
-            toolName: data.item.name
-          }
-        } else if (data.item?.type === 'reasoning') {
+          return [
+            {
+              type: 'tool_call_start',
+              toolCallId: data.item.call_id,
+              toolName: data.item.name
+            }
+          ]
+        }
+        if (data.item?.type === 'reasoning') {
           const encryptedEvent = tryBuildThinkingEncryptedEvent(
             data.item.encrypted_content ?? data.item.reasoning?.encrypted_content
           )
-          if (encryptedEvent) yield encryptedEvent
+          return encryptedEvent ? [encryptedEvent] : []
         }
-        break
+        return []
       case 'response.function_call_arguments.delta':
-        yield { type: 'tool_call_delta', toolCallId: data.call_id, argumentsDelta: data.delta }
-        break
+        return [{ type: 'tool_call_delta', toolCallId: data.call_id, argumentsDelta: data.delta }]
       case 'response.function_call_arguments.done':
         try {
-          yield {
-            type: 'tool_call_end',
-            toolCallId: data.call_id,
-            toolName: data.name,
-            toolCallInput: JSON.parse(data.arguments ?? '{}')
-          }
+          return [
+            {
+              type: 'tool_call_end',
+              toolCallId: data.call_id,
+              toolName: data.name,
+              toolCallInput: JSON.parse(data.arguments ?? '{}')
+            }
+          ]
         } catch {
-          yield {
-            type: 'tool_call_end',
-            toolCallId: data.call_id,
-            toolName: data.name,
-            toolCallInput: {}
-          }
+          return [
+            {
+              type: 'tool_call_end',
+              toolCallId: data.call_id,
+              toolName: data.name,
+              toolCallInput: {}
+            }
+          ]
         }
-        break
       case 'response.completed': {
         const requestCompletedAt = Date.now()
         if (data.response?.usage?.output_tokens !== undefined) {
@@ -1824,38 +1809,156 @@ async function* sendOpenAIResponses(
         }
         const rawInputTokens = data.response?.usage?.input_tokens ?? 0
         const cachedTokens = data.response?.usage?.input_tokens_details?.cached_tokens ?? 0
-        yield {
-          type: 'message_end',
-          stopReason: data.response?.status,
-          providerResponseId: data.response?.id,
-          usage: data.response?.usage
-            ? {
-                inputTokens: rawInputTokens,
-                outputTokens: data.response.usage.output_tokens ?? 0,
-                billableInputTokens: Math.max(0, rawInputTokens - cachedTokens),
-                contextTokens: rawInputTokens,
-                ...(cachedTokens > 0 ? { cacheReadTokens: cachedTokens } : {}),
-                ...(data.response.usage.output_tokens_details?.reasoning_tokens
-                  ? { reasoningTokens: data.response.usage.output_tokens_details.reasoning_tokens }
-                  : {})
-              }
-            : undefined,
-          timing: {
-            totalMs: requestCompletedAt - requestStartedAt,
-            ttftMs: firstTokenAt ? firstTokenAt - requestStartedAt : undefined,
-            tps: computeTps(outputTokens, firstTokenAt, requestCompletedAt)
+        return [
+          {
+            type: 'message_end',
+            stopReason: data.response?.status,
+            providerResponseId: data.response?.id,
+            usage: data.response?.usage
+              ? {
+                  inputTokens: rawInputTokens,
+                  outputTokens: data.response.usage.output_tokens ?? 0,
+                  billableInputTokens: Math.max(0, rawInputTokens - cachedTokens),
+                  contextTokens: rawInputTokens,
+                  ...(cachedTokens > 0 ? { cacheReadTokens: cachedTokens } : {}),
+                  ...(data.response.usage.output_tokens_details?.reasoning_tokens
+                    ? {
+                        reasoningTokens: data.response.usage.output_tokens_details.reasoning_tokens
+                      }
+                    : {})
+                }
+              : undefined,
+            timing: {
+              totalMs: requestCompletedAt - requestStartedAt,
+              ttftMs: firstTokenAt ? firstTokenAt - requestStartedAt : undefined,
+              tps: computeTps(outputTokens, firstTokenAt, requestCompletedAt)
+            }
           }
-        }
-        break
+        ]
       }
       case 'response.failed':
-        yield { type: 'error', error: { type: 'api_error', message: JSON.stringify(data) } }
-        break
       case 'error':
-        yield { type: 'error', error: { type: 'api_error', message: JSON.stringify(data) } }
-        break
+        return [{ type: 'error', error: { type: 'api_error', message: JSON.stringify(data) } }]
+      default:
+        return []
     }
   }
+
+  const streamHttpResponse = async function* (): AsyncIterable<StreamEvent> {
+    const response = await sendFetchRequest(
+      url,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal
+      },
+      config.allowInsecureTls ?? true,
+      config.useSystemProxy ?? false
+    )
+    for await (const sse of parseSSEStream(response)) {
+      if (!sse.data || sse.data === '[DONE]') continue
+      let data: Parameters<typeof handleResponseEvent>[1] = null
+      try {
+        data = JSON.parse(sse.data) as Parameters<typeof handleResponseEvent>[1]
+      } catch {
+        continue
+      }
+      for (const event of handleResponseEvent(sse.event, data)) {
+        yield event
+      }
+    }
+  }
+
+  const websocketConfig = resolveResponsesWebsocketConfig({
+    providerType: config.type,
+    websocketMode: config.websocketMode,
+    websocketUrl: config.websocketUrl,
+    baseUrl: url
+  })
+  const circuitReason = websocketConfig.websocketUrl
+    ? responsesWsManager.getCircuitReason(
+        config.providerId ?? config.providerBuiltinId ?? 'unknown',
+        websocketConfig.websocketUrl
+      )
+    : null
+
+  if (
+    websocketConfig.mode === 'disabled' ||
+    !websocketConfig.websocketUrl ||
+    websocketConfig.source === 'invalid' ||
+    circuitReason
+  ) {
+    yield* streamHttpResponse()
+    return
+  }
+
+  const websocketUrl = websocketConfig.websocketUrl
+  const connectionKey =
+    !config.sessionId || !config.model
+      ? null
+      : `${config.providerId ?? config.providerBuiltinId ?? 'unknown'}::${config.model}::${config.sessionId}::${websocketUrl}`
+  const queue: StreamEvent[] = []
+  let resolveQueue: (() => void) | null = null
+  let managerDone = false
+
+  const pushEvent = (streamEvent: StreamEvent): void => {
+    queue.push(streamEvent)
+    if (resolveQueue) {
+      resolveQueue()
+      resolveQueue = null
+    }
+  }
+
+  const waitForQueue = (): Promise<void> =>
+    new Promise<void>((resolve) => {
+      if (queue.length > 0 || managerDone) {
+        resolve()
+        return
+      }
+      resolveQueue = resolve
+    })
+
+  const wsPromise = responsesWsManager.executeRequest({
+    providerKey: config.providerId ?? config.providerBuiltinId ?? 'unknown',
+    sessionKey: connectionKey,
+    websocketUrl,
+    headers,
+    httpBody: JSON.stringify(body),
+    useSystemProxy: config.useSystemProxy ?? false,
+    allowInsecureTls: config.allowInsecureTls ?? true,
+    signal,
+    label: config.sessionId ?? config.providerId ?? config.model,
+    onEvent: (eventType, payload) => {
+      for (const event of handleResponseEvent(eventType, payload as Parameters<typeof handleResponseEvent>[1])) {
+        pushEvent(event)
+      }
+    }
+  })
+
+  void wsPromise.finally(() => {
+    managerDone = true
+    if (resolveQueue) {
+      resolveQueue()
+      resolveQueue = null
+    }
+  })
+
+  while (!managerDone || queue.length > 0) {
+    await waitForQueue()
+    while (queue.length > 0) {
+      yield queue.shift()!
+    }
+  }
+
+  const wsResult = await wsPromise
+  if (signal?.aborted) return
+  if (wsResult.kind === 'streamed') return
+  if (wsResult.kind === 'fallback') {
+    yield* streamHttpResponse()
+    return
+  }
+  throw new Error(wsResult.error)
 }
 
 async function* sendProviderMessage(
@@ -2684,9 +2787,7 @@ function buildToolHandlers(): Record<string, ToolHandler> {
                 matches: results,
                 truncated: true,
                 limitReason: 'max_results',
-                warnings: buildCronSearchWarnings([
-                  'Cron grep reached the 200 match limit'
-                ])
+                warnings: buildCronSearchWarnings(['Cron grep reached the 200 match limit'])
               })
             }
           }
@@ -3551,7 +3652,7 @@ async function runCronAgentInternal(
     systemPrompt: definition.systemPrompt,
     model: modelOverride || definition.model || providerConfig.model,
     temperature: definition.temperature ?? providerConfig.temperature,
-    sessionId: sessionId ?? undefined
+    sessionId: sessionId ?? jobId
   }
 
   if (innerProvider.requiresApiKey !== false && !innerProvider.apiKey) {

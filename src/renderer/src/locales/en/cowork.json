@@ -22,7 +22,9 @@
     "progress": "Progress",
     "teamProgress": "Team Progress",
     "agentWorking": "Agent is working...",
-    "teamWorking": "Team is working..."
+    "teamWorking": "Team is working...",
+    "inlineSummary": "{{total}} tasks, {{completed}} completed",
+    "changedFiles": "{{count}} files changed"
   },
   "team": {
     "noActiveTeam": "No active team",

@@ -27,7 +27,13 @@ import { useTheme } from 'next-themes'
 import { AnimatePresence } from 'motion/react'
 import { useUIStore, type SettingsTab } from '@renderer/stores/ui-store'
 import { useChatStore } from '@renderer/stores/chat-store'
-import { useSettingsStore } from '@renderer/stores/settings-store'
+import {
+  clampMaxParallelToolCalls,
+  DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+  MAX_MAX_PARALLEL_TOOL_CALLS,
+  MIN_MAX_PARALLEL_TOOL_CALLS,
+  useSettingsStore
+} from '@renderer/stores/settings-store'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import { confirm } from '@renderer/components/ui/confirm-dialog'
@@ -79,6 +85,11 @@ import {
   listUsageEvents,
   type UsageTimelineBucket
 } from '@renderer/lib/usage-analytics'
+import {
+  getLiveOutputCursorClass,
+  getLiveOutputDotClass,
+  getLiveOutputSurfaceClass
+} from '@renderer/lib/live-output-animation'
 
 const DEFAULT_GLOBAL_MEMORY_TEMPLATES = {
   soul: `# SOUL.md
@@ -593,7 +604,9 @@ function GeneralPanel(): React.JSX.Element {
           <span className="font-medium">{t('general.update.status')}</span>
           <span className="text-xs text-muted-foreground">
             {t('general.update.currentVersion', { version: currentVersion })}
-            {latestVersion && <> · {t('general.update.latestVersion', { version: latestVersion })}</>}
+            {latestVersion && (
+              <> · {t('general.update.latestVersion', { version: latestVersion })}</>
+            )}
           </span>
         </div>
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/70 px-3 py-2">
@@ -720,7 +733,9 @@ function GeneralPanel(): React.JSX.Element {
 
       <section className="space-y-3">
         <div>
-          <label className="text-sm font-medium">{t('general.projectDefaultDirectory.title')}</label>
+          <label className="text-sm font-medium">
+            {t('general.projectDefaultDirectory.title')}
+          </label>
           <p className="text-xs text-muted-foreground">
             {t('general.projectDefaultDirectory.desc')}
           </p>
@@ -888,6 +903,67 @@ function GeneralPanel(): React.JSX.Element {
             onCheckedChange={(checked) => settings.updateSettings({ animationsEnabled: checked })}
           />
         </div>
+        <div className="max-w-2xl space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
+          <div>
+            <label className="text-sm font-medium">{t('general.liveOutputAnimation.title')}</label>
+            <p className="text-xs text-muted-foreground">{t('general.liveOutputAnimation.desc')}</p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(['agile', 'elegant'] as const).map((style) => {
+              const active = settings.liveOutputAnimationStyle === style
+              return (
+                <button
+                  key={style}
+                  type="button"
+                  onClick={() => settings.updateSettings({ liveOutputAnimationStyle: style })}
+                  className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                    active
+                      ? 'border-primary/50 bg-primary/10 text-foreground'
+                      : 'border-border/60 bg-background/60 text-muted-foreground hover:bg-background'
+                  }`}
+                >
+                  <div className="text-sm font-medium">
+                    {t(`general.liveOutputAnimation.options.${style}.label`)}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {t(`general.liveOutputAnimation.options.${style}.desc`)}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+          <div className="rounded-lg border border-border/60 bg-background/70 px-3 py-3">
+            <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+              <Sparkles className="size-3.5 text-primary/80" />
+              <span>{t('general.liveOutputAnimation.preview')}</span>
+            </div>
+            <div className="text-sm text-foreground">
+              <span
+                className={`${getLiveOutputSurfaceClass(settings.liveOutputAnimationStyle)} inline-block max-w-full whitespace-pre-wrap break-words leading-relaxed`}
+              >
+                {t('general.liveOutputAnimation.previewText')}
+              </span>
+              <span className={getLiveOutputCursorClass(settings.liveOutputAnimationStyle)} />
+            </div>
+            <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="flex gap-1">
+                <span
+                  className={getLiveOutputDotClass(settings.liveOutputAnimationStyle)}
+                  style={{ animationDelay: '0ms' }}
+                />
+                <span
+                  className={getLiveOutputDotClass(settings.liveOutputAnimationStyle)}
+                  style={{ animationDelay: '150ms' }}
+                />
+                <span
+                  className={getLiveOutputDotClass(settings.liveOutputAnimationStyle)}
+                  style={{ animationDelay: '300ms' }}
+                />
+              </span>
+              <span>{t('general.liveOutputAnimation.previewStatus')}</span>
+            </div>
+          </div>
+        </div>
       </section>
 
       <Separator />
@@ -979,6 +1055,54 @@ function GeneralPanel(): React.JSX.Element {
         {settings.teamToolsEnabled && (
           <p className="text-xs text-muted-foreground/70">{t('general.teamToolsEnabled')}</p>
         )}
+      </section>
+
+      <Separator />
+
+      {/* Tool Parallelism */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between max-w-lg">
+          <div>
+            <label className="text-sm font-medium">{t('general.maxParallelToolCalls')}</label>
+            <p className="text-xs text-muted-foreground">{t('general.maxParallelToolCallsDesc')}</p>
+          </div>
+          <span className="text-sm font-mono text-muted-foreground">
+            {settings.maxParallelToolCalls}
+          </span>
+        </div>
+        <Slider
+          value={[settings.maxParallelToolCalls]}
+          onValueChange={([value]) =>
+            settings.updateSettings({
+              maxParallelToolCalls: clampMaxParallelToolCalls(value)
+            })
+          }
+          min={MIN_MAX_PARALLEL_TOOL_CALLS}
+          max={MAX_MAX_PARALLEL_TOOL_CALLS}
+          step={1}
+          className="max-w-lg"
+        />
+        <div className="flex items-center justify-between max-w-lg text-[10px] text-muted-foreground/60">
+          <span>{MIN_MAX_PARALLEL_TOOL_CALLS}</span>
+          <span>{DEFAULT_MAX_PARALLEL_TOOL_CALLS}</span>
+          <span>{MAX_MAX_PARALLEL_TOOL_CALLS}</span>
+        </div>
+        <p className="text-xs text-muted-foreground/70">{t('general.maxParallelToolCallsHint')}</p>
+        <div className="flex items-center gap-1">
+          {[1, 4, 8, 12, 16].map((value) => (
+            <button
+              key={value}
+              onClick={() => settings.updateSettings({ maxParallelToolCalls: value })}
+              className={`rounded px-2 py-0.5 text-[10px] transition-colors ${
+                settings.maxParallelToolCalls === value
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {value}
+            </button>
+          ))}
+        </div>
       </section>
 
       <Separator />
@@ -1199,7 +1323,9 @@ function GeneralPanel(): React.JSX.Element {
               fontFamily: '',
               fontSize: 16,
               animationsEnabled: true,
+              liveOutputAnimationStyle: 'agile',
               toolbarCollapsedByDefault: false,
+              maxParallelToolCalls: DEFAULT_MAX_PARALLEL_TOOL_CALLS,
               autoUpdateEnabled: true,
               apiKey: currentKey
             })
@@ -2112,7 +2238,9 @@ function ModelPanel(): React.JSX.Element {
           {/* New Session Default Model */}
           <section className="space-y-3">
             <div>
-              <label className="text-sm font-medium">{t('model.newSessionDefaultModel.title')}</label>
+              <label className="text-sm font-medium">
+                {t('model.newSessionDefaultModel.title')}
+              </label>
               <p className="text-xs text-muted-foreground">
                 {t('model.newSessionDefaultModel.desc')}
               </p>

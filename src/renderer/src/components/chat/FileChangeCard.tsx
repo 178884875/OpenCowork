@@ -1,9 +1,6 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { useTheme } from 'next-themes'
 import { FileCode, FilePlus2, FileX2, FileEdit, Loader2, CheckCircle2, XCircle } from 'lucide-react'
-import { PrismAsyncLight as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { cn } from '@renderer/lib/utils'
 import type { ToolCallStatus } from '@renderer/lib/agent/types'
 import type { ToolResultContent } from '@renderer/lib/api/types'
@@ -102,6 +99,39 @@ function normalizeLineEndings(text: string): string {
 function lineCount(text: string): number {
   const normalized = normalizeLineEndings(text)
   return normalized.length === 0 ? 0 : normalized.split('\n').length
+}
+
+function CodeFrame({
+  content,
+  maxHeight = 320,
+  emptyLabel = ' '
+}: {
+  content: string
+  maxHeight?: number
+  emptyLabel?: string
+}): React.JSX.Element {
+  const lines = React.useMemo(() => normalizeLineEndings(content).split('\n'), [content])
+
+  return (
+    <div
+      className="overflow-auto border border-zinc-800/80 bg-[#0d0f11]"
+      style={{ maxHeight, fontFamily: MONO_FONT }}
+    >
+      {lines.map((line, index) => (
+        <div
+          key={`${index}-${line.length}`}
+          className="grid grid-cols-[56px_minmax(0,1fr)] border-b border-zinc-900/80 text-[11px] leading-5 last:border-b-0"
+        >
+          <span className="select-none border-r border-zinc-800/80 px-2 py-1 text-right text-zinc-600">
+            {index + 1}
+          </span>
+          <span className="min-w-0 whitespace-pre-wrap break-all px-3 py-1 text-zinc-200">
+            {line || (index === 0 ? emptyLabel : ' ')}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function snapshotText(
@@ -384,7 +414,7 @@ function InlineDiff({
   toolbarEnd?: React.ReactNode
 }): React.JSX.Element {
   const chunks = React.useMemo(() => foldContext(computeDiff(oldStr, newStr)), [oldStr, newStr])
-  return <CodeDiffViewer chunks={chunks} defaultMode="split" toolbarEnd={toolbarEnd} />
+  return <CodeDiffViewer chunks={chunks} defaultMode="inline" toolbarEnd={toolbarEnd} />
 }
 
 function NewFileContent({
@@ -397,61 +427,31 @@ function NewFileContent({
   isStreaming?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation('chat')
-  const { resolvedTheme } = useTheme()
-  const lang = detectLang(filePath)
   const lines = content.split('\n').length
   const truncated = !isStreaming && lines > 50
   const displayed = truncated ? content.split('\n').slice(0, 50).join('\n') : content
   const [expanded, setExpanded] = React.useState(false)
-  const codeRef = React.useRef<HTMLDivElement>(null)
-
-  React.useEffect(() => {
-    if (isStreaming && codeRef.current) {
-      codeRef.current.scrollTop = codeRef.current.scrollHeight
-    }
-  }, [isStreaming, content])
 
   return (
-    <div>
-      <div
-        ref={codeRef}
-        style={{
-          maxHeight: isStreaming ? '400px' : expanded ? '600px' : '200px',
-          overflow: 'auto'
-        }}
-      >
-        <SyntaxHighlighter
-          language={lang}
-          style={resolvedTheme === 'light' ? oneLight : oneDark}
-          customStyle={{
-            margin: 0,
-            padding: '0.5rem',
-            fontSize: '11px',
-            background: 'transparent',
-            fontFamily: MONO_FONT
-          }}
-          codeTagProps={{ style: { fontFamily: 'inherit' } }}
-          showLineNumbers
-          lineNumberStyle={{
-            minWidth: '2em',
-            paddingRight: '0.5em',
-            color: resolvedTheme === 'light' ? 'rgba(15,23,42,0.28)' : 'rgba(74,222,128,0.3)',
-            userSelect: 'none'
-          }}
-          lineProps={() => ({
-            style: {
-              background:
-                resolvedTheme === 'light' ? 'rgba(15,23,42,0.035)' : 'rgba(74,222,128,0.05)'
-            }
-          })}
+    <div className="space-y-2 px-3 py-3">
+      <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500">
+        <span
+          className="rounded border border-zinc-800/80 bg-[#16181c] px-1.5 py-0.5 font-mono uppercase"
+          style={{ fontFamily: MONO_FONT }}
         >
-          {expanded || isStreaming ? content : displayed}
-        </SyntaxHighlighter>
+          {detectLang(filePath)}
+        </span>
+        <span>{lines} lines</span>
+        {isStreaming ? <span>{t('fileChange.streaming')}</span> : null}
       </div>
+      <CodeFrame
+        content={expanded || isStreaming ? content : displayed}
+        maxHeight={isStreaming ? 400 : 240}
+      />
       {truncated && !expanded && (
         <button
           onClick={() => setExpanded(true)}
-          className="w-full border-t border-border/50 py-1 text-center text-[10px] text-muted-foreground/70 transition-colors hover:text-foreground dark:border-zinc-800/30 dark:text-zinc-500/60 dark:hover:text-zinc-400"
+          className="w-full text-center text-[10px] text-zinc-500 transition-colors hover:text-zinc-200"
         >
           {t('fileChange.moreLines', { count: lines - 50 })}
         </button>
@@ -479,20 +479,17 @@ function SnapshotSummaryNotice({
     .join(' · ')
 
   return (
-    <div className="px-3 py-2 text-[11px] text-muted-foreground/65 space-y-2">
+    <div className="space-y-3 px-3 py-3 text-[11px] text-zinc-400">
       <div className="space-y-1">
         <p>Large file snapshot summarized to avoid storing full before/after text in memory.</p>
-        <p
-          className="font-mono text-[10px] text-muted-foreground/45"
-          style={{ fontFamily: MONO_FONT }}
-        >
+        <p className="font-mono text-[10px] text-zinc-600" style={{ fontFamily: MONO_FONT }}>
           {details}
         </p>
       </div>
       {children}
       {after.previewText && (
         <pre
-          className="overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 px-2.5 py-2 text-[11px] text-foreground/80 dark:bg-zinc-950 dark:text-zinc-300/80"
+          className="overflow-auto whitespace-pre-wrap break-words rounded-md border border-zinc-800/80 bg-[#111214] px-2.5 py-2 text-[11px] text-zinc-200"
           style={{ fontFamily: MONO_FONT, maxHeight: '180px' }}
         >
           {after.previewText}
@@ -522,34 +519,31 @@ function PendingEditPreview({ input }: { input: Record<string, unknown> }): Reac
   const hasCounts = oldChars > 0 || newChars > 0
 
   return (
-    <div className="px-3 py-2 space-y-2 text-[11px] text-muted-foreground/70">
+    <div className="px-3 py-3 space-y-2 text-[11px] text-zinc-300">
       <div className="flex flex-wrap items-center gap-2">
         {filePath && (
-          <span
-            className="font-mono text-[10px] text-muted-foreground/50"
-            style={{ fontFamily: MONO_FONT }}
-          >
+          <span className="font-mono text-[10px] text-zinc-500" style={{ fontFamily: MONO_FONT }}>
             {shortPath(filePath)}
           </span>
         )}
         {hasCounts && (
-          <span className="text-[10px] text-muted-foreground/50">
+          <span className="text-[10px] text-zinc-500">
             {t('fileChange.charTransition', { from: oldChars, to: newChars })}
           </span>
         )}
       </div>
-      {explanation && <p className="text-[11px] text-muted-foreground/60">{explanation}</p>}
+      {explanation && <p className="text-[11px] text-zinc-400">{explanation}</p>}
       {showingExcerpt && (
-        <p className="text-[10px] text-muted-foreground/45">{t('fileChange.showingExcerpt')}</p>
+        <p className="text-[10px] text-zinc-600">{t('fileChange.showingExcerpt')}</p>
       )}
       {(oldPreview || newPreview) && (
         <div className="grid gap-2 md:grid-cols-2">
           <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground/45">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-600">
               {t('fileChange.oldString')}
             </div>
             <pre
-              className="overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 px-2.5 py-2 text-[11px] text-foreground/75 dark:bg-zinc-950 dark:text-zinc-300/75"
+              className="overflow-auto whitespace-pre-wrap break-words rounded-md border border-zinc-800/80 bg-[#111214] px-2.5 py-2 text-[11px] text-zinc-200"
               style={{ fontFamily: MONO_FONT, maxHeight: '180px' }}
             >
               {oldPreview || t('fileChange.empty')}
@@ -557,11 +551,11 @@ function PendingEditPreview({ input }: { input: Record<string, unknown> }): Reac
             </pre>
           </div>
           <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground/45">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-600">
               {t('fileChange.newString')}
             </div>
             <pre
-              className="overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 px-2.5 py-2 text-[11px] text-foreground/75 dark:bg-zinc-950 dark:text-zinc-300/75"
+              className="overflow-auto whitespace-pre-wrap break-words rounded-md border border-zinc-800/80 bg-[#111214] px-2.5 py-2 text-[11px] text-zinc-200"
               style={{ fontFamily: MONO_FONT, maxHeight: '180px' }}
             >
               {newPreview || t('fileChange.empty')}
@@ -693,9 +687,9 @@ function PendingWritePreview({
   const visiblePreview = content ?? preview
 
   return (
-    <div className="px-3 py-2 space-y-2">
+    <div className="px-3 py-3 space-y-2">
       {(lineTotal !== null || charTotal !== null) && (
-        <div className="text-[10px] text-muted-foreground/50">
+        <div className="text-[10px] text-zinc-500">
           {[
             lineTotal !== null ? t('fileChange.lineCount', { count: lineTotal }) : null,
             charTotal !== null ? t('fileChange.charCount', { count: charTotal }) : null,
@@ -707,7 +701,7 @@ function PendingWritePreview({
       )}
       {visiblePreview && (
         <pre
-          className="overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 px-2.5 py-2 text-[11px] text-foreground/80 dark:bg-zinc-950 dark:text-zinc-300/80"
+          className="overflow-auto whitespace-pre-wrap break-words rounded-md border border-zinc-800/80 bg-[#111214] px-2.5 py-2 text-[11px] text-zinc-200"
           style={{ fontFamily: MONO_FONT, maxHeight: isStreaming ? '240px' : '180px' }}
         >
           {visiblePreview}
@@ -894,7 +888,7 @@ export function FileChangeCard({
   return (
     <div
       className={cn(
-        'my-5 rounded-lg border overflow-hidden transition-all duration-200',
+        'my-4 rounded-lg border overflow-hidden bg-[#111214] text-zinc-100 transition-all duration-200 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]',
         borderColor
       )}
     >
@@ -904,8 +898,8 @@ export function FileChangeCard({
           setCollapsed((v) => !v)
         }}
         className={cn(
-          'flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/20',
-          status === 'running' && 'bg-blue-500/[0.03]'
+          'flex w-full items-center gap-2 border-b border-zinc-800/80 px-3 py-2.5 text-left transition-colors hover:bg-[#17191d]',
+          status === 'running' && 'bg-blue-500/[0.05]'
         )}
       >
         <FileIcon name={name} />
@@ -913,13 +907,13 @@ export function FileChangeCard({
           {filePath ? (
             fileName(filePath)
           ) : (
-            <span className="text-muted-foreground/50 italic animate-pulse">
+            <span className="text-zinc-500 italic animate-pulse">
               {t('toolCall.receivingArgs')}
             </span>
           )}
         </span>
         <span
-          className="text-[10px] text-muted-foreground/40 font-mono truncate max-w-[120px] hidden sm:block"
+          className="text-[10px] text-zinc-500 font-mono truncate max-w-[180px] hidden sm:block"
           title={filePath}
         >
           {shortPath(filePath)}
@@ -936,9 +930,7 @@ export function FileChangeCard({
           </span>
         )}
         {elapsed && (
-          <span className="text-[9px] text-muted-foreground/30 tabular-nums shrink-0">
-            {elapsed}
-          </span>
+          <span className="text-[9px] text-zinc-600 tabular-nums shrink-0">{elapsed}</span>
         )}
         <StatusIndicator status={status} />
       </button>
@@ -950,7 +942,7 @@ export function FileChangeCard({
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="overflow-hidden border-t border-inherit bg-muted/20 dark:bg-zinc-950"
+            className="overflow-hidden border-t border-zinc-800/80 bg-[#0f1012]"
           >
             {name === 'Edit' && trackedChange && <TrackedEditDiff change={trackedChange} />}
             {name === 'Edit' && !trackedChange && status !== 'completed' && status !== 'error' && (
@@ -1024,7 +1016,7 @@ export function FileChangeCard({
               )}
 
             {name === 'Delete' && (
-              <div className="px-3 py-2 text-[11px] text-red-400/60 italic">
+              <div className="px-3 py-3 text-[11px] text-red-300/80 italic">
                 {t('fileChange.fileWillBeDeleted')}
               </div>
             )}
@@ -1033,9 +1025,9 @@ export function FileChangeCard({
       </AnimatePresence>
 
       {trackedChange && (
-        <div className="border-t border-border/50 bg-background/40 px-3 py-2">
+        <div className="border-t border-zinc-800/80 bg-[#15171a] px-3 py-2">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] text-muted-foreground/70">
+            <p className="text-[10px] text-zinc-500">
               {trackedChange.status === 'accepted'
                 ? t('fileChange.kept')
                 : trackedChange.status === 'reverted'
@@ -1071,7 +1063,7 @@ export function FileChangeCard({
       )}
 
       {(error || (parsedOutputError && !error)) && (
-        <div className="border-t border-destructive/20 px-3 py-1.5 bg-destructive/5">
+        <div className="border-t border-destructive/20 px-3 py-2 bg-destructive/8">
           <p
             className="text-[11px] text-destructive font-mono whitespace-pre-wrap break-words"
             style={{ fontFamily: MONO_FONT }}
@@ -1081,7 +1073,7 @@ export function FileChangeCard({
         </div>
       )}
       {outputStr && !error && !parsedOutputError && isOutputError && !isSuccess && (
-        <div className="border-t border-destructive/20 px-3 py-1.5 bg-destructive/5">
+        <div className="border-t border-destructive/20 px-3 py-2 bg-destructive/8">
           <p
             className="text-[11px] text-destructive/80 font-mono whitespace-pre-wrap break-words"
             style={{ fontFamily: MONO_FONT }}

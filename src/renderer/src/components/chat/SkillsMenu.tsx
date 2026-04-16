@@ -5,6 +5,7 @@ import {
   Sparkles,
   Loader2,
   Command,
+  Paperclip,
   MessageSquare,
   Settings2,
   Check,
@@ -34,6 +35,7 @@ import { listCommands, type CommandCatalogItem } from '@renderer/lib/commands/co
 interface SkillsMenuProps {
   onSelectSkill: (skillName: string) => void
   onSelectCommand?: (commandName: string) => void
+  onAttachMedia?: () => void
   disabled?: boolean
   projectId?: string | null
 }
@@ -41,6 +43,7 @@ interface SkillsMenuProps {
 export function SkillsMenu({
   onSelectSkill,
   onSelectCommand,
+  onAttachMedia,
   disabled = false,
   projectId
 }: SkillsMenuProps): React.JSX.Element {
@@ -136,6 +139,23 @@ export function SkillsMenu({
       <DropdownMenuContent align="start" className="w-56">
         <DropdownMenuLabel>{t('skills.addToChat')}</DropdownMenuLabel>
         <DropdownMenuSeparator />
+
+        {onAttachMedia && (
+          <>
+            <DropdownMenuItem
+              onClick={() => {
+                setOpen(false)
+                requestAnimationFrame(() => {
+                  onAttachMedia()
+                })
+              }}
+            >
+              <Paperclip className="mr-2 size-4" />
+              <span>{t('skills.attachMedia', { defaultValue: '添加照片和文件' })}</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
 
         <DropdownMenuGroup>
           <DropdownMenuSub>

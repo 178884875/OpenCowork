@@ -604,20 +604,19 @@ export const useUIStore = create<UIStore>((set, get) => ({
   planMode: false,
   enterPlanMode: (sessionId) =>
     set((state) => {
-      const resolvedSessionId = sessionId ?? state.activeScopedSessionId ?? useChatStore.getState().activeSessionId
+      const resolvedSessionId =
+        sessionId ?? state.activeScopedSessionId ?? useChatStore.getState().activeSessionId
       return {
         planMode: true,
         planModesBySession: resolvedSessionId
           ? { ...state.planModesBySession, [resolvedSessionId]: true }
-          : state.planModesBySession,
-        rightPanelTab: 'plan',
-        rightPanelOpen: true,
-        leftSidebarOpen: false
+          : state.planModesBySession
       }
     }),
   exitPlanMode: (sessionId) =>
     set((state) => {
-      const resolvedSessionId = sessionId ?? state.activeScopedSessionId ?? useChatStore.getState().activeSessionId
+      const resolvedSessionId =
+        sessionId ?? state.activeScopedSessionId ?? useChatStore.getState().activeSessionId
       const nextPlanModesBySession = { ...state.planModesBySession }
       if (resolvedSessionId) {
         delete nextPlanModesBySession[resolvedSessionId]
@@ -632,7 +631,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
     }),
   planModesBySession: {},
   isPlanModeEnabled: (sessionId) => {
-    const resolvedSessionId = sessionId ?? get().activeScopedSessionId ?? useChatStore.getState().activeSessionId
+    const resolvedSessionId =
+      sessionId ?? get().activeScopedSessionId ?? useChatStore.getState().activeSessionId
     if (!resolvedSessionId) return false
     return Boolean(get().planModesBySession[resolvedSessionId])
   },

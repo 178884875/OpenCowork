@@ -1590,9 +1590,7 @@ export const useChatStore = create<ChatStore>()(
       const deletedSession = get().sessions.find((session) => session.id === id)
       const wasActiveSession = get().activeSessionId === id
       const fallbackProjectId = deletedSession?.projectId ?? get().activeProjectId ?? null
-      const fallbackMode = deletedSession?.mode ?? 'chat'
       let nextActiveId: string | null = null
-      let shouldCreateReplacementSession = false
 
       set((state) => {
         const idx = state.sessions.findIndex((s) => s.id === id)
@@ -1604,18 +1602,9 @@ export const useChatStore = create<ChatStore>()(
         }
 
         if (wasActiveSession) {
-          const sameProjectSessions = deletedProjectId
-            ? state.sessions
-                .filter((session) => session.projectId === deletedProjectId)
-                .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-            : []
-
-          state.activeSessionId = sameProjectSessions[0]?.id ?? null
+          state.activeSessionId = null
           if (deletedProjectId) {
             state.activeProjectId = deletedProjectId
-          }
-          if (!state.activeSessionId) {
-            shouldCreateReplacementSession = true
           }
         }
 
@@ -1638,10 +1627,6 @@ export const useChatStore = create<ChatStore>()(
       useInputDraftStore.getState().removeSessionDraft(id)
       clearPendingMessageFlushes(deletedSession?.messages.map((message) => message.id) ?? [])
       dbDeleteSession(id)
-
-      if (shouldCreateReplacementSession) {
-        nextActiveId = get().createSession(fallbackMode, fallbackProjectId ?? undefined)
-      }
 
       if (wasLiveSession) {
         agentState.switchToolCallSession(null, nextActiveId)

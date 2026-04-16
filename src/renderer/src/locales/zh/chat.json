@@ -400,6 +400,7 @@
   "thinking": {
     "thoughtFor": "思考了 {{seconds}} 秒",
     "thinkingFor": "正在思考 {{seconds}} 秒",
+    "pending": "正在思考",
     "thinkingEllipsis": "思考中…",
     "thoughts": "思考过程"
   },
@@ -514,6 +515,8 @@
     "saveAndResend": "保存并重发"
   },
   "assistantMessage": {
+    "changedFiles_one": "编辑了 {{count}} 个文件",
+    "changedFiles_other": "编辑了 {{count}} 个文件",
     "showWorkspace": "展开工作空间（{{count}} 个工具执行）",
     "collapseWorkspace": "收起工作空间（{{count}} 个工具执行）",
     "showToolCalls": "显示 {{count}} 个工具调用",

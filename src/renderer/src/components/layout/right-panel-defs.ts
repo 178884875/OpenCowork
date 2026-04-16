@@ -1,6 +1,5 @@
 import {
   Activity,
-  ClipboardList,
   Database,
   FileOutput,
   FolderTree,
@@ -37,7 +36,6 @@ export interface RightPanelSectionDef {
 }
 
 export const RIGHT_PANEL_TAB_DEFS: RightPanelTabDef[] = [
-  { value: 'plan', labelKey: 'plan', section: 'execution', icon: ClipboardList },
   { value: 'files', labelKey: 'files', section: 'resources', icon: FolderTree },
   { value: 'preview', labelKey: 'preview', section: 'resources', icon: Monitor },
   { value: 'terminal', labelKey: 'terminal', section: 'resources', icon: SquareTerminal },

@@ -22,7 +22,9 @@
     "progress": "进度",
     "teamProgress": "团队进度",
     "agentWorking": "代理工作中...",
-    "teamWorking": "团队工作中..."
+    "teamWorking": "团队工作中...",
+    "inlineSummary": "共 {{total}} 个任务，已经完成 {{completed}} 个",
+    "changedFiles": "{{count}} 个文件已更改"
   },
   "team": {
     "noActiveTeam": "暂无活动团队",

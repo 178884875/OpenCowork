@@ -10,7 +10,6 @@ import {
   copyMermaidToClipboard,
   useMermaidThemeVersion
 } from '@renderer/lib/utils/mermaid-theme'
-import { Avatar, AvatarFallback } from '@renderer/components/ui/avatar'
 import {
   Copy,
   Check,
@@ -50,16 +49,15 @@ import { ToolCallGroup } from './ToolCallGroup'
 import { FileChangeCard } from './FileChangeCard'
 import { RunChangeReviewCard } from './RunChangeReviewCard'
 import { SubAgentCard } from './SubAgentCard'
-import { TaskCard } from './TodoCard'
 import { ThinkingBlock } from './ThinkingBlock'
 import { TeamEventCard } from './TeamEventCard'
 import { AskUserQuestionCard } from './AskUserQuestionCard'
 import { OrchestrationBlock } from './OrchestrationBlock'
+import { PlanReviewCard } from './PlanReviewCard'
 import type { OrchestrationRun } from '@renderer/lib/orchestration/types'
 import { TASK_TOOL_NAME } from '@renderer/lib/agent/sub-agents/create-tool'
 import { TEAM_TOOL_NAMES } from '@renderer/lib/agent/teams/register'
 import { useProviderStore } from '@renderer/stores/provider-store'
-import { ModelIcon } from '@renderer/components/settings/provider-icons'
 import {
   formatTokens,
   calculateCost,
@@ -70,6 +68,11 @@ import {
 import { useMemoizedTokens } from '@renderer/hooks/use-estimated-tokens'
 import { getLastDebugInfo, getRequestTraceInfo } from '@renderer/lib/debug-store'
 import { MONO_FONT } from '@renderer/lib/constants'
+import {
+  getLiveOutputCursorClass,
+  getLiveOutputDotClass,
+  getLiveOutputSurfaceClass
+} from '@renderer/lib/live-output-animation'
 import type { ToolCallState } from '@renderer/lib/agent/types'
 import {
   DESKTOP_CLICK_TOOL_NAME,
@@ -126,6 +129,7 @@ const SPECIAL_TOOLS = new Set([
   'Edit',
   'Delete',
   'AskUserQuestion',
+  'ExitPlanMode',
   'visualize_show_widget',
   IMAGE_GENERATE_TOOL_NAME,
   DESKTOP_SCREENSHOT_TOOL_NAME,
@@ -134,6 +138,7 @@ const SPECIAL_TOOLS = new Set([
 ])
 const WORKSPACE_PERSISTENT_TOOLS = new Set([
   'AskUserQuestion',
+  'ExitPlanMode',
   'visualize_show_widget',
   IMAGE_GENERATE_TOOL_NAME,
   TASK_TOOL_NAME,
@@ -141,36 +146,71 @@ const WORKSPACE_PERSISTENT_TOOLS = new Set([
 ])
 const EMPTY_LIVE_TOOL_CALLS: ToolCallState[] = []
 
-function isWorkspaceCollapsibleTool(name: string): boolean {
-  return !WORKSPACE_PERSISTENT_TOOLS.has(name)
+function shouldShowToolInMessageList(name: string): boolean {
+  return name !== 'TaskCreate' && name !== 'TaskUpdate'
 }
 
-function summarizeWorkspaceTools(blocks: ContentBlock[] | null): string {
+function isWorkspaceCollapsibleTool(name: string): boolean {
+  return shouldShowToolInMessageList(name) && !WORKSPACE_PERSISTENT_TOOLS.has(name)
+}
+
+function isWorkspaceOnlyToolMessage(blocks: ContentBlock[] | null): boolean {
+  return (
+    !!blocks?.length &&
+    blocks.every((block) => block.type === 'tool_use' && isWorkspaceCollapsibleTool(block.name))
+  )
+}
+
+function summarizeWorkspaceTools(
+  blocks: ContentBlock[] | null,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
   if (!blocks) return ''
 
   const counts = new Map<string, number>()
+  const changedPaths = new Set<string>()
+  let changedCalls = 0
+
   for (const block of blocks) {
     if (block.type !== 'tool_use' || !isWorkspaceCollapsibleTool(block.name)) continue
     counts.set(block.name, (counts.get(block.name) ?? 0) + 1)
+    if (block.name === 'Write' || block.name === 'Edit' || block.name === 'Delete') {
+      changedCalls++
+      const filePath = block.input.file_path ?? block.input.path
+      if (typeof filePath === 'string' && filePath.trim()) changedPaths.add(filePath)
+    }
   }
 
-  const preferredOrder = ['Write', 'Edit', 'Delete', 'Read', 'Grep', 'Glob', 'LS', 'Bash']
-  const orderedEntries = [...counts.entries()].sort(([a], [b]) => {
-    const aIndex = preferredOrder.indexOf(a)
-    const bIndex = preferredOrder.indexOf(b)
-    if (aIndex === -1 && bIndex === -1) return a.localeCompare(b)
-    if (aIndex === -1) return 1
-    if (bIndex === -1) return -1
-    return aIndex - bIndex
-  })
+  const parts: string[] = []
+  const changedFileCount = changedPaths.size || changedCalls
+  if (changedFileCount > 0) {
+    parts.push(t('assistantMessage.changedFiles', { count: changedFileCount }))
+  }
 
-  const visibleEntries = orderedEntries.slice(0, 4)
-  const summary = visibleEntries
-    .map(([name, count]) => `${name}${count > 1 ? ` × ${count}` : ''}`)
-    .join(' · ')
-  const hiddenKinds = orderedEntries.length - visibleEntries.length
+  const toolSummaryMap: Array<[string, string, Record<string, unknown>]> = [
+    ['Bash', 'toolGroup.ranCommands', {}],
+    ['Read', 'toolGroup.readFiles', {}],
+    ['Grep', 'toolGroup.searchedPatterns', {}],
+    ['Glob', 'toolGroup.globResults', { suffix: '' }],
+    ['LS', 'toolGroup.listedDirs', {}]
+  ]
 
-  return hiddenKinds > 0 ? `${summary} · +${hiddenKinds}` : summary
+  for (const [toolName, key, extraOptions] of toolSummaryMap) {
+    const count = counts.get(toolName) ?? 0
+    if (count > 0) parts.push(t(key, { count, ...extraOptions }))
+  }
+
+  const coveredTools = new Set(['Write', 'Edit', 'Delete', 'Bash', 'Read', 'Grep', 'Glob', 'LS'])
+  const fallbackEntries = [...counts.entries()]
+    .filter(([name]) => !coveredTools.has(name))
+    .sort(([a], [b]) => a.localeCompare(b))
+  parts.push(...fallbackEntries.map(([name, count]) => `${name}${count > 1 ? ` x${count}` : ''}`))
+
+  const visibleParts = parts.slice(0, 3)
+  const summary = visibleParts.join(', ')
+  const hiddenKinds = parts.length - visibleParts.length
+
+  return hiddenKinds > 0 ? `${summary}, +${hiddenKinds}` : summary
 }
 
 function stripThinkTagMarkers(text: string): string {
@@ -581,7 +621,10 @@ const MarkdownCode: NonNullable<Components['code']> = ({ children, className, ..
 
 const MARKDOWN_COMPONENTS: Components = {
   h1: ({ children, ...props }) => (
-    <h1 className="mt-4 mb-2 first:mt-0 text-lg font-bold text-foreground border-b border-border/40 pb-1" {...props}>
+    <h1
+      className="mt-4 mb-2 first:mt-0 text-lg font-bold text-foreground border-b border-border/40 pb-1"
+      {...props}
+    >
       {children}
     </h1>
   ),
@@ -601,12 +644,18 @@ const MARKDOWN_COMPONENTS: Components = {
     </h4>
   ),
   h5: ({ children, ...props }) => (
-    <h5 className="mt-1.5 mb-0.5 first:mt-0 text-xs font-medium text-foreground/80 uppercase tracking-wide" {...props}>
+    <h5
+      className="mt-1.5 mb-0.5 first:mt-0 text-xs font-medium text-foreground/80 uppercase tracking-wide"
+      {...props}
+    >
       {children}
     </h5>
   ),
   h6: ({ children, ...props }) => (
-    <h6 className="mt-1.5 mb-0.5 first:mt-0 text-xs font-medium text-muted-foreground uppercase tracking-wide" {...props}>
+    <h6
+      className="mt-1.5 mb-0.5 first:mt-0 text-xs font-medium text-muted-foreground uppercase tracking-wide"
+      {...props}
+    >
       {children}
     </h6>
   ),
@@ -730,11 +779,18 @@ function StreamingMarkdownContent({
   text: string
   isStreaming: boolean
 }): React.JSX.Element {
+  const liveOutputAnimationStyle = useSettingsStore((s) => s.liveOutputAnimationStyle)
   // Fast path: during streaming we render plain text to avoid re-parsing the markdown
   // AST on every delta. The full MarkdownContent kicks in after the stream ends, and
   // since it's memoized on `text`, re-renders that don't change content are free.
   if (isStreaming) {
-    return <div className="whitespace-pre-wrap break-words leading-relaxed">{text}</div>
+    return (
+      <div
+        className={`${getLiveOutputSurfaceClass(liveOutputAnimationStyle)} whitespace-pre-wrap break-words leading-relaxed`}
+      >
+        {text}
+      </div>
+    )
   }
   return <MarkdownContent text={text} isStreaming={false} />
 }
@@ -839,6 +895,7 @@ export function AssistantMessage({
 }: AssistantMessageProps): React.JSX.Element {
   const { t } = useTranslation('chat')
   const devMode = useSettingsStore((s) => s.devMode)
+  const liveOutputAnimationStyle = useSettingsStore((s) => s.liveOutputAnimationStyle)
   const debugInfo = devMode && msgId ? getLastDebugInfo(msgId) : undefined
   const openTranslatePage = useUIStore((s) => s.openTranslatePage)
   const setTranslateSourceText = useTranslateStore((s) => s.setSourceText)
@@ -926,17 +983,27 @@ export function AssistantMessage({
       ).length ?? 0,
     [normalizedContent]
   )
-  const workspaceSummary = useMemo(
-    () => summarizeWorkspaceTools(normalizedContent),
+  const workspaceOnlyToolMessage = useMemo(
+    () => isWorkspaceOnlyToolMessage(normalizedContent),
     [normalizedContent]
   )
-  const [toolsCollapsed, setToolsCollapsed] = useState(false)
-  const lastWorkspaceMessageIdRef = React.useRef(msgId)
-  useEffect(() => {
-    if (lastWorkspaceMessageIdRef.current === msgId) return
-    lastWorkspaceMessageIdRef.current = msgId
-    setToolsCollapsed(false)
-  }, [msgId])
+  const workspaceSummary = useMemo(
+    () => summarizeWorkspaceTools(normalizedContent, t),
+    [normalizedContent, t]
+  )
+  const defaultToolsCollapsed = workspaceOnlyToolMessage && workspaceToolCount > 0
+  const showWorkspaceToggle = workspaceToolCount >= 2 || defaultToolsCollapsed
+  const [toolCollapseState, setToolCollapseState] = useState<{
+    msgId?: string
+    collapsed: boolean | null
+  }>({
+    msgId,
+    collapsed: null
+  })
+  const toolsCollapsed =
+    toolCollapseState.msgId === msgId
+      ? (toolCollapseState.collapsed ?? defaultToolsCollapsed)
+      : defaultToolsCollapsed
   const hasStructuredThinkingBlocks = useMemo(
     () => normalizedContent?.some((block) => block.type === 'thinking') ?? false,
     [normalizedContent]
@@ -962,6 +1029,9 @@ export function AssistantMessage({
     const items: RenderItem[] = []
     for (let i = 0; i < normalizedContent.length; i++) {
       const block = normalizedContent[i]
+      if (block.type === 'tool_use' && !shouldShowToolInMessageList(block.name)) {
+        continue
+      }
       if (
         block.type === 'tool_use' &&
         !SPECIAL_TOOLS.has(block.name) &&
@@ -992,15 +1062,15 @@ export function AssistantMessage({
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span className="flex gap-1">
             <span
-              className="size-1.5 rounded-full bg-foreground/30 animate-bounce"
+              className={getLiveOutputDotClass(liveOutputAnimationStyle)}
               style={{ animationDelay: '0ms' }}
             />
             <span
-              className="size-1.5 rounded-full bg-foreground/30 animate-bounce"
+              className={getLiveOutputDotClass(liveOutputAnimationStyle)}
               style={{ animationDelay: '150ms' }}
             />
             <span
-              className="size-1.5 rounded-full bg-foreground/30 animate-bounce"
+              className={getLiveOutputDotClass(liveOutputAnimationStyle)}
               style={{ animationDelay: '300ms' }}
             />
           </span>
@@ -1017,9 +1087,7 @@ export function AssistantMessage({
         return (
           <div className={MARKDOWN_WRAPPER_CLASS}>
             <StreamingMarkdownContent text={content} isStreaming={!!isStreaming} />
-            {isStreaming && (
-              <span className="inline-block w-1.5 h-4 bg-primary/70 animate-pulse ml-0.5 rounded-sm" />
-            )}
+            {isStreaming && <span className={getLiveOutputCursorClass(liveOutputAnimationStyle)} />}
           </div>
         )
       }
@@ -1038,7 +1106,7 @@ export function AssistantMessage({
               return (
                 <ThinkingBlock
                   key={idx}
-                  thinking={stripThinkTagMarkers(seg.content)}
+                  thinking={seg.closed ? seg.content : ''}
                   isStreaming={!!isStreaming && !seg.closed}
                 />
               )
@@ -1053,7 +1121,7 @@ export function AssistantMessage({
             )
           })}
           {showOuterCursor && (
-            <span className="inline-block w-1.5 h-4 bg-primary/70 animate-pulse ml-0.5 rounded-sm" />
+            <span className={getLiveOutputCursorClass(liveOutputAnimationStyle)} />
           )}
         </div>
       )
@@ -1068,6 +1136,7 @@ export function AssistantMessage({
       key: string,
       blockIndex: number
     ): React.JSX.Element | null => {
+      if (!shouldShowToolInMessageList(block.name)) return null
       if (hiddenToolUseIds?.has(block.id)) {
         const isOrchestrationAnchor =
           orchestrationRun &&
@@ -1075,34 +1144,6 @@ export function AssistantMessage({
           !block.input.run_in_background &&
           blockIndex === orchestrationAnchorIndex
         if (!isOrchestrationAnchor) return null
-      }
-      if (block.name === 'TaskCreate') {
-        if (toolsCollapsed) return null
-        const result = toolResults?.get(block.id)
-        const liveTc = effectiveLiveToolCallMap?.get(block.id)
-        return (
-          <ScaleIn key={key} className="w-full origin-left">
-            <TaskCard
-              name={block.name}
-              input={block.input}
-              output={liveTc?.output ?? result?.content}
-            />
-          </ScaleIn>
-        )
-      }
-      if (block.name === 'TaskUpdate') {
-        if (toolsCollapsed) return null
-        const result = toolResults?.get(block.id)
-        const liveTc = effectiveLiveToolCallMap?.get(block.id)
-        return (
-          <ScaleIn key={key} className="w-full origin-left">
-            <TaskCard
-              name={block.name}
-              input={block.input}
-              output={liveTc?.output ?? result?.content}
-            />
-          </ScaleIn>
-        )
       }
       if (block.name === 'AskUserQuestion') {
         const result = toolResults?.get(block.id)
@@ -1112,6 +1153,28 @@ export function AssistantMessage({
             <AskUserQuestionCard
               toolUseId={block.id}
               input={block.input}
+              output={liveTc?.output ?? result?.content}
+              status={
+                liveTc?.status ??
+                (result?.isError
+                  ? 'error'
+                  : result?.content
+                    ? 'completed'
+                    : isStreaming || isLastAssistantMessage
+                      ? 'running'
+                      : 'canceled')
+              }
+              isLive={!!isStreaming}
+            />
+          </ScaleIn>
+        )
+      }
+      if (block.name === 'ExitPlanMode') {
+        const result = toolResults?.get(block.id)
+        const liveTc = effectiveLiveToolCallMap?.get(block.id)
+        return (
+          <ScaleIn key={key} className="w-full origin-left">
+            <PlanReviewCard
               output={liveTc?.output ?? result?.content}
               status={
                 liveTc?.status ??
@@ -1267,9 +1330,14 @@ export function AssistantMessage({
         {orchestrationRun && orchestrationAnchorIndex < 0 ? (
           <OrchestrationBlock run={orchestrationRun} />
         ) : null}
-        {workspaceToolCount >= 2 && (
+        {showWorkspaceToggle && (
           <button
-            onClick={() => setToolsCollapsed((v) => !v)}
+            onClick={() =>
+              setToolCollapseState({
+                msgId,
+                collapsed: !toolsCollapsed
+              })
+            }
             className="flex w-full items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-left transition-colors hover:bg-muted/30"
           >
             <div className="min-w-0">
@@ -1280,20 +1348,24 @@ export function AssistantMessage({
                   <ChevronsDownUp className="size-3.5 shrink-0" />
                 )}
                 <span>
-                  {toolsCollapsed
-                    ? t('assistantMessage.showWorkspace', { count: workspaceToolCount })
-                    : t('assistantMessage.collapseWorkspace', { count: workspaceToolCount })}
+                  {workspaceOnlyToolMessage && workspaceSummary
+                    ? workspaceSummary
+                    : toolsCollapsed
+                      ? t('assistantMessage.showWorkspace', { count: workspaceToolCount })
+                      : t('assistantMessage.collapseWorkspace', { count: workspaceToolCount })}
                 </span>
               </div>
-              {toolsCollapsed && workspaceSummary ? (
+              {!workspaceOnlyToolMessage && toolsCollapsed && workspaceSummary ? (
                 <div className="mt-1 truncate text-[11px] text-muted-foreground">
                   {workspaceSummary}
                 </div>
               ) : null}
             </div>
-            <span className="shrink-0 text-[10px] text-muted-foreground/70">
-              {workspaceToolCount}
-            </span>
+            {!workspaceOnlyToolMessage ? (
+              <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                {workspaceToolCount}
+              </span>
+            ) : null}
           </button>
         )}
         {renderItems.map((item) => {
@@ -1304,7 +1376,7 @@ export function AssistantMessage({
                 return (
                   <ThinkingBlock
                     key={item.index}
-                    thinking={stripThinkTagMarkers(block.thinking)}
+                    thinking={block.completedAt ? block.thinking : ''}
                     isStreaming={isStreaming}
                     startedAt={block.startedAt}
                     completedAt={block.completedAt}
@@ -1350,7 +1422,7 @@ export function AssistantMessage({
                         return (
                           <ThinkingBlock
                             key={j}
-                            thinking={stripThinkTagMarkers(seg.content)}
+                            thinking={seg.closed ? seg.content : ''}
                             isStreaming={isBlockStreaming && !seg.closed}
                           />
                         )
@@ -1484,9 +1556,7 @@ export function AssistantMessage({
             </ScaleIn>
           )
         })}
-        {isStreaming && (
-          <span className="inline-block w-1.5 h-4 bg-primary/70 animate-pulse ml-0.5 rounded-sm" />
-        )}
+        {isStreaming && <span className={getLiveOutputCursorClass(liveOutputAnimationStyle)} />}
       </div>
     )
   }
@@ -1583,36 +1653,10 @@ export function AssistantMessage({
   }, [t, usage])
 
   const requestTrace = msgId ? getRequestTraceInfo(msgId) : undefined
-  const tracedProvider = useProviderStore((s) => {
-    const pid = requestTrace?.providerId
-    return pid ? (s.providers.find((p) => p.id === pid) ?? null) : null
-  })
-  const tracedModelId = requestTrace?.model
-  const tracedModelCfg = tracedProvider?.models.find((m) => m.id === tracedModelId)
-  const modelDisplayName =
-    tracedModelCfg?.name ||
-    tracedModelId
-      ?.split('/')
-      .pop()
-      ?.replace(/-\d{8}$/, '') ||
-    'Assistant'
 
   return (
-    <div className="group/msg flex gap-3">
-      <Avatar className="size-7 shrink-0 ring-1 ring-border/50">
-        <AvatarFallback className="bg-gradient-to-br from-secondary to-muted text-secondary-foreground text-xs">
-          <ModelIcon
-            icon={tracedModelCfg?.icon}
-            modelId={tracedModelId}
-            providerBuiltinId={tracedProvider?.builtinId ?? requestTrace?.providerBuiltinId}
-            size={16}
-          />
-        </AvatarFallback>
-      </Avatar>
-      <div className="min-w-0 flex-1 pt-0.5 overflow-hidden">
-        <div className="mb-1 flex items-center gap-2">
-          <p className="text-sm font-medium">{modelDisplayName}</p>
-        </div>
+    <div className="group/msg flex flex-col">
+      <div className="min-w-0 overflow-hidden pl-1.5 sm:pl-2">
         {collapsed ? (
           <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
             <div className="max-h-10 overflow-hidden whitespace-pre-wrap break-words">

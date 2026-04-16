@@ -593,11 +593,11 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
   // Filter out empty assistant messages (can occur if a previous run was interrupted
   // or duplicate triggers left orphaned placeholders) — API rejects empty assistant turns
   const historyMessages = messages.filter((m) => {
-      if (m.role !== 'assistant') return true
-      if (typeof m.content === 'string') return m.content.trim().length > 0
-      if (Array.isArray(m.content)) return m.content.length > 0
-      return false
-    })
+    if (m.role !== 'assistant') return true
+    if (typeof m.content === 'string') return m.content.trim().length > 0
+    if (Array.isArray(m.content)) return m.content.length > 0
+    return false
+  })
 
   const sidecarRequest = buildSidecarAgentRunRequest({
     messages: historyMessages,
@@ -632,6 +632,7 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
     string,
     { lastFlush: number; pending?: Record<string, unknown>; timer?: ReturnType<typeof setTimeout> }
   >()
+  const unthrottledLiveToolInputs = new Set(['TaskCreate', 'TaskUpdate'])
 
   const flushPluginStreamUpdate = (): void => {
     if (!streamingActive) return
@@ -709,12 +710,22 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
 
   const scheduleToolInputUpdate = (
     toolCallId: string,
-    partialInput: Record<string, unknown>
+    partialInput: Record<string, unknown>,
+    toolName = ''
   ): void => {
     const now = Date.now()
     const entry = toolInputThrottle.get(toolCallId) ?? { lastFlush: 0 }
     entry.pending = partialInput
     toolInputThrottle.set(toolCallId, entry)
+
+    if (unthrottledLiveToolInputs.has(toolName)) {
+      if (entry.timer) {
+        clearTimeout(entry.timer)
+        entry.timer = undefined
+      }
+      flushToolInput(toolCallId)
+      return
+    }
 
     if (now - entry.lastFlush >= 60) {
       if (entry.timer) {
@@ -778,10 +789,17 @@ async function _runPluginAgent(task: PluginAutoReplyTask): Promise<void> {
 
       case 'tool_use_args_delta': {
         const toolName = liveToolNames.get(event.toolCallId) ?? ''
+        if (toolName === 'Edit') {
+          break
+        }
         const liveCardInput = summarizeToolInputForLiveCard(toolName, event.partialInput)
         pendingToolInputs.set(event.toolCallId, liveCardInput)
-        scheduleStreamingFlush()
-        scheduleToolInputUpdate(event.toolCallId, liveCardInput)
+        if (unthrottledLiveToolInputs.has(toolName)) {
+          flushStreamingState()
+        } else {
+          scheduleStreamingFlush()
+        }
+        scheduleToolInputUpdate(event.toolCallId, liveCardInput, toolName)
         break
       }
 

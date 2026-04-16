@@ -2,7 +2,11 @@ import { useCallback, useEffect } from 'react'
 import { nanoid } from 'nanoid'
 import { toast } from 'sonner'
 import { useChatStore } from '@renderer/stores/chat-store'
-import { useSettingsStore, resolveReasoningEffortForModel } from '@renderer/stores/settings-store'
+import {
+  clampMaxParallelToolCalls,
+  resolveReasoningEffortForModel,
+  useSettingsStore
+} from '@renderer/stores/settings-store'
 import { useProviderStore } from '@renderer/stores/provider-store'
 import { ensureProviderAuthReady } from '@renderer/lib/auth/provider-auth'
 import { useAgentStore } from '@renderer/stores/agent-store'
@@ -54,8 +58,7 @@ import type {
   RequestTiming,
   AIModelConfig,
   ToolDefinition,
-  ToolResultContent,
-  StreamEvent
+  ToolResultContent
 } from '@renderer/lib/api/types'
 import { setLastDebugInfo, setRequestTraceInfo } from '@renderer/lib/debug-store'
 import {
@@ -440,8 +443,15 @@ function shouldAutoContinueLongRunningRun(options: {
     return true
   }
 
-  if (runUsedTools || taskSnapshotChanged) {
-    return verificationPassIndex < 4
+  // Tool usage alone is too weak a signal to keep auto-continuing for multiple
+  // long-running verification passes. Read-only Bash checks in particular can
+  // make the run look stuck while it re-verifies the same state repeatedly.
+  if (taskSnapshotChanged) {
+    return !completeBySelfReport && verificationPassIndex < 2
+  }
+
+  if (runUsedTools) {
+    return !completeBySelfReport && verificationPassIndex < 1
   }
 
   if (!completeBySelfReport) {
@@ -485,6 +495,10 @@ function findProviderModel(
     modelName: model?.name ?? modelId,
     modelConfig: model
   }
+}
+
+function getConfiguredMaxParallelTools(): number {
+  return clampMaxParallelToolCalls(useSettingsStore.getState().maxParallelToolCalls)
 }
 
 function buildProviderConfigWithRuntimeSettings(
@@ -1300,6 +1314,7 @@ function createNodeAgentLoop(args: {
   inlineToolHandlers?: ToolContext['inlineToolHandlers']
 }): AsyncIterable<AgentEvent> {
   const pluginChatId = extractPluginChatId(args.session?.externalChatId)
+  const maxParallelTools = getConfiguredMaxParallelTools()
   const loopConfig = {
     maxIterations: DEFAULT_AGENT_MAX_ITERATIONS,
     provider: args.provider,
@@ -1308,6 +1323,8 @@ function createNodeAgentLoop(args: {
     workingFolder: args.workingFolder,
     signal: args.signal,
     forceApproval: args.forceApproval,
+    enableParallelToolExecution: maxParallelTools > 1,
+    maxParallelTools,
     ...(args.compression
       ? {
           contextCompression: {
@@ -1397,6 +1414,7 @@ async function canUseSidecarForAgentRun(args: {
     return false
   }
 
+  const maxParallelTools = getConfiguredMaxParallelTools()
   const sidecarRequest = buildSidecarAgentRunRequest({
     messages: args.messages,
     provider: args.provider,
@@ -1406,6 +1424,7 @@ async function canUseSidecarForAgentRun(args: {
     sshConnectionId: args.sshConnectionId,
     maxIterations: args.maxIterations,
     forceApproval: args.forceApproval,
+    maxParallelTools,
     compression: args.compression,
     sessionMode: 'agent',
     planMode: args.isPlanMode,
@@ -1457,6 +1476,180 @@ async function cancelSidecarRun(sessionId: string): Promise<void> {
     await agentBridge.cancelAgent(runId)
   } catch {
     // Ignore cancellation race / process shutdown.
+  }
+}
+
+const SIDECAR_FIRST_PROGRESS_TIMEOUT_MS = 45_000
+
+function isProgressAgentEvent(event: AgentEvent): boolean {
+  return event.type !== 'request_debug'
+}
+
+function createSidecarEventStream(options: {
+  sessionId: string
+  sidecarRequest: unknown
+  signal?: AbortSignal
+  logLabel: 'chat' | 'agent'
+}): AsyncIterable<AgentEvent> {
+  const { sessionId, sidecarRequest, signal, logLabel } = options
+
+  return {
+    async *[Symbol.asyncIterator]() {
+      const queue: AgentEvent[] = []
+      const pendingEvents: Array<{ runId: string; rawEvent: unknown }> = []
+      let finished = false
+      let pendingFailure: Error | null = null
+      let notify: (() => void) | null = null
+      let runId = ''
+      let sawProgressEvent = false
+      let firstProgressTimer: ReturnType<typeof setTimeout> | null = null
+
+      const wake = (): void => {
+        if (!notify) return
+        const resolver = notify
+        notify = null
+        resolver()
+      }
+
+      const clearFirstProgressTimer = (): void => {
+        if (!firstProgressTimer) return
+        clearTimeout(firstProgressTimer)
+        firstProgressTimer = null
+      }
+
+      const finish = (): void => {
+        finished = true
+        wake()
+      }
+
+      const fail = (error: Error): void => {
+        pendingFailure = error
+        finish()
+      }
+
+      const markProgress = (): void => {
+        if (sawProgressEvent) return
+        sawProgressEvent = true
+        clearFirstProgressTimer()
+      }
+
+      const startFirstProgressTimer = (): void => {
+        clearFirstProgressTimer()
+        firstProgressTimer = setTimeout(() => {
+          const error = new Error(
+            `Sidecar run started but produced no progress within ${Math.round(
+              SIDECAR_FIRST_PROGRESS_TIMEOUT_MS / 1000
+            )}s`
+          )
+          console.warn('[ChatActions] Sidecar run stalled before first progress event', {
+            sessionId,
+            runId,
+            logLabel
+          })
+          if (runId) {
+            void agentBridge.cancelAgent(runId).catch(() => {})
+          }
+          fail(error)
+        }, SIDECAR_FIRST_PROGRESS_TIMEOUT_MS)
+      }
+
+      const pushEvent = (normalized: AgentEvent): void => {
+        if (finished || pendingFailure) return
+        if (isProgressAgentEvent(normalized)) {
+          markProgress()
+        }
+        queue.push(normalized)
+        if (normalized.type === 'loop_end' || normalized.type === 'error') {
+          finished = true
+          if (runId) {
+            sessionSidecarRunIds.delete(sessionId)
+          }
+        }
+        wake()
+      }
+
+      const dispatchSidecarEvent = (rawEvent: unknown): void => {
+        if (finished || pendingFailure) return
+        const subAgentEvent = normalizeSidecarSubAgentEvent(rawEvent)
+        if (subAgentEvent) {
+          markProgress()
+          subAgentEvents.emit(subAgentEvent)
+          return
+        }
+
+        const normalized = normalizeSidecarAgentEvent(rawEvent)
+        if (normalized) {
+          pushEvent(normalized)
+        }
+      }
+
+      const onAbort = (): void => {
+        clearFirstProgressTimer()
+        finish()
+      }
+
+      signal?.addEventListener('abort', onAbort, { once: true })
+
+      const unsub = agentBridge.on('agent/event', (payload) => {
+        if (finished || pendingFailure) return
+        const record = normalizeSidecarRecord(payload)
+        const eventRunId = String(record.runId ?? '')
+
+        if (!runId) {
+          pendingEvents.push({ runId: eventRunId, rawEvent: record.event })
+          return
+        }
+
+        if (eventRunId && eventRunId !== runId) return
+        dispatchSidecarEvent(record.event)
+      })
+
+      try {
+        const result = await agentBridge.runAgent(sidecarRequest)
+        runId = result.runId
+        sessionSidecarRunIds.set(sessionId, result.runId)
+        console.log(`[ChatActions] sidecar ${logLabel} stream started`, { sessionId, runId })
+
+        if (signal?.aborted) {
+          void agentBridge.cancelAgent(runId).catch(() => {})
+          finish()
+        } else {
+          startFirstProgressTimer()
+        }
+
+        const pendingSnapshot = pendingEvents.splice(0, pendingEvents.length)
+        for (const pending of pendingSnapshot) {
+          if (pending.runId && pending.runId !== runId) continue
+          dispatchSidecarEvent(pending.rawEvent)
+          if (finished) break
+        }
+
+        while (!finished || queue.length > 0) {
+          if (queue.length === 0) {
+            await new Promise<void>((resolve) => {
+              notify = resolve
+              if (finished || queue.length > 0) {
+                wake()
+              }
+            })
+            continue
+          }
+          const next = queue.shift()
+          if (next) yield next
+        }
+
+        if (pendingFailure) {
+          throw pendingFailure
+        }
+      } finally {
+        clearFirstProgressTimer()
+        signal?.removeEventListener('abort', onAbort)
+        unsub()
+        if (runId) {
+          sessionSidecarRunIds.delete(sessionId)
+        }
+      }
+    }
   }
 }
 
@@ -1752,6 +1945,28 @@ export function useChatActions(): {
         return
       }
 
+      const pendingReviewPlan =
+        source === undefined ? usePlanStore.getState().getPendingReviewPlan(sessionId) : undefined
+      if (pendingReviewPlan) {
+        usePlanStore.getState().clearPendingReview(sessionId)
+        usePlanStore.getState().rejectPlan(pendingReviewPlan.id)
+        usePlanStore.getState().setActivePlan(pendingReviewPlan.id)
+        useUIStore.getState().enterPlanMode(sessionId)
+      }
+      const pendingPlanRevisionContext = pendingReviewPlan
+        ? {
+            title: pendingReviewPlan.title,
+            filePath: pendingReviewPlan.filePath
+          }
+        : null
+      const effectiveResolvedCommand: ResolvedUserCommand = pendingReviewPlan
+        ? {
+            command: null,
+            userText: text.trim(),
+            titleInput: text.trim()
+          }
+        : resolvedCommand
+
       const resolvedSession = useChatStore.getState().sessions.find((s) => s.id === sessionId)
       const resolvedSessionMode = resolvedSession?.mode ?? uiStore.mode
       const shouldShowAutoRouting =
@@ -1761,7 +1976,7 @@ export function useChatActions(): {
       const latestUserInput =
         source === 'continue'
           ? extractLatestUserInput(inMemoryMessages)
-          : resolvedCommand.userText || text
+          : effectiveResolvedCommand.userText || text
       const requestedToolsAllowed = shouldAllowToolsForRequest({
         latestUserInput,
         mode: resolvedSessionMode,
@@ -1849,8 +2064,10 @@ export function useChatActions(): {
         const textBlocks: Array<Extract<ContentBlock, { type: 'text' }>> = []
         const hasImages = Boolean(images && images.length > 0)
         const textForUserBlock =
-          resolvedCommand.userText ||
-          (isQueuedInsertion && hasImages && !resolvedCommand.command ? QUEUED_IMAGE_ONLY_TEXT : '')
+          effectiveResolvedCommand.userText ||
+          (isQueuedInsertion && hasImages && !effectiveResolvedCommand.command
+            ? QUEUED_IMAGE_ONLY_TEXT
+            : '')
 
         if (sessionMode !== 'chat' && latestInjectedMode !== sessionMode) {
           const sshConnection = sessionSnapshot?.sshConnectionId
@@ -1876,10 +2093,10 @@ export function useChatActions(): {
           textBlocks.push({ type: 'text', text: QUEUED_MESSAGE_SYSTEM_REMIND })
         }
 
-        if (resolvedCommand.command) {
+        if (effectiveResolvedCommand.command) {
           textBlocks.push({
             type: 'text',
-            text: serializeSystemCommand(resolvedCommand.command)
+            text: serializeSystemCommand(effectiveResolvedCommand.command)
           })
         }
 
@@ -1909,7 +2126,7 @@ export function useChatActions(): {
       const session = useChatStore.getState().sessions.find((s) => s.id === sessionId)
       if (shouldAppendUserMessage && session && canAutoGenerateSessionTitle(session.title)) {
         const capturedSessionId = sessionId
-        generateSessionTitle(resolvedCommand.titleInput)
+        generateSessionTitle(effectiveResolvedCommand.titleInput)
           .then((result) => {
             if (result) {
               const store = useChatStore.getState()
@@ -2332,6 +2549,7 @@ export function useChatActions(): {
             lastSent?: string
           }
         >()
+        const unthrottledLiveToolInputs = new Set(['TaskCreate', 'TaskUpdate'])
 
         const disposeToolInputQueues = (): void => {
           for (const entry of toolInputThrottle.values()) {
@@ -2397,6 +2615,30 @@ export function useChatActions(): {
             }
           }
 
+          if (pendingPlanRevisionContext && source !== 'continue' && messagesToSend.length > 0) {
+            const lastUserIndex = messagesToSend.findLastIndex((message) => message.role === 'user')
+            if (lastUserIndex >= 0) {
+              const lastUserMsg = messagesToSend[lastUserIndex]
+              const revisionPrompt = buildPlanRevisionPrompt(
+                pendingPlanRevisionContext.title,
+                pendingPlanRevisionContext.filePath,
+                effectiveResolvedCommand.userText || text
+              )
+              const revisionBlock = { type: 'text' as const, text: revisionPrompt }
+              const newContent =
+                typeof lastUserMsg.content === 'string'
+                  ? [revisionBlock, { type: 'text' as const, text: lastUserMsg.content }]
+                  : [revisionBlock, ...lastUserMsg.content]
+
+              messagesToSend = [
+                ...messagesToSend.slice(0, lastUserIndex),
+                { ...lastUserMsg, content: newContent },
+                ...messagesToSend.slice(lastUserIndex + 1)
+              ]
+            }
+          }
+
+          const maxParallelTools = getConfiguredMaxParallelTools()
           const sidecarRequest = buildSidecarAgentRunRequest({
             messages: messagesToSend,
             provider: agentProviderConfig,
@@ -2406,6 +2648,7 @@ export function useChatActions(): {
             workingFolder: sessionWorkingFolder,
             maxIterations: DEFAULT_AGENT_MAX_ITERATIONS,
             forceApproval: false,
+            maxParallelTools,
             compression: compressionConfig,
             sessionMode: 'agent',
             planMode: isPlanMode,
@@ -2464,85 +2707,12 @@ export function useChatActions(): {
             if (!initialized) {
               throw new Error('Sidecar unavailable')
             }
-            loop = {
-              async *[Symbol.asyncIterator]() {
-                const queue: AgentEvent[] = []
-                const pendingEvents: Array<{ runId: string; rawEvent: unknown }> = []
-                let finished = false
-                let notify: (() => void) | null = null
-                let runId = ''
-
-                const pushEvent = (normalized: AgentEvent): void => {
-                  queue.push(normalized)
-                  if (normalized.type === 'loop_end' || normalized.type === 'error') {
-                    finished = true
-                    if (runId) {
-                      sessionSidecarRunIds.delete(sessionId)
-                    }
-                  }
-                  if (notify) {
-                    const wake = notify
-                    notify = null
-                    wake()
-                  }
-                }
-
-                const dispatchSidecarEvent = (rawEvent: unknown): void => {
-                  const subAgentEvent = normalizeSidecarSubAgentEvent(rawEvent)
-                  if (subAgentEvent) {
-                    subAgentEvents.emit(subAgentEvent)
-                    return
-                  }
-
-                  const normalized = normalizeSidecarAgentEvent(rawEvent)
-                  if (normalized) {
-                    pushEvent(normalized)
-                  }
-                }
-
-                const unsub = agentBridge.on('agent/event', (payload) => {
-                  const record = normalizeSidecarRecord(payload)
-                  const eventRunId = String(record.runId ?? '')
-                  if (!eventRunId) return
-
-                  if (!runId) {
-                    pendingEvents.push({ runId: eventRunId, rawEvent: record.event })
-                    return
-                  }
-
-                  if (eventRunId !== runId) return
-                  dispatchSidecarEvent(record.event)
-                })
-                try {
-                  const result = await agentBridge.runAgent(sidecarRequest)
-                  runId = result.runId
-                  sessionSidecarRunIds.set(sessionId, result.runId)
-                  console.log('[ChatActions] sidecar agent stream started', { sessionId, runId })
-
-                  for (const pending of pendingEvents.splice(0, pendingEvents.length)) {
-                    if (pending.runId !== runId) continue
-                    dispatchSidecarEvent(pending.rawEvent)
-                    if (finished) break
-                  }
-
-                  while (!finished || queue.length > 0) {
-                    if (queue.length === 0) {
-                      await new Promise<void>((resolve) => {
-                        notify = resolve
-                      })
-                      continue
-                    }
-                    const next = queue.shift()
-                    if (next) yield next
-                  }
-                } finally {
-                  if (runId) {
-                    sessionSidecarRunIds.delete(sessionId)
-                  }
-                  unsub()
-                }
-              }
-            }
+            loop = createSidecarEventStream({
+              sessionId,
+              sidecarRequest,
+              signal: abortController.signal,
+              logLabel: 'agent'
+            })
           } else {
             console.warn('[ChatActions] Falling back to node agent loop', {
               sessionId,
@@ -2619,12 +2789,22 @@ export function useChatActions(): {
 
           const scheduleChatToolInputUpdate = (
             toolCallId: string,
-            partialInput: Record<string, unknown>
+            partialInput: Record<string, unknown>,
+            toolName = ''
           ): void => {
             const now = Date.now()
             const entry = chatToolInputThrottle.get(toolCallId) ?? { lastFlush: 0 }
             entry.pending = partialInput
             chatToolInputThrottle.set(toolCallId, entry)
+
+            if (unthrottledLiveToolInputs.has(toolName)) {
+              if (entry.timer) {
+                clearTimeout(entry.timer)
+                entry.timer = undefined
+              }
+              flushChatToolInput(toolCallId)
+              return
+            }
 
             if (now - entry.lastFlush >= 100) {
               if (entry.timer) {
@@ -2645,12 +2825,22 @@ export function useChatActions(): {
 
           const scheduleToolInputUpdate = (
             toolCallId: string,
-            partialInput: Record<string, unknown>
+            partialInput: Record<string, unknown>,
+            toolName = ''
           ): void => {
             const now = Date.now()
             const entry = toolInputThrottle.get(toolCallId) ?? { lastFlush: 0 }
             entry.pending = partialInput
             toolInputThrottle.set(toolCallId, entry)
+
+            if (unthrottledLiveToolInputs.has(toolName)) {
+              if (entry.timer) {
+                clearTimeout(entry.timer)
+                entry.timer = undefined
+              }
+              flushToolInput(toolCallId)
+              return
+            }
 
             if (now - entry.lastFlush >= 60) {
               if (entry.timer) {
@@ -2796,9 +2986,12 @@ export function useChatActions(): {
               case 'tool_use_args_delta': {
                 // Real-time partial args update via partial-json parsing
                 const toolName = liveToolNames.get(event.toolCallId) ?? ''
+                if (toolName === 'Edit') {
+                  break
+                }
                 const liveCardInput = summarizeToolInputForLiveCard(toolName, event.partialInput)
-                scheduleChatToolInputUpdate(event.toolCallId, liveCardInput)
-                scheduleToolInputUpdate(event.toolCallId, liveCardInput)
+                scheduleChatToolInputUpdate(event.toolCallId, liveCardInput, toolName)
+                scheduleToolInputUpdate(event.toolCallId, liveCardInput, toolName)
                 break
               }
 
@@ -3841,6 +4034,24 @@ export function useChatActions(): {
   }
 }
 
+function buildPlanRevisionPrompt(
+  planTitle: string,
+  planFilePath: string | undefined,
+  feedback: string
+): string {
+  return [
+    `The plan **${planTitle}** was rejected.`,
+    planFilePath ? `Plan file: ${planFilePath}` : '',
+    feedback.trim()
+      ? `Feedback:\n${feedback.trim()}`
+      : 'Feedback:\nNo additional feedback provided.',
+    '',
+    'Please revise the current plan file accordingly with Write/Edit, then call ExitPlanMode.'
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 /**
  * Trigger plan implementation by sending a message to the agent.
  * Called from PlanPanel "Implement" button — bypasses the input box.
@@ -3861,6 +4072,7 @@ export function sendImplementPlan(planId: string): void {
     session?.mode === 'clarify' ||
     (chatStore.activeSessionId === plan.sessionId && uiStore.mode === 'clarify')
 
+  usePlanStore.getState().clearPendingReview(plan.sessionId)
   usePlanStore.getState().approvePlan(planId)
   usePlanStore.getState().startImplementing(planId)
 
@@ -3872,11 +4084,6 @@ export function sendImplementPlan(planId: string): void {
   }
 
   uiStore.exitPlanMode(plan.sessionId)
-  uiStore.setRightPanelTab(isAcpSession ? 'acp' : 'plan')
-
-  if (chatStore.activeSessionId === plan.sessionId) {
-    uiStore.setRightPanelOpen(true)
-  }
 
   const basePrompt = plan.filePath
     ? `Execute the approved plan from this file:\n${plan.filePath}`
@@ -3927,9 +4134,6 @@ export function sendImplementPlanInNewSession(planId: string): void {
     }
   }
 
-  uiStore.setRightPanelTab('plan')
-  uiStore.setRightPanelOpen(true)
-
   void ipcClient
     .invoke(IPC.FS_READ_FILE, { path: plan.filePath })
     .then((result) => {
@@ -3954,25 +4158,15 @@ export function sendPlanRevision(planId: string, feedback: string): void {
   if (!plan) return
 
   // 1. Mark plan as rejected
+  usePlanStore.getState().clearPendingReview(plan.sessionId)
   usePlanStore.getState().rejectPlan(planId)
+  usePlanStore.getState().setActivePlan(planId)
 
-  // 2. Enter plan mode and focus Plan panel
+  // 2. Enter plan mode
   useUIStore.getState().enterPlanMode(plan.sessionId)
-  if (useChatStore.getState().activeSessionId === plan.sessionId) {
-    useUIStore.getState().setRightPanelTab('plan')
-    useUIStore.getState().setRightPanelOpen(true)
-  }
 
   // 3. Build revision prompt and send directly
-  const prompt = [
-    `The plan **${plan.title}** was rejected.`,
-    plan.filePath ? `Plan file: ${plan.filePath}` : '',
-    feedback ? `Feedback:\n${feedback}` : '',
-    '',
-    'Please revise the current plan file accordingly with Write/Edit, then call ExitPlanMode.'
-  ]
-    .filter(Boolean)
-    .join('\n')
+  const prompt = buildPlanRevisionPrompt(plan.title, plan.filePath, feedback)
 
   void _sendMessageFn(prompt)
 }
@@ -4048,84 +4242,12 @@ async function runSimpleChat(
     if (!initialized) {
       throw new Error('Sidecar unavailable')
     }
-    const stream: AsyncIterable<AgentEvent | StreamEvent> = {
-      async *[Symbol.asyncIterator]() {
-        const queue: AgentEvent[] = []
-        const pendingEvents: Array<{ runId: string; rawEvent: unknown }> = []
-        let finished = false
-        let notify: (() => void) | null = null
-        let runId = ''
-
-        const pushEvent = (normalized: AgentEvent): void => {
-          queue.push(normalized)
-          if (normalized.type === 'loop_end' || normalized.type === 'error') {
-            finished = true
-            if (runId) {
-              sessionSidecarRunIds.delete(sessionId)
-            }
-          }
-          if (notify) {
-            const wake = notify
-            notify = null
-            wake()
-          }
-        }
-
-        const dispatchSidecarEvent = (rawEvent: unknown): void => {
-          const subAgentEvent = normalizeSidecarSubAgentEvent(rawEvent)
-          if (subAgentEvent) {
-            subAgentEvents.emit(subAgentEvent)
-            return
-          }
-
-          const normalized = normalizeSidecarAgentEvent(rawEvent)
-          if (normalized) {
-            pushEvent(normalized)
-          }
-        }
-
-        const unsub = agentBridge.on('agent/event', (payload) => {
-          const record = normalizeSidecarRecord(payload)
-          const eventRunId = String(record.runId ?? '')
-
-          if (!runId) {
-            pendingEvents.push({ runId: eventRunId, rawEvent: record.event })
-            return
-          }
-
-          if (eventRunId && eventRunId !== runId) return
-          dispatchSidecarEvent(record.event)
-        })
-        try {
-          const result = await agentBridge.runAgent(sidecarRequest)
-          runId = result.runId
-          sessionSidecarRunIds.set(sessionId, result.runId)
-          console.log('[ChatActions] sidecar chat stream started', { sessionId, runId })
-
-          const pendingSnapshot = pendingEvents.splice(0, pendingEvents.length)
-          for (const pending of pendingSnapshot) {
-            if (pending.runId && pending.runId !== runId) continue
-            dispatchSidecarEvent(pending.rawEvent)
-          }
-
-          while (!finished || queue.length > 0) {
-            if (queue.length === 0) {
-              await new Promise<void>((resolve) => {
-                notify = resolve
-              })
-              continue
-            }
-            const next = queue.shift()
-            if (next) yield next
-          }
-        } finally {
-          unsub()
-          if (runId) {
-            sessionSidecarRunIds.delete(sessionId)
-          }
-        }
-      }
-    }
+    const stream = createSidecarEventStream({
+      sessionId,
+      sidecarRequest,
+      signal,
+      logLabel: 'chat'
+    })
 
     let thinkingDone = false
     let hasThinkingDelta = false

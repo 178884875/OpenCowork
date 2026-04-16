@@ -35,6 +35,23 @@
     "languageDesc": "Set the interface display language",
     "animations": "Enable animations",
     "animationsDesc": "Enabled by default. Turning this off disables transitions, motion effects, and smooth scrolling as much as possible.",
+    "liveOutputAnimation": {
+      "title": "AI live output animation",
+      "desc": "Choose the motion style used while the assistant is streaming a reply.",
+      "preview": "Preview",
+      "previewText": "Streaming response preview",
+      "previewStatus": "Assistant is thinking",
+      "options": {
+        "agile": {
+          "label": "Agile",
+          "desc": "Faster, sharper pulses for a more responsive feel."
+        },
+        "elegant": {
+          "label": "Elegant",
+          "desc": "Softer, slower motion with a calmer rhythm."
+        }
+      }
+    },
     "systemProxy": "System proxy",
     "systemProxyDesc": "Set the proxy URL used by the whole app process, for example http://127.0.0.1:7890 or http://host:port.",
     "toolbarCollapsedByDefault": "Collapse toolbar by default",
@@ -45,6 +62,9 @@
     "teamTools": "Team Tools",
     "teamToolsDesc": "Enable Agent Team collaboration, allowing AI to create and manage parallel teams",
     "teamToolsEnabled": "Enabled: AI can use TeamCreate, Task(run_in_background) and other tools for multi-agent collaboration",
+    "maxParallelToolCalls": "Max parallel tool calls per turn",
+    "maxParallelToolCallsDesc": "Control how many independent tool calls from the same model turn can run at once. Higher values can speed up Bash-heavy workflows, but increase local load.",
+    "maxParallelToolCallsHint": "Set to 1 for serial execution.",
     "clarifyAutoAcceptRecommended": "Clarify auto-accept recommended answers",
     "clarifyAutoAcceptRecommendedDesc": "Off by default. Only applies in Clarify mode; when enabled, inline prompt recommendations start an 8-second countdown and automatically accept the current suggestion.",
     "autoApprove": "Auto-approve tool calls",

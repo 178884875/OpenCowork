@@ -5,6 +5,7 @@
     "placeholderCowork": "Ask the assistant to help with your project...",
     "placeholderCode": "Describe what you want to build, like fixing bugs, writing scripts, or using /commit to commit the repository...",
     "placeholderAcp": "Describe the goal, context, constraints, and acceptance criteria. I will design and delegate first instead of coding directly...",
+    "placeholderPlanReview": "Enter revision feedback for this plan, or click the card above to implement it...",
     "placeholderInitWorkspace": "No AGENTS.md found in the current working folder. Try /init first to initialize the project context...",
     "noApiKey": "No API key configured. Click here to open Settings.",
     "attachImages": "Attach images (paste or drag & drop also supported)",
@@ -90,6 +91,20 @@
     "startAcpDesc": "First clarify the goal, background, constraints, and acceptance criteria. Then design the architecture and delegate tasks before writing code.",
     "homeTitleAcp": "ACP mode",
     "homeDescAcp": "In ACP mode, begin by clarifying goals, background, constraints, and acceptance criteria. Then propose an architecture and task breakdown before implementation."
+  },
+  "planReview": {
+    "awaitingReview": "Awaiting Review",
+    "approved": "Approved",
+    "implementing": "Implementing",
+    "completed": "Completed",
+    "rejected": "Needs Revision",
+    "drafting": "Draft",
+    "processing": "Preparing the plan review card...",
+    "errorTitle": "Failed to render the plan review card",
+    "planFile": "Plan File",
+    "implement": "Implement This Plan",
+    "runningHint": "This session is implementing the plan now.",
+    "approvedHint": "This plan has already been approved."
   },
   "guide": {
     "title": "Conversation Onboarding",
@@ -400,6 +415,7 @@
   "thinking": {
     "thoughtFor": "Thought for {{seconds}}s",
     "thinkingFor": "Thinking for {{seconds}}s",
+    "pending": "Thinking",
     "thinkingEllipsis": "Thinking…",
     "thoughts": "Thoughts"
   },
@@ -514,6 +530,8 @@
     "saveAndResend": "Save & Resend"
   },
   "assistantMessage": {
+    "changedFiles_one": "Edited {{count}} file",
+    "changedFiles_other": "Edited {{count}} files",
     "showWorkspace": "Expand workspace ({{count}} tool executions)",
     "collapseWorkspace": "Collapse workspace ({{count}} tool executions)",
     "showToolCalls": "Show {{count}} tool calls",

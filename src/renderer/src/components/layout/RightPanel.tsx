@@ -8,10 +8,8 @@ import { useUIStore, type RightPanelTab } from '@renderer/stores/ui-store'
 import { ArtifactsPanel } from '@renderer/components/cowork/ArtifactsPanel'
 import { ContextPanel } from '@renderer/components/cowork/ContextPanel'
 import { FileTreePanel } from '@renderer/components/cowork/FileTreePanel'
-import { PlanPanel } from '@renderer/components/cowork/PlanPanel'
 import { SshFileExplorer } from '@renderer/components/ssh/SshFileExplorer'
 import { TerminalPanel } from '@renderer/components/terminal/TerminalPanel'
-import { usePlanStore } from '@renderer/stores/plan-store'
 import { useChatStore } from '@renderer/stores/chat-store'
 import { useAgentStore } from '@renderer/stores/agent-store'
 import { useSshStore } from '@renderer/stores/ssh-store'
@@ -126,10 +124,6 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
   const activeSession = useChatStore((s) =>
     s.sessions.find((session) => session.id === s.activeSessionId)
   )
-  const hasPlan = usePlanStore((s) => {
-    if (!activeSessionId) return false
-    return Object.values(s.plans).some((p) => p.sessionId === activeSessionId)
-  })
   const hasSessionSubAgents = useAgentStore((s) => {
     if (!activeSessionId) return false
     const matchSession = (item: { sessionId?: string }): boolean =>
@@ -151,8 +145,6 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
       )
     })
   })
-  const planMode = useUIStore((s) => s.planMode)
-
   const shouldShowSubAgentsTab =
     hasSessionSubAgents ||
     hasSessionSubAgentMessages ||
@@ -163,14 +155,18 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
 
   const visibleTabs = useMemo(
     () =>
-      RIGHT_PANEL_TAB_DEFS.filter((item) => teamToolsEnabled || item.value !== 'team')
-        .filter((item) => hasPlan || planMode || item.value !== 'plan')
-        .filter((item) => shouldShowSubAgentsTab || (item.value !== 'subagents' && item.value !== 'orchestration')),
-    [teamToolsEnabled, hasPlan, planMode, shouldShowSubAgentsTab]
+      RIGHT_PANEL_TAB_DEFS.filter((item) => teamToolsEnabled || item.value !== 'team').filter(
+        (item) =>
+          shouldShowSubAgentsTab || (item.value !== 'subagents' && item.value !== 'orchestration')
+      ),
+    [teamToolsEnabled, shouldShowSubAgentsTab]
   )
 
   const availableSections = useMemo(
-    () => RIGHT_PANEL_SECTION_DEFS.filter((sectionDef) => visibleTabs.some((tabDef) => tabDef.section === sectionDef.value)),
+    () =>
+      RIGHT_PANEL_SECTION_DEFS.filter((sectionDef) =>
+        visibleTabs.some((tabDef) => tabDef.section === sectionDef.value)
+      ),
     [visibleTabs]
   )
   const resolvedTab = visibleTabs.some((tabDef) => tabDef.value === tab)
@@ -241,7 +237,9 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
     <div
       data-tour="right-panel"
       className="relative flex h-full shrink-0 z-40 transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
-      style={{ width: rightPanelOpen ? targetPanelWidth + RIGHT_PANEL_RAIL_WIDTH : RIGHT_PANEL_RAIL_WIDTH }}
+      style={{
+        width: rightPanelOpen ? targetPanelWidth + RIGHT_PANEL_RAIL_WIDTH : RIGHT_PANEL_RAIL_WIDTH
+      }}
     >
       <aside className="relative flex h-full w-full transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] bg-background/40 backdrop-blur-sm before:absolute before:left-0 before:top-2 before:bottom-2 before:w-px before:rounded-full before:bg-border/40">
         <div className="flex h-full w-full overflow-hidden">
@@ -261,8 +259,15 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
             )}
           >
             {activeTabDef && (
-              <div className="flex h-full min-h-0 w-full flex-col" style={{ width: targetPanelWidth }}>
-                <RightPanelHeader activeTabDef={activeTabDef} onClose={() => setRightPanelOpen(false)} t={t} />
+              <div
+                className="flex h-full min-h-0 w-full flex-col"
+                style={{ width: targetPanelWidth }}
+              >
+                <RightPanelHeader
+                  activeTabDef={activeTabDef}
+                  onClose={() => setRightPanelOpen(false)}
+                  t={t}
+                />
                 <div className="min-h-0 flex-1 overflow-auto bg-background/5 p-4">
                   <AnimatePresence mode="wait">
                     {(resolvedTab === 'orchestration' || resolvedTab === 'team') && (
@@ -276,7 +281,9 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
                         {subAgentExecutionDetailOpen ? (
                           <SubAgentExecutionDetail
                             embedded
-                            toolUseId={subAgentExecutionDetailToolUseId ?? selectedSubAgentToolUseId}
+                            toolUseId={
+                              subAgentExecutionDetailToolUseId ?? selectedSubAgentToolUseId
+                            }
                             inlineText={subAgentExecutionDetailInlineText ?? undefined}
                             onClose={() => useUIStore.getState().closeSubAgentExecutionDetail()}
                           />
@@ -289,7 +296,10 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
                     {resolvedTab === 'files' && (
                       <FadeIn key="files" className="h-full">
                         {activeSession?.sshConnectionId ? (
-                          <SshFilesPanel connectionId={activeSession.sshConnectionId} rootPath={activeSession.workingFolder} />
+                          <SshFilesPanel
+                            connectionId={activeSession.sshConnectionId}
+                            rootPath={activeSession.workingFolder}
+                          />
                         ) : (
                           <FileTreePanel />
                         )}
@@ -325,12 +335,6 @@ export function RightPanel({ compact = false }: { compact?: boolean }): React.JS
                     {resolvedTab === 'context' && (
                       <FadeIn key="context" className="h-full">
                         <ContextPanel />
-                      </FadeIn>
-                    )}
-
-                    {resolvedTab === 'plan' && (
-                      <FadeIn key="plan" className="h-full">
-                        <PlanPanel />
                       </FadeIn>
                     )}
                   </AnimatePresence>

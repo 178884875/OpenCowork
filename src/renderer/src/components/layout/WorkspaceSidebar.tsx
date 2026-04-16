@@ -37,7 +37,6 @@ import {
   Copy,
   Eraser
 } from 'lucide-react'
-import { DynamicIcon } from 'lucide-react/dynamic'
 import { Button } from '@renderer/components/ui/button'
 import { Badge } from '@renderer/components/ui/badge'
 import { Input } from '@renderer/components/ui/input'
@@ -89,6 +88,7 @@ import { toast } from 'sonner'
 import { confirm } from '@renderer/components/ui/confirm-dialog'
 
 const DAY_MS = 24 * 60 * 60 * 1000
+const SESSION_LIST_PAGE_SIZE = 20
 
 type SessionListItem = ReturnType<typeof mapSession>
 type BucketKey = 'today' | 'recentThreeDays' | 'recentWeek' | 'oneMonth' | 'older'
@@ -195,22 +195,6 @@ function areSessionListsEqual(
   return true
 }
 
-function deriveProjectIcon(projectId: string, sessions: SessionListItem[]): string | undefined {
-  const inProject = sessions.filter((session) => session.projectId === projectId)
-  if (inProject.length === 0) return undefined
-
-  const recentIcon = inProject
-    .slice()
-    .sort((left, right) => right.updatedAt - left.updatedAt)
-    .find((session) => session.icon)?.icon
-  if (recentIcon) return recentIcon
-
-  return inProject
-    .slice()
-    .sort((left, right) => left.createdAt - right.createdAt)
-    .find((session) => session.icon)?.icon
-}
-
 function getBucketKey(updatedAt: number): BucketKey {
   const elapsed = Date.now() - updatedAt
   if (elapsed < DAY_MS) return 'today'
@@ -267,59 +251,6 @@ type ExportedProjectPayload = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
-}
-
-function areProjectListsEqual(
-  left: ReturnType<typeof useChatStore.getState>['projects'],
-  right: ReturnType<typeof useChatStore.getState>['projects']
-): boolean {
-  if (left === right) return true
-  if (left.length !== right.length) return false
-  for (let index = 0; index < left.length; index += 1) {
-    const a = left[index]
-    const b = right[index]
-    if (a === b) continue
-    if (
-      a.id !== b.id ||
-      a.name !== b.name ||
-      a.createdAt !== b.createdAt ||
-      a.updatedAt !== b.updatedAt ||
-      a.workingFolder !== b.workingFolder ||
-      a.sshConnectionId !== b.sshConnectionId ||
-      a.pluginId !== b.pluginId ||
-      !!a.pinned !== !!b.pinned
-    ) {
-      return false
-    }
-  }
-  return true
-}
-
-function areSessionListsEqual(
-  left: ReturnType<typeof useChatStore.getState>['sessions'],
-  right: ReturnType<typeof useChatStore.getState>['sessions']
-): boolean {
-  if (left === right) return true
-  if (left.length !== right.length) return false
-  for (let index = 0; index < left.length; index += 1) {
-    const a = left[index]
-    const b = right[index]
-    if (a === b) continue
-    if (
-      a.id !== b.id ||
-      a.title !== b.title ||
-      a.icon !== b.icon ||
-      a.mode !== b.mode ||
-      a.updatedAt !== b.updatedAt ||
-      a.createdAt !== b.createdAt ||
-      !!a.pinned !== !!b.pinned ||
-      a.messageCount !== b.messageCount ||
-      a.projectId !== b.projectId
-    ) {
-      return false
-    }
-  }
-  return true
 }
 
 export function WorkspaceSidebar(): React.JSX.Element {
@@ -470,7 +401,6 @@ export function WorkspaceSidebar(): React.JSX.Element {
       chatView === 'git' ||
       chatView === 'session')
   const scopedProjectId = isProjectScoped ? (activeProject?.id ?? null) : null
-  const projectIcon = scopedProjectId ? deriveProjectIcon(scopedProjectId, sessions) : undefined
   const projectSessions = useMemo(() => {
     if (!scopedProjectId) return []
     return sessions
@@ -860,13 +790,6 @@ export function WorkspaceSidebar(): React.JSX.Element {
     }
   ]
 
-  const renderProjectIcon = (icon?: string, className?: string): React.JSX.Element => {
-    if (icon) {
-      return <DynamicIcon name={icon as never} className={cn('size-4', className)} />
-    }
-    return <FolderOpen className={cn('size-4', className)} />
-  }
-
   return (
     <>
       <aside
@@ -878,12 +801,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
             <div className="flex items-start justify-between gap-2 px-2.5 pb-2.5 pt-2.5">
               <button
                 type="button"
-                className="flex min-w-0 items-center gap-3 text-left"
+                className="flex min-w-0 items-center text-left"
                 onClick={() => openProject(activeProject.id)}
               >
-                <div className="flex size-8 shrink-0 items-center justify-center rounded-xl border bg-muted/40 text-foreground">
-                  {renderProjectIcon(projectIcon, 'size-5')}
-                </div>
                 <div className="min-w-0">
                   <div className="truncate text-[13px] font-semibold text-foreground">
                     {activeProject.name}
@@ -1267,7 +1187,6 @@ export function WorkspaceSidebar(): React.JSX.Element {
               ) : (
                 <div className="space-y-1">
                   {filteredProjects.map((project) => {
-                    const icon = deriveProjectIcon(project.id, sessions)
                     const count = sessions.filter((session) => session.projectId === project.id).length
                     const isActive = activeProjectId === project.id && chatView !== 'home'
                     const isRunning = runningProjectIds.has(project.id)
@@ -1281,12 +1200,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
                         >
                           <button
                             type="button"
-                            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                            className="flex min-w-0 flex-1 items-center text-left"
                             onClick={() => openProject(project.id)}
                           >
-                            <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted/40 text-foreground">
-                              {renderProjectIcon(icon, 'size-3.5')}
-                            </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5">
                                 <span className="truncate text-[12px] font-medium text-foreground">

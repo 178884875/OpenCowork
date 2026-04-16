@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Avatar, AvatarFallback } from '@renderer/components/ui/avatar'
 import { Button } from '@renderer/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@renderer/components/ui/dialog'
 import {
@@ -14,7 +13,6 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@renderer/components/ui/tooltip'
 import { useProviderStore, modelSupportsVision } from '@renderer/stores/provider-store'
 import {
-  User,
   Pencil,
   Check,
   X,
@@ -82,6 +80,10 @@ function ActionIconButton({
     </Tooltip>
   )
 }
+
+const USER_MESSAGE_WIDTH_CLASS = 'w-full max-w-[min(82%,42rem)]'
+const USER_MESSAGE_BUBBLE_CLASS =
+  'rounded-[18px] border border-border/60 bg-muted/35 px-4 py-3 text-sm text-foreground shadow-sm dark:bg-muted/70'
 
 export function UserMessage({
   messageId,
@@ -237,18 +239,10 @@ export function UserMessage({
   }
 
   return (
-    <div className="group/user flex gap-3">
-      <Avatar className="size-7 shrink-0 ring-1 ring-border/50">
-        <AvatarFallback className="bg-gradient-to-br from-primary to-primary/80 text-primary-foreground text-xs">
-          <User className="size-3.5" />
-        </AvatarFallback>
-      </Avatar>
-      <div className="min-w-0 flex-1 pt-0.5">
-        <div className="mb-1 flex items-center gap-2">
-          <p className="text-sm font-medium">{t('userMessage.you')}</p>
-        </div>
+    <div className="group/user flex flex-col items-end">
+      <div className={USER_MESSAGE_WIDTH_CLASS}>
         {editing ? (
-          <div className="space-y-2">
+          <div className={`${USER_MESSAGE_BUBBLE_CLASS} space-y-2`}>
             {command && (
               <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-3 py-2 text-xs text-violet-700 dark:text-violet-300">
                 <span className="font-medium">/{command.name}</span>
@@ -329,7 +323,9 @@ export function UserMessage({
             </div>
           </div>
         ) : collapsed ? (
-          <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <div
+            className={`${USER_MESSAGE_BUBBLE_CLASS} ml-auto w-fit max-w-full text-xs text-muted-foreground`}
+          >
             <div className="max-h-10 overflow-hidden whitespace-pre-wrap break-words">
               {plainText.trim()
                 ? plainText.trim()
@@ -340,7 +336,7 @@ export function UserMessage({
             </div>
           </div>
         ) : (
-          <>
+          <div className={`${USER_MESSAGE_BUBBLE_CLASS} ml-auto w-fit max-w-full`}>
             {command && <SystemCommandCard command={command} />}
             {plainText && (
               <div className="text-sm leading-relaxed">
@@ -348,7 +344,7 @@ export function UserMessage({
               </div>
             )}
             {allImages.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
+              <div className="mt-3 flex flex-wrap gap-2">
                 {allImages.map((img) => (
                   <img
                     key={img.id}
@@ -382,15 +378,15 @@ export function UserMessage({
                 )}
               </DialogContent>
             </Dialog>
-          </>
+          </div>
         )}
         {!editing && plainText.length > 50 && (
-          <p className="mt-1 text-[10px] text-muted-foreground/0 transition-colors tabular-nums group-hover/user:text-muted-foreground/40">
+          <p className="mt-1 pr-1 text-right text-[10px] text-muted-foreground/0 transition-colors tabular-nums group-hover/user:text-muted-foreground/40">
             {formatTokens(memoizedTokens)} {t('unit.tokens', { ns: 'common' })}
           </p>
         )}
         {!editing && (
-          <div className="mt-2 flex items-center gap-1 opacity-0 transition-opacity group-hover/user:opacity-100">
+          <div className="mt-2 flex w-full items-center justify-end gap-1 opacity-0 transition-opacity group-hover/user:opacity-100">
             <ActionIconButton
               label={copied ? t('userMessage.copied') : t('action.copy', { ns: 'common' })}
               icon={copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -418,7 +414,7 @@ export function UserMessage({
                 </TooltipTrigger>
                 <TooltipContent side="top">{t('action.showMore', { ns: 'common' })}</TooltipContent>
               </Tooltip>
-              <DropdownMenuContent align="start" className="w-52">
+              <DropdownMenuContent align="end" className="w-52">
                 <DropdownMenuItem onSelect={handleCopy}>
                   <Copy className="size-4" />
                   {t('action.copy', { ns: 'common' })}

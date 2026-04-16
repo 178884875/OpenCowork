@@ -56,6 +56,13 @@ function buildSplitRows(
   return rows
 }
 
+function rowTone(line: DiffViewerLine | undefined): string {
+  if (!line) return 'bg-[#111214]'
+  if (line.type === 'add') return 'bg-emerald-500/8'
+  if (line.type === 'del') return 'bg-red-500/8'
+  return 'bg-[#111214]'
+}
+
 export function CodeDiffViewer({
   chunks,
   defaultMode = 'split',
@@ -71,40 +78,44 @@ export function CodeDiffViewer({
     setExpandedChunks(new Set())
   }, [chunks, viewMode])
 
-  const renderInlineLine = (line: DiffViewerLine, key: number): React.JSX.Element => (
-    <div
-      key={key}
-      className={cn(
-        'flex',
-        line.type === 'del' && 'bg-red-500/10',
-        line.type === 'add' && 'bg-green-500/10'
-      )}
-    >
-      <span
+  const renderInlineLine = (line: DiffViewerLine, key: number): React.JSX.Element => {
+    const lineNumber = line.oldNum ?? line.newNum ?? ''
+    const marker = line.type === 'del' ? '-' : line.type === 'add' ? '+' : ' '
+
+    return (
+      <div
+        key={key}
         className={cn(
-          'select-none w-5 shrink-0 text-right pr-1',
-          line.type === 'del'
-            ? 'text-red-600/50 dark:text-red-400/40'
-            : line.type === 'add'
-              ? 'text-green-600/50 dark:text-green-400/40'
-              : 'text-muted-foreground/70 dark:text-zinc-600'
+          'grid grid-cols-[18px_56px_minmax(0,1fr)] border-b border-zinc-900/80 text-[11px] leading-5 last:border-b-0',
+          rowTone(line)
         )}
       >
-        {line.oldNum ?? line.newNum ?? ''}
-      </span>
-      <span
-        className={cn(
-          'px-1.5 flex-1 whitespace-pre-wrap break-all',
-          line.type === 'del' && 'text-red-700/85 dark:text-red-300/80',
-          line.type === 'add' && 'text-green-700/85 dark:text-green-300/80',
-          line.type === 'keep' && 'text-foreground/70 dark:text-zinc-500'
-        )}
-      >
-        {line.type === 'del' ? '- ' : line.type === 'add' ? '+ ' : '  '}
-        {line.text}
-      </span>
-    </div>
-  )
+        <span
+          className={cn(
+            'flex select-none items-start justify-center px-1 py-1 font-semibold',
+            line.type === 'del' && 'text-red-300',
+            line.type === 'add' && 'text-emerald-300',
+            line.type === 'keep' && 'text-zinc-700'
+          )}
+        >
+          {marker}
+        </span>
+        <span className="select-none border-x border-zinc-800/80 px-2 py-1 text-right text-zinc-500">
+          {lineNumber}
+        </span>
+        <span
+          className={cn(
+            'min-w-0 whitespace-pre-wrap break-all px-3 py-1',
+            line.type === 'del' && 'text-red-100/90',
+            line.type === 'add' && 'text-emerald-100/90',
+            line.type === 'keep' && 'text-zinc-300/90'
+          )}
+        >
+          {line.text || ' '}
+        </span>
+      </div>
+    )
+  }
 
   const renderSplitCell = (
     line: DiffViewerLine | undefined,
@@ -112,39 +123,27 @@ export function CodeDiffViewer({
   ): React.JSX.Element => {
     const isDelete = side === 'left' && line?.type === 'del'
     const isAdd = side === 'right' && line?.type === 'add'
-    const isKeep = line?.type === 'keep'
     const lineNumber = side === 'left' ? line?.oldNum : line?.newNum
 
     return (
       <div
         className={cn(
-          'flex min-w-0',
-          side === 'left' && 'border-r border-border/50',
-          isDelete && 'bg-red-500/10',
-          isAdd && 'bg-green-500/10',
-          isKeep && 'bg-background/20',
-          !line && 'bg-background/10'
+          'grid min-w-0 grid-cols-[56px_minmax(0,1fr)] border-b border-zinc-900/80 last:border-b-0',
+          side === 'left' && 'border-r border-zinc-800/80',
+          isDelete && 'bg-red-500/8',
+          isAdd && 'bg-emerald-500/8',
+          !isDelete && !isAdd && 'bg-[#111214]'
         )}
       >
-        <span
-          className={cn(
-            'select-none w-10 shrink-0 border-r border-border/30 px-1.5 py-0.5 text-right',
-            isDelete
-              ? 'text-red-600/50 dark:text-red-400/40'
-              : isAdd
-                ? 'text-green-600/50 dark:text-green-400/40'
-                : 'text-muted-foreground/70 dark:text-zinc-600'
-          )}
-        >
+        <span className="select-none border-r border-zinc-800/80 px-2 py-1 text-right text-[11px] text-zinc-500">
           {lineNumber ?? ''}
         </span>
         <span
           className={cn(
-            'min-w-0 flex-1 whitespace-pre-wrap break-all px-2 py-0.5',
-            isDelete && 'text-red-700/85 dark:text-red-300/80',
-            isAdd && 'text-green-700/85 dark:text-green-300/80',
-            isKeep && 'text-foreground/70 dark:text-zinc-500',
-            !line && 'text-transparent'
+            'min-w-0 whitespace-pre-wrap break-all px-3 py-1 text-[11px] leading-5',
+            isDelete && 'text-red-100/90',
+            isAdd && 'text-emerald-100/90',
+            !isDelete && !isAdd && (line ? 'text-zinc-300/90' : 'text-transparent')
           )}
         >
           {line?.text ?? ' '}
@@ -154,59 +153,57 @@ export function CodeDiffViewer({
   }
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2">
-        <div className="inline-flex items-center rounded-md border bg-background/60 p-0.5 text-[10px]">
-          <button
-            type="button"
-            onClick={() => updateSettings({ fileDiffViewMode: 'split' })}
-            className={cn(
-              'rounded px-2 py-1 transition-colors',
-              viewMode === 'split'
-                ? 'bg-muted text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            )}
-          >
-            {t('diffViewer.sideBySide', { defaultValue: '左右对比' })}
-          </button>
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="inline-flex items-center rounded-md border border-zinc-800/80 bg-[#111214] p-0.5 text-[10px]">
           <button
             type="button"
             onClick={() => updateSettings({ fileDiffViewMode: 'inline' })}
             className={cn(
               'rounded px-2 py-1 transition-colors',
               viewMode === 'inline'
-                ? 'bg-muted text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
+                ? 'bg-zinc-800 text-zinc-100'
+                : 'text-zinc-500 hover:text-zinc-200'
             )}
           >
-            {t('diffViewer.inline', { defaultValue: '单列对比' })}
+            {t('diffViewer.inline', { defaultValue: 'Inline' })}
+          </button>
+          <button
+            type="button"
+            onClick={() => updateSettings({ fileDiffViewMode: 'split' })}
+            className={cn(
+              'rounded px-2 py-1 transition-colors',
+              viewMode === 'split'
+                ? 'bg-zinc-800 text-zinc-100'
+                : 'text-zinc-500 hover:text-zinc-200'
+            )}
+          >
+            {t('diffViewer.sideBySide', { defaultValue: 'Split' })}
           </button>
         </div>
         {toolbarEnd ? (
-          <div className="flex items-center justify-end gap-2 text-[10px] text-muted-foreground/60">
+          <div className="flex items-center justify-end gap-2 text-[10px] text-zinc-500">
             {toolbarEnd}
           </div>
         ) : null}
       </div>
+
       <div
-        className="max-h-64 overflow-auto rounded-md border bg-muted/30 text-[11px] font-mono leading-relaxed dark:bg-zinc-950"
+        className="overflow-hidden rounded-lg border border-zinc-800/80 bg-[#111214] shadow-[0_0_0_1px_rgba(255,255,255,0.02)]"
         style={{ fontFamily: MONO_FONT }}
       >
         {viewMode === 'split' ? (
-          <div className="min-w-[420px]">
-            <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-border/50 bg-background/95 text-[10px] uppercase tracking-wide text-muted-foreground/50 dark:bg-zinc-950/95">
-              <div className="border-r border-border/50 px-2 py-1">
-                {t('diffViewer.before', { defaultValue: '修改前' })}
+          <div className="max-h-80 overflow-auto">
+            <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-zinc-800/80 bg-[#15171a] text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+              <div className="border-r border-zinc-800/80 px-3 py-2">
+                {t('diffViewer.before', { defaultValue: 'Before' })}
               </div>
-              <div className="px-2 py-1">{t('diffViewer.after', { defaultValue: '修改后' })}</div>
+              <div className="px-3 py-2">{t('diffViewer.after', { defaultValue: 'After' })}</div>
             </div>
             {chunks.map((chunk, ci) => {
               if (chunk.type === 'lines' || expandedChunks.has(ci)) {
                 return buildSplitRows(chunk.lines).map((row, rowIndex) => (
-                  <div
-                    key={`split-${ci}-${rowIndex}`}
-                    className="grid grid-cols-2 border-b border-border/30 last:border-b-0"
-                  >
+                  <div key={`split-${ci}-${rowIndex}`} className="grid grid-cols-2">
                     {renderSplitCell(row.left, 'left')}
                     {renderSplitCell(row.right, 'right')}
                   </div>
@@ -215,43 +212,41 @@ export function CodeDiffViewer({
 
               return (
                 <button
-                  key={`c${ci}`}
+                  key={`split-collapsed-${ci}`}
                   type="button"
-                  className="flex w-full items-center justify-center border-b border-border/30 py-0.5 text-[9px] text-muted-foreground/60 transition-colors hover:bg-muted/40 hover:text-foreground dark:text-zinc-500/50 dark:hover:bg-zinc-800/30 dark:hover:text-zinc-400"
+                  className="flex w-full items-center justify-center border-b border-zinc-800/80 bg-[#15171a]/60 px-3 py-2 text-[10px] text-zinc-500 transition-colors hover:bg-[#1a1d21] hover:text-zinc-200"
                   onClick={() => setExpandedChunks((prev) => new Set([...prev, ci]))}
                 >
                   {t('diffViewer.unchangedLines', {
                     count: chunk.count,
-                    defaultValue: '显示 {{count}} 行未改动内容'
+                    defaultValue: 'Show {{count}} unchanged lines'
                   })}
                 </button>
               )
             })}
           </div>
         ) : (
-          chunks.map((chunk, ci) => {
-            if (chunk.type === 'lines') {
-              return chunk.lines.map((line, li) => renderInlineLine(line, ci * 1000 + li))
-            }
+          <div className="max-h-80 overflow-auto">
+            {chunks.map((chunk, ci) => {
+              if (chunk.type === 'lines' || expandedChunks.has(ci)) {
+                return chunk.lines.map((line, li) => renderInlineLine(line, ci * 1000 + li))
+              }
 
-            if (expandedChunks.has(ci)) {
-              return chunk.lines.map((line, li) => renderInlineLine(line, ci * 1000 + li))
-            }
-
-            return (
-              <button
-                key={`c${ci}`}
-                type="button"
-                className="flex w-full items-center justify-center border-y border-border/50 py-0.5 text-[9px] text-muted-foreground/60 transition-colors hover:bg-muted/40 hover:text-foreground dark:border-zinc-800/30 dark:text-zinc-500/50 dark:hover:bg-zinc-800/30 dark:hover:text-zinc-400"
-                onClick={() => setExpandedChunks((prev) => new Set([...prev, ci]))}
-              >
-                {t('diffViewer.unchangedLines', {
-                  count: chunk.count,
-                  defaultValue: '显示 {{count}} 行未改动内容'
-                })}
-              </button>
-            )
-          })
+              return (
+                <button
+                  key={`inline-collapsed-${ci}`}
+                  type="button"
+                  className="flex w-full items-center justify-center border-y border-zinc-800/80 bg-[#15171a]/60 px-3 py-2 text-[10px] text-zinc-500 transition-colors hover:bg-[#1a1d21] hover:text-zinc-200"
+                  onClick={() => setExpandedChunks((prev) => new Set([...prev, ci]))}
+                >
+                  {t('diffViewer.unchangedLines', {
+                    count: chunk.count,
+                    defaultValue: 'Show {{count}} unchanged lines'
+                  })}
+                </button>
+              )
+            })}
+          </div>
         )}
       </div>
     </div>

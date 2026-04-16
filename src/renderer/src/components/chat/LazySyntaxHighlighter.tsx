@@ -16,6 +16,7 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   js: 'javascript',
   sh: 'bash',
   shell: 'bash',
+  cs: 'csharp',
   yml: 'yaml',
   md: 'markdown',
   html: 'markup',
@@ -43,6 +44,7 @@ const LANGUAGE_LOADERS: Record<string, () => Promise<{ default: unknown }>> = {
   sql: () => import('react-syntax-highlighter/dist/esm/languages/prism/sql'),
   graphql: () => import('react-syntax-highlighter/dist/esm/languages/prism/graphql'),
   c: () => import('react-syntax-highlighter/dist/esm/languages/prism/c'),
+  csharp: () => import('react-syntax-highlighter/dist/esm/languages/prism/csharp'),
   cpp: () => import('react-syntax-highlighter/dist/esm/languages/prism/cpp'),
   java: () => import('react-syntax-highlighter/dist/esm/languages/prism/java'),
   kotlin: () => import('react-syntax-highlighter/dist/esm/languages/prism/kotlin'),
@@ -110,11 +112,17 @@ async function ensureLanguageLoaded(language: string): Promise<void> {
 type LazySyntaxHighlighterProps = Record<string, unknown> & {
   language?: string
   children: string
+  className?: string
+  customStyle?: React.CSSProperties
+  codeTagProps?: React.HTMLAttributes<HTMLElement>
 }
 
 export function LazySyntaxHighlighter({
   language,
   children,
+  className,
+  customStyle,
+  codeTagProps,
   ...rest
 }: LazySyntaxHighlighterProps): React.JSX.Element {
   const { resolvedTheme } = useTheme()
@@ -140,8 +148,26 @@ export function LazySyntaxHighlighter({
 
   if (!runtime || !canHighlight) {
     return (
-      <pre className="overflow-auto whitespace-pre-wrap break-words text-xs font-mono">
-        {children}
+      <pre
+        className={className ?? 'text-xs'}
+        style={{
+          margin: 0,
+          overflowX: 'auto',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+          ...(customStyle ?? {})
+        }}
+      >
+        <code
+          {...codeTagProps}
+          style={{
+            fontFamily: 'inherit',
+            fontSize: 'inherit',
+            ...(codeTagProps?.style ?? {})
+          }}
+        >
+          {children}
+        </code>
       </pre>
     )
   }
@@ -151,6 +177,9 @@ export function LazySyntaxHighlighter({
     <Highlighter
       language={normalizedLanguage}
       style={resolvedTheme === 'light' ? runtime.lightStyle : runtime.darkStyle}
+      className={className}
+      customStyle={customStyle}
+      codeTagProps={codeTagProps}
       {...rest}
     >
       {children}

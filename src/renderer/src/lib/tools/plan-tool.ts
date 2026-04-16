@@ -170,6 +170,7 @@ const enterPlanModeHandler: ToolHandler = {
         return encodeToolError(error instanceof Error ? error.message : String(error))
       }
 
+      planStore.clearPendingReview(session.id)
       if (!uiStore.isPlanModeEnabled(session.id)) uiStore.enterPlanMode(session.id)
       if (useChatStore.getState().activeSessionId === session.id) {
         planStore.setActivePlan(existingPlan.id)
@@ -195,6 +196,7 @@ const enterPlanModeHandler: ToolHandler = {
       return encodeToolError(error instanceof Error ? error.message : String(error))
     }
 
+    planStore.clearPendingReview(session.id)
     if (!uiStore.isPlanModeEnabled(session.id)) uiStore.enterPlanMode(session.id)
     const autoSwitchTarget = useSettingsStore.getState().clarifyPlanModeAutoSwitchTarget
     if (session.mode === 'clarify' && autoSwitchTarget !== 'off') {
@@ -202,8 +204,6 @@ const enterPlanModeHandler: ToolHandler = {
       useChatStore.getState().updateSessionMode(session.id, autoSwitchTarget)
     }
     if (useChatStore.getState().activeSessionId === session.id) {
-      uiStore.setRightPanelTab('plan')
-      uiStore.setRightPanelOpen(true)
       planStore.setActivePlan(plan.id)
     }
 
@@ -269,16 +269,22 @@ const exitPlanModeHandler: ToolHandler = {
       status: 'drafting',
       filePath: plan.filePath
     })
+    planStore.markPendingReview(sessionId, plan.id)
 
     uiStore.exitPlanMode(sessionId)
 
-    return encodeStructuredToolResult({
-      status: 'exited',
-      plan_id: plan.id,
-      plan_file_path: plan.filePath,
-      title,
-      message: 'Plan finalized and ready for user review. Wait for approval before implementing.'
-    })
+    return encodeStructuredToolResult(
+      {
+        status: 'awaiting_review',
+        awaiting_user_review: true,
+        plan_id: plan.id,
+        plan_file_path: plan.filePath,
+        title,
+        content,
+        message: 'Plan finalized and ready for user review. Wait for approval before implementing.'
+      },
+      'json'
+    )
   },
   requiresApproval: () => false
 }

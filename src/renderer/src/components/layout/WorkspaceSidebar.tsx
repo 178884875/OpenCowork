@@ -72,7 +72,12 @@ import {
   DialogHeader,
   DialogTitle
 } from '@renderer/components/ui/dialog'
-import { useChatStore, type Project, type Session, type SessionMode } from '@renderer/stores/chat-store'
+import {
+  useChatStore,
+  type Project,
+  type Session,
+  type SessionMode
+} from '@renderer/stores/chat-store'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { useSettingsStore } from '@renderer/stores/settings-store'
 import { ipcClient } from '@renderer/lib/ipc/ipc-client'
@@ -341,7 +346,8 @@ export function WorkspaceSidebar(): React.JSX.Element {
     [runningSubAgentSessionIdsSig]
   )
   const runningBackgroundSessionIds = useMemo(
-    () => new Set(runningBackgroundSessionIdsSig ? runningBackgroundSessionIdsSig.split('\u0000') : []),
+    () =>
+      new Set(runningBackgroundSessionIdsSig ? runningBackgroundSessionIdsSig.split('\u0000') : []),
     [runningBackgroundSessionIdsSig]
   )
   const streamingSessionIds = useMemo(
@@ -488,7 +494,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
           label: t('sidebar.recentThreeDays'),
           items: groupedSessions.recentThreeDays
         },
-        { key: 'recentWeek' as const, label: t('sidebar.recentWeek'), items: groupedSessions.recentWeek },
+        {
+          key: 'recentWeek' as const,
+          label: t('sidebar.recentWeek'),
+          items: groupedSessions.recentWeek
+        },
         { key: 'oneMonth' as const, label: t('sidebar.oneMonth'), items: groupedSessions.oneMonth },
         { key: 'older' as const, label: t('sidebar.older'), items: groupedSessions.older }
       ].filter((section) => section.items.length > 0),
@@ -956,7 +966,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
                               <ContextMenuItem
                                 onSelect={() =>
                                   deferDropdownAction(() =>
-                                    startRename({ type: 'session', id: session.id, currentName: session.title })
+                                    startRename({
+                                      type: 'session',
+                                      id: session.id,
+                                      currentName: session.title
+                                    })
                                   )
                                 }
                               >
@@ -973,7 +987,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
                                   )
                                 }}
                               >
-                                {session.pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+                                {session.pinned ? (
+                                  <PinOff className="size-4" />
+                                ) : (
+                                  <Pin className="size-4" />
+                                )}
                                 {session.pinned ? tCommon('action.unpin') : t('sidebar.pinToTop')}
                               </ContextMenuItem>
                               <ContextMenuItem
@@ -1037,7 +1055,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
                                 variant="destructive"
                                 onSelect={() =>
                                   deferDropdownAction(() =>
-                                    setDeleteTarget({ type: 'session', id: session.id, title: session.title })
+                                    setDeleteTarget({
+                                      type: 'session',
+                                      id: session.id,
+                                      title: session.title
+                                    })
                                   )
                                 }
                               >
@@ -1081,15 +1103,21 @@ export function WorkspaceSidebar(): React.JSX.Element {
                     {userName || t('titleBar.defaultName', { defaultValue: 'OpenCoWork' })}
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => useUIStore.getState().openSettingsPage('general')}>
+                  <DropdownMenuItem
+                    onClick={() => useUIStore.getState().openSettingsPage('general')}
+                  >
                     <Settings className="size-4" />
                     {t('sidebar.systemSettings')}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => useUIStore.getState().openSettingsPage('memory')}>
+                  <DropdownMenuItem
+                    onClick={() => useUIStore.getState().openSettingsPage('memory')}
+                  >
                     <BookOpen className="size-4" />
                     {t('sidebar.memoryLabel')}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => useUIStore.getState().openSettingsPage('analytics')}>
+                  <DropdownMenuItem
+                    onClick={() => useUIStore.getState().openSettingsPage('analytics')}
+                  >
                     <BarChart3 className="size-4" />
                     {t('sidebar.analyticsLabel')}
                   </DropdownMenuItem>
@@ -1136,7 +1164,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
             </div>
 
             <div className="flex items-center justify-between px-2 pb-1 pt-1">
-              <div className="text-[10px] font-medium text-muted-foreground">{t('sidebar.projects')}</div>
+              <div className="text-[10px] font-medium text-muted-foreground">
+                {t('sidebar.projects')}
+              </div>
               <div className="flex items-center gap-1">
                 <Button
                   variant="ghost"
@@ -1187,7 +1217,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
               ) : (
                 <div className="space-y-1">
                   {filteredProjects.map((project) => {
-                    const count = sessions.filter((session) => session.projectId === project.id).length
+                    const count = sessions.filter(
+                      (session) => session.projectId === project.id
+                    ).length
                     const isActive = activeProjectId === project.id && chatView !== 'home'
                     const isRunning = runningProjectIds.has(project.id)
                     return (
@@ -1209,7 +1241,10 @@ export function WorkspaceSidebar(): React.JSX.Element {
                                   {project.name}
                                 </span>
                                 {project.sshConnectionId ? (
-                                  <Badge variant="secondary" className="h-4 px-1 text-[9px] leading-none">
+                                  <Badge
+                                    variant="secondary"
+                                    className="h-4 px-1 text-[9px] leading-none"
+                                  >
                                     SSH
                                   </Badge>
                                 ) : null}
@@ -1217,7 +1252,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
                             </div>
                           </button>
                           <div className="flex shrink-0 items-center gap-1">
-                            {isRunning && <Loader2 className="size-3.5 animate-spin text-blue-500" />}
+                            {isRunning && (
+                              <Loader2 className="size-3.5 animate-spin text-blue-500" />
+                            )}
                             {project.pinned && <Pin className="size-3.5 text-amber-500" />}
                             <span className="text-[10px] text-muted-foreground">{count}</span>
                             <DropdownMenu>
@@ -1238,7 +1275,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
                                 <DropdownMenuItem
                                   onSelect={() =>
                                     deferDropdownAction(() =>
-                                      startRename({ type: 'project', id: project.id, currentName: project.name })
+                                      startRename({
+                                        type: 'project',
+                                        id: project.id,
+                                        currentName: project.name
+                                      })
                                     )
                                   }
                                 >
@@ -1248,7 +1289,10 @@ export function WorkspaceSidebar(): React.JSX.Element {
                                 <DropdownMenuItem
                                   onSelect={() =>
                                     deferDropdownAction(() =>
-                                      setFolderPickerTarget({ type: 'project', projectId: project.id })
+                                      setFolderPickerTarget({
+                                        type: 'project',
+                                        projectId: project.id
+                                      })
                                     )
                                   }
                                 >
@@ -1259,13 +1303,17 @@ export function WorkspaceSidebar(): React.JSX.Element {
                                   onClick={async () => {
                                     const projectSessions = useChatStore
                                       .getState()
-                                      .sessions.filter((session) => session.projectId === project.id)
+                                      .sessions.filter(
+                                        (session) => session.projectId === project.id
+                                      )
                                     for (const session of projectSessions) {
                                       await useChatStore.getState().loadSessionMessages(session.id)
                                     }
                                     const snapshotSessions = useChatStore
                                       .getState()
-                                      .sessions.filter((session) => session.projectId === project.id)
+                                      .sessions.filter(
+                                        (session) => session.projectId === project.id
+                                      )
                                     downloadJson(`${sanitizeExportFileName(project.name)}.json`, {
                                       version: 1,
                                       type: 'project',
@@ -1288,7 +1336,11 @@ export function WorkspaceSidebar(): React.JSX.Element {
                                     )
                                   }}
                                 >
-                                  {project.pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+                                  {project.pinned ? (
+                                    <PinOff className="size-4" />
+                                  ) : (
+                                    <Pin className="size-4" />
+                                  )}
                                   {project.pinned ? tCommon('action.unpin') : t('sidebar.pinToTop')}
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
@@ -1350,7 +1402,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
                 <Settings className="size-4 shrink-0" />
                 <span className="truncate">{t('sidebar.systemSettings')}</span>
               </span>
-              <span className="shrink-0 text-[11px] text-muted-foreground/70">v{packageJson.version}</span>
+              <span className="shrink-0 text-[11px] text-muted-foreground/70">
+                v{packageJson.version}
+              </span>
             </Button>
           </div>
         </div>
@@ -1398,7 +1452,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <div className="text-[12px] font-medium text-foreground">{tChat('input.projectName')}</div>
+              <div className="text-[12px] font-medium text-foreground">
+                {tChat('input.projectName')}
+              </div>
               <Input
                 value={newProjectName}
                 onChange={(event) => setNewProjectName(event.target.value)}
@@ -1409,7 +1465,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
               />
             </div>
             <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-              <div className="font-medium text-foreground/80">{tChat('input.defaultProjectDirectory')}</div>
+              <div className="font-medium text-foreground/80">
+                {tChat('input.defaultProjectDirectory')}
+              </div>
               <div className="mt-1 break-all">
                 {effectiveDefaultProjectDirectory || tChat('input.defaultProjectDirectoryFallback')}
               </div>
@@ -1422,7 +1480,9 @@ export function WorkspaceSidebar(): React.JSX.Element {
             <Button variant="outline" onClick={() => void openCreateProjectFolderPicker()}>
               {tChat('input.selectFolder')}
             </Button>
-            <Button onClick={() => void confirmCreateProject()}>{tChat('input.createProject')}</Button>
+            <Button onClick={() => void confirmCreateProject()}>
+              {tChat('input.createProject')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1449,9 +1509,13 @@ export function WorkspaceSidebar(): React.JSX.Element {
         }}
         workingFolder={folderPickerProject?.workingFolder}
         sshConnectionId={folderPickerProject?.sshConnectionId}
-        projectName={folderPickerTarget?.type === 'create' ? folderPickerTarget.projectName : undefined}
+        projectName={
+          folderPickerTarget?.type === 'create' ? folderPickerTarget.projectName : undefined
+        }
         createMode={folderPickerTarget?.type === 'create'}
-        preferredSection={folderPickerTarget?.type === 'create' ? folderPickerTarget.preferredSection : undefined}
+        preferredSection={
+          folderPickerTarget?.type === 'create' ? folderPickerTarget.preferredSection : undefined
+        }
         onSelectLocalFolder={async (folderPath) => {
           if (folderPickerTarget?.type === 'create') {
             await handleCreateProjectWithDirectory(folderPath, null)

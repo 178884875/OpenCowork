@@ -1927,16 +1927,6 @@ function StructuredInput({
   )
 }
 
-// Tools that auto-expand when they have output (mutation/action tools)
-const EXPAND_TOOLS = new Set([
-  'Delete',
-  'Bash',
-  'TaskCreate',
-  'TaskUpdate',
-  'TaskList',
-  'visualize_show_widget'
-])
-
 export function ToolStatusDot({
   status
 }: {
@@ -1996,18 +1986,21 @@ export function ToolCallCard({
   completedAt
 }: ToolCallCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  // Auto-expand for errors and mutation tools with output; keep read-heavy tools collapsed
-  const shouldAutoExpand =
-    status === 'error' ||
-    (!!output && EXPAND_TOOLS.has(name)) ||
-    (name === 'Bash' && status === 'running')
-  const [open, setOpen] = React.useState(shouldAutoExpand)
+  const isProcessing = status === 'streaming' || status === 'running'
+  const isActive = isProcessing || status === 'pending_approval'
+  const [open, setOpen] = React.useState(isActive)
+  const prevIsActiveRef = React.useRef(isActive)
 
   React.useEffect(() => {
-    if (shouldAutoExpand) setOpen(true)
-  }, [shouldAutoExpand])
+    const wasActive = prevIsActiveRef.current
+    if (!wasActive && isActive) {
+      setOpen(true)
+    } else if (wasActive && !isActive) {
+      setOpen(false)
+    }
+    prevIsActiveRef.current = isActive
+  }, [isActive])
 
-  const isProcessing = status === 'streaming' || status === 'running'
   const outputText = outputAsString(output)
   const summary = inputSummary(name, input, outputText)
   const outputIsErrorOnly = isErrorOnlyOutput(outputText)

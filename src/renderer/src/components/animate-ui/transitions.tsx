@@ -143,7 +143,7 @@ ScaleIn.displayName = 'ScaleIn'
  */
 export const PageTransition = forwardRef<HTMLDivElement, BaseTransitionProps>(
   ({ children, className, ...props }, ref) => {
-    const animationsEnabled = false
+    const animationsEnabled = useSettingsStore((s) => s.animationsEnabled)
 
     return (
       <motion.div
@@ -247,7 +247,7 @@ export const PanelTransition = forwardRef<
     },
     ref
   ) => {
-    const animationsEnabled = true
+    const animationsEnabled = useSettingsStore((s) => s.animationsEnabled)
     const shouldDisable = disabled || !animationsEnabled
     const xInitial = side === 'right' ? 20 : -20
 

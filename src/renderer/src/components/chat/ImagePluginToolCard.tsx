@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, ImageIcon, Loader2, TriangleAlert } from 'lucide-react'
@@ -77,7 +77,6 @@ export function ImagePluginToolCard({
   error
 }: ImagePluginToolCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  const [collapsed, setCollapsed] = useState(false)
   const prompt = typeof input.prompt === 'string' ? input.prompt : ''
   const requestedCount =
     typeof input.count === 'number' ? input.count : Number(input.count ?? 1) || 1
@@ -101,6 +100,19 @@ export function ImagePluginToolCard({
     status === 'pending_approval' ||
     status === 'running' ||
     isAwaitingRetry
+  const [collapsed, setCollapsed] = useState(!isRunning)
+  const prevIsRunningRef = useRef(isRunning)
+
+  useEffect(() => {
+    const wasRunning = prevIsRunningRef.current
+    if (!wasRunning && isRunning) {
+      setCollapsed(false)
+    } else if (wasRunning && !isRunning) {
+      setCollapsed(true)
+    }
+    prevIsRunningRef.current = isRunning
+  }, [isRunning])
+
   const hasError =
     !isAwaitingRetry && (status === 'error' || (!!parsedError && images.length === 0))
 

@@ -807,19 +807,22 @@ export function FileChangeCard({
   const { t } = useTranslation('chat')
   const resolvedEdit = React.useMemo(() => resolveEditPayload(input), [input])
   const resolvedWrite = React.useMemo(() => resolveWritePayload(input), [input])
-  const shouldAutoCollapse = status === 'completed' && !error
-  const [collapsed, setCollapsed] = React.useState(shouldAutoCollapse)
+  const isActive = status === 'streaming' || status === 'running' || status === 'pending_approval'
+  const [collapsed, setCollapsed] = React.useState(!isActive)
   const acceptFileChange = useAgentStore((state) => state.acceptFileChange)
   const rollbackFileChange = useAgentStore((state) => state.rollbackFileChange)
   const [isAcceptingFile, setIsAcceptingFile] = React.useState(false)
   const [isRollingBackFile, setIsRollingBackFile] = React.useState(false)
-
-  const hasManualCollapseOverrideRef = React.useRef(false)
+  const prevIsActiveRef = React.useRef(isActive)
   React.useEffect(() => {
-    if (shouldAutoCollapse && !hasManualCollapseOverrideRef.current) {
+    const wasActive = prevIsActiveRef.current
+    if (!wasActive && isActive) {
+      setCollapsed(false)
+    } else if (wasActive && !isActive) {
       setCollapsed(true)
     }
-  }, [shouldAutoCollapse])
+    prevIsActiveRef.current = isActive
+  }, [isActive])
 
   const filePath = String(input.file_path ?? input.path ?? '')
   const elapsed =
@@ -894,7 +897,6 @@ export function FileChangeCard({
     >
       <button
         onClick={() => {
-          hasManualCollapseOverrideRef.current = true
           setCollapsed((v) => !v)
         }}
         className={cn(

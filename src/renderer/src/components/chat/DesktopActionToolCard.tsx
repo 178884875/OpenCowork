@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -67,9 +67,21 @@ export function DesktopActionToolCard({
   error
 }: DesktopActionToolCardProps): React.JSX.Element {
   const { t } = useTranslation('chat')
-  const [collapsed, setCollapsed] = useState(false)
   const parsedError = error || parseErrorMessage(output)
   const isRunning = status === 'streaming' || status === 'pending_approval' || status === 'running'
+  const [collapsed, setCollapsed] = useState(!isRunning)
+  const prevIsRunningRef = useRef(isRunning)
+
+  useEffect(() => {
+    const wasRunning = prevIsRunningRef.current
+    if (!wasRunning && isRunning) {
+      setCollapsed(false)
+    } else if (wasRunning && !isRunning) {
+      setCollapsed(true)
+    }
+    prevIsRunningRef.current = isRunning
+  }, [isRunning])
+
   const hasError = status === 'error' || Boolean(parsedError)
   const jsonOutput = parseStructuredOutput(output)
 

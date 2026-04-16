@@ -237,6 +237,14 @@ function formatMs(ms: number): string {
   return `${Math.round(ms)}ms`
 }
 
+function isExpandableCardActive(status: string | undefined): boolean {
+  return status === 'streaming' || status === 'running' || status === 'pending_approval'
+}
+
+function collapsePhaseKey(status: string | undefined): 'active' | 'settled' {
+  return isExpandableCardActive(status) ? 'active' : 'settled'
+}
+
 function DebugToggleButton({ debugInfo }: { debugInfo: RequestDebugInfo }): React.JSX.Element {
   const [show, setShow] = useState(false)
   const bodyFormatted = (() => {
@@ -1105,7 +1113,7 @@ export function AssistantMessage({
             if (seg.type === 'think') {
               return (
                 <ThinkingBlock
-                  key={idx}
+                  key={`${idx}-${seg.closed ? 'settled' : 'active'}`}
                   thinking={seg.closed ? seg.content : ''}
                   isStreaming={!!isStreaming && !seg.closed}
                 />
@@ -1253,13 +1261,14 @@ export function AssistantMessage({
         if (toolsCollapsed) return null
         const result = toolResults?.get(block.id)
         const liveTc = effectiveLiveToolCallMap?.get(block.id)
+        const statusValue = liveTc?.status ?? (result?.isError ? 'error' : 'completed')
         return (
-          <ScaleIn key={key} className="w-full origin-left">
+          <ScaleIn key={`${key}-${collapsePhaseKey(statusValue)}`} className="w-full origin-left">
             <FileChangeCard
               name={block.name}
               input={block.input}
               output={liveTc?.output ?? result?.content}
-              status={liveTc?.status ?? (result?.isError ? 'error' : 'completed')}
+              status={statusValue}
               error={liveTc?.error}
               startedAt={liveTc?.startedAt}
               completedAt={liveTc?.completedAt}
@@ -1271,13 +1280,14 @@ export function AssistantMessage({
       if (block.name === IMAGE_GENERATE_TOOL_NAME) {
         const result = toolResults?.get(block.id)
         const liveTc = effectiveLiveToolCallMap?.get(block.id)
+        const statusValue = liveTc?.status ?? (result?.isError ? 'error' : 'completed')
         return (
-          <ScaleIn key={key} className="w-full origin-left">
+          <ScaleIn key={`${key}-${collapsePhaseKey(statusValue)}`} className="w-full origin-left">
             <ImagePluginToolCard
               toolUseId={block.id}
               input={liveTc?.input ?? block.input}
               output={liveTc?.output ?? result?.content}
-              status={liveTc?.status ?? (result?.isError ? 'error' : 'completed')}
+              status={statusValue}
               error={liveTc?.error}
             />
           </ScaleIn>
@@ -1293,13 +1303,14 @@ export function AssistantMessage({
         if (toolsCollapsed) return null
         const result = toolResults?.get(block.id)
         const liveTc = effectiveLiveToolCallMap?.get(block.id)
+        const statusValue = liveTc?.status ?? (result?.isError ? 'error' : 'completed')
         return (
-          <ScaleIn key={key} className="w-full origin-left">
+          <ScaleIn key={`${key}-${collapsePhaseKey(statusValue)}`} className="w-full origin-left">
             <DesktopActionToolCard
               name={block.name}
               input={block.input}
               output={liveTc?.output ?? result?.content}
-              status={liveTc?.status ?? (result?.isError ? 'error' : 'completed')}
+              status={statusValue}
               error={liveTc?.error}
             />
           </ScaleIn>
@@ -1309,14 +1320,15 @@ export function AssistantMessage({
       if (toolsCollapsed) return null
       const result = toolResults?.get(block.id)
       const liveTc = effectiveLiveToolCallMap?.get(block.id)
+      const statusValue = liveTc?.status ?? (result?.isError ? 'error' : 'completed')
       return (
-        <ScaleIn key={key} className="w-full origin-left">
+        <ScaleIn key={`${key}-${collapsePhaseKey(statusValue)}`} className="w-full origin-left">
           <ToolCallCard
             toolUseId={block.id}
             name={block.name}
             input={block.input}
             output={liveTc?.output ?? result?.content}
-            status={liveTc?.status ?? (result?.isError ? 'error' : 'completed')}
+            status={statusValue}
             error={liveTc?.error}
             startedAt={liveTc?.startedAt}
             completedAt={liveTc?.completedAt}
@@ -1375,7 +1387,7 @@ export function AssistantMessage({
               case 'thinking':
                 return (
                   <ThinkingBlock
-                    key={item.index}
+                    key={`${item.index}-${block.completedAt ? 'settled' : 'active'}`}
                     thinking={block.completedAt ? block.thinking : ''}
                     isStreaming={isStreaming}
                     startedAt={block.startedAt}
@@ -1421,7 +1433,7 @@ export function AssistantMessage({
                       if (seg.type === 'think') {
                         return (
                           <ThinkingBlock
-                            key={j}
+                            key={`${item.index}-${j}-${seg.closed ? 'settled' : 'active'}`}
                             thinking={seg.closed ? seg.content : ''}
                             isStreaming={isBlockStreaming && !seg.closed}
                           />
@@ -1498,14 +1510,18 @@ export function AssistantMessage({
             const block = groupBlocks[0]
             const result = toolResults?.get(block.id)
             const liveTc = effectiveLiveToolCallMap?.get(block.id)
+            const statusValue = liveTc?.status ?? (result?.isError ? 'error' : 'completed')
             return (
-              <ScaleIn key={block.id} className="w-full origin-left">
+              <ScaleIn
+                key={`${block.id}-${collapsePhaseKey(statusValue)}`}
+                className="w-full origin-left"
+              >
                 <ToolCallCard
                   toolUseId={block.id}
                   name={block.name}
                   input={block.input}
                   output={liveTc?.output ?? result?.content}
-                  status={liveTc?.status ?? (result?.isError ? 'error' : 'completed')}
+                  status={statusValue}
                   error={liveTc?.error}
                   startedAt={liveTc?.startedAt}
                   completedAt={liveTc?.completedAt}
@@ -1531,21 +1547,27 @@ export function AssistantMessage({
               completedAt: liveTc?.completedAt
             }
           })
+          const groupPhase = groupItems.some((groupItem) =>
+            isExpandableCardActive(groupItem.status)
+          )
+            ? 'active'
+            : 'settled'
 
           return (
-            <ScaleIn key={groupKey} className="w-full origin-left">
+            <ScaleIn key={`${groupKey}-${groupPhase}`} className="w-full origin-left">
               <ToolCallGroup toolName={item.toolName} items={groupItems}>
                 {groupBlocks.map((block) => {
                   const result = toolResults?.get(block.id)
                   const liveTc = effectiveLiveToolCallMap?.get(block.id)
+                  const statusValue = liveTc?.status ?? (result?.isError ? 'error' : 'completed')
                   return (
                     <ToolCallCard
-                      key={block.id}
+                      key={`${block.id}-${collapsePhaseKey(statusValue)}`}
                       toolUseId={block.id}
                       name={block.name}
                       input={block.input}
                       output={liveTc?.output ?? result?.content}
-                      status={liveTc?.status ?? (result?.isError ? 'error' : 'completed')}
+                      status={statusValue}
                       error={liveTc?.error}
                       startedAt={liveTc?.startedAt}
                       completedAt={liveTc?.completedAt}

@@ -813,16 +813,6 @@ export function FileChangeCard({
   const rollbackFileChange = useAgentStore((state) => state.rollbackFileChange)
   const [isAcceptingFile, setIsAcceptingFile] = React.useState(false)
   const [isRollingBackFile, setIsRollingBackFile] = React.useState(false)
-  const prevIsActiveRef = React.useRef(isActive)
-  React.useEffect(() => {
-    const wasActive = prevIsActiveRef.current
-    if (!wasActive && isActive) {
-      setCollapsed(false)
-    } else if (wasActive && !isActive) {
-      setCollapsed(true)
-    }
-    prevIsActiveRef.current = isActive
-  }, [isActive])
 
   const filePath = String(input.file_path ?? input.path ?? '')
   const elapsed =

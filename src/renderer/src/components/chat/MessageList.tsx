@@ -81,8 +81,6 @@ interface MessageRowProps {
   onContinue?: () => void
   onEditUserMessage?: (messageId: string, draft: EditableUserMessageDraft) => void
   onDeleteMessage?: (messageId: string) => void
-  setLastMessageRowRef?: (node: HTMLDivElement | null, isCurrentLastMessageRow: boolean) => void
-  isCurrentLastMessageRow?: boolean
 }
 
 const EMPTY_MESSAGES: UnifiedMessage[] = []
@@ -90,13 +88,16 @@ const LOAD_MORE_MESSAGE_STEP = 40
 const AUTO_LOAD_OLDER_TOP_THRESHOLD = 200
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 24
 const STREAMING_AUTO_SCROLL_BOTTOM_THRESHOLD = 80
+const STREAMING_AUTO_SCROLL_STOP_THRESHOLD = 240
 const LOAD_MORE_ROW_KEY = '__load_more__'
 const TAIL_STATIC_MESSAGE_COUNT = 4
 const INITIAL_SCROLL_SETTLE_FRAMES = 2
 const FOLLOW_BOTTOM_SETTLE_FRAMES = 3
 const BOTTOM_SCROLL_CORRECTION_EPSILON = 2
+const AUTO_SCROLL_MIN_DELTA = 24
 const INITIAL_MESSAGE_ESTIMATED_HEIGHT = 120
 const PROGRAMMATIC_SCROLL_GUARD_MS = 160
+const STREAMING_AUTO_SCROLL_POLL_MS = 500
 const EMPTY_ORCHESTRATION_STATE = { runs: [], byId: new Map(), byMessageId: new Map() }
 
 function getDistanceToBottom(ref: HTMLDivElement): number {
@@ -118,9 +119,7 @@ const MessageRow = React.memo(function MessageRow({
   onRetry,
   onContinue,
   onEditUserMessage,
-  onDeleteMessage,
-  setLastMessageRowRef,
-  isCurrentLastMessageRow
+  onDeleteMessage
 }: MessageRowProps): React.JSX.Element {
   return (
     <div
@@ -128,7 +127,6 @@ const MessageRow = React.memo(function MessageRow({
       data-message-id={message.id}
       data-anchor={anchorMessageId === message.id ? 'true' : undefined}
       className="mx-auto max-w-3xl px-4 pb-6"
-      ref={(node) => setLastMessageRowRef?.(node, Boolean(isCurrentLastMessageRow))}
     >
       <MessageItem
         message={message}
@@ -203,8 +201,6 @@ export function MessageList(props: MessageListProps): React.JSX.Element {
 
   const listRef = React.useRef<HTMLDivElement | null>(null)
   const containerRef = React.useRef<HTMLDivElement | null>(null)
-  const lastMessageRowElementRef = React.useRef<HTMLDivElement | null>(null)
-  const resizeObserverRef = React.useRef<ResizeObserver | null>(null)
   const pendingInitialScrollSessionIdRef = React.useRef<string | null>(null)
   const autoScrollModeRef = React.useRef<AutoScrollMode>('off')
   const preserveScrollOnPrependRef = React.useRef<{
@@ -312,32 +308,6 @@ export function MessageList(props: MessageListProps): React.JSX.Element {
     return mode === 'user' || (mode === 'stream' && canSessionTriggerStreamingAutoScroll)
   }, [canSessionTriggerStreamingAutoScroll])
 
-  const updateResizeObserver = React.useCallback(() => {
-    const observer = resizeObserverRef.current
-    if (!observer) return
-
-    observer.disconnect()
-    const lastMessageRow = lastMessageRowElementRef.current
-    if (!lastMessageRow) return
-
-    observer.observe(lastMessageRow)
-  }, [])
-
-  const setLastMessageRowRef = React.useCallback(
-    (node: HTMLDivElement | null, isCurrentLastMessageRow: boolean) => {
-      if (!isCurrentLastMessageRow) return
-      if (node === null) {
-        lastMessageRowElementRef.current = null
-        updateResizeObserver()
-        return
-      }
-      if (lastMessageRowElementRef.current === node) return
-      lastMessageRowElementRef.current = node
-      updateResizeObserver()
-    },
-    [updateResizeObserver]
-  )
-
   const markProgrammaticScroll = React.useCallback(() => {
     programmaticScrollUntilRef.current = window.performance.now() + PROGRAMMATIC_SCROLL_GUARD_MS
   }, [])
@@ -356,10 +326,11 @@ export function MessageList(props: MessageListProps): React.JSX.Element {
     const ref = listRef.current
     if (!ref) return
 
+    const distanceToBottom = getDistanceToBottom(ref)
     const threshold = isSessionRunning
       ? STREAMING_AUTO_SCROLL_BOTTOM_THRESHOLD
       : AUTO_SCROLL_BOTTOM_THRESHOLD
-    const nextAtBottom = getDistanceToBottom(ref) <= threshold
+    const nextAtBottom = distanceToBottom <= threshold
     const previousOffset = lastScrollOffsetRef.current
     const currentOffset = ref.scrollTop
     const scrolledUp = currentOffset < previousOffset - BOTTOM_SCROLL_CORRECTION_EPSILON
@@ -367,7 +338,11 @@ export function MessageList(props: MessageListProps): React.JSX.Element {
 
     lastScrollOffsetRef.current = currentOffset
 
-    if (!nextAtBottom && scrolledUp && !isProgrammaticScroll) {
+    if (
+      scrolledUp &&
+      distanceToBottom > STREAMING_AUTO_SCROLL_STOP_THRESHOLD &&
+      !isProgrammaticScroll
+    ) {
       autoScrollModeRef.current = 'off'
     } else if (nextAtBottom && isSessionRunning && autoScrollModeRef.current === 'off') {
       autoScrollModeRef.current = 'stream'
@@ -375,12 +350,6 @@ export function MessageList(props: MessageListProps): React.JSX.Element {
 
     setIsAtBottom((prev) => (prev === nextAtBottom ? prev : nextAtBottom))
   }, [isSessionRunning])
-
-  const isAtStreamingBottom = React.useCallback(() => {
-    const ref = listRef.current
-    if (!ref) return false
-    return getDistanceToBottom(ref) <= STREAMING_AUTO_SCROLL_BOTTOM_THRESHOLD
-  }, [])
 
   const requestScrollToBottom = React.useCallback(
     ({
@@ -403,7 +372,7 @@ export function MessageList(props: MessageListProps): React.JSX.Element {
         if (!ref) return
         if (!force && !canAutoScroll()) return
 
-        if (force || getDistanceToBottom(ref) > BOTTOM_SCROLL_CORRECTION_EPSILON) {
+        if (force || getDistanceToBottom(ref) > AUTO_SCROLL_MIN_DELTA) {
           scrollToBottomImmediate(behavior)
         }
         framesLeft -= 1
@@ -420,30 +389,17 @@ export function MessageList(props: MessageListProps): React.JSX.Element {
   )
 
   React.useEffect(() => {
-    if (typeof ResizeObserver === 'undefined') return
-    if (!isMainChatSession) return
+    if (!canSessionTriggerStreamingAutoScroll) return
 
-    const observer = new ResizeObserver(() => {
-      if (!canSessionTriggerStreamingAutoScroll || !isAtStreamingBottom()) return
+    const intervalId = window.setInterval(() => {
+      if (!canAutoScroll()) return
       requestScrollToBottom({ maxFrames: FOLLOW_BOTTOM_SETTLE_FRAMES })
-    })
-
-    resizeObserverRef.current = observer
+    }, STREAMING_AUTO_SCROLL_POLL_MS)
 
     return () => {
-      observer.disconnect()
-      resizeObserverRef.current = null
+      window.clearInterval(intervalId)
     }
-  }, [
-    isMainChatSession,
-    canSessionTriggerStreamingAutoScroll,
-    isAtStreamingBottom,
-    requestScrollToBottom
-  ])
-
-  React.useEffect(() => {
-    updateResizeObserver()
-  }, [updateResizeObserver, activeSessionId, rows.length])
+  }, [canAutoScroll, canSessionTriggerStreamingAutoScroll, requestScrollToBottom])
 
   const loadOlderMessages = React.useCallback(async (): Promise<void> => {
     if (!activeSessionId || olderUnloadedMessageCount === 0 || isAutoLoadingOlderRef.current) return
@@ -507,7 +463,13 @@ export function MessageList(props: MessageListProps): React.JSX.Element {
     }
 
     pendingInitialScrollSessionIdRef.current = null
-  }, [activeSessionId, isSessionRunning, messages.length, requestScrollToBottom, streamingMessageId])
+  }, [
+    activeSessionId,
+    isSessionRunning,
+    messages.length,
+    requestScrollToBottom,
+    streamingMessageId
+  ])
 
   React.useLayoutEffect(() => {
     const pending = preserveScrollOnPrependRef.current
@@ -754,8 +716,6 @@ export function MessageList(props: MessageListProps): React.JSX.Element {
               onContinue={onContinue}
               onEditUserMessage={onEditUserMessage}
               onDeleteMessage={onDeleteMessage}
-              setLastMessageRowRef={setLastMessageRowRef}
-              isCurrentLastMessageRow={rowIndex === lastMessageRowIndex}
             />
           )
         })}

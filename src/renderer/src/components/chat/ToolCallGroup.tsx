@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, ChevronDown, Loader2 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
@@ -59,7 +59,11 @@ function groupSummaryLabel(
       const fileCount = summaries.reduce((sum, item) => sum + item.fileCount, 0)
       const hasWarnings = summaries.some((item) => item.truncated || item.timedOut || !!item.error)
       return toolName === 'Grep'
-        ? t('toolGroup.grepResults', { matches: matchCount, files: fileCount, suffix: hasWarnings ? '+' : '' })
+        ? t('toolGroup.grepResults', {
+            matches: matchCount,
+            files: fileCount,
+            suffix: hasWarnings ? '+' : ''
+          })
         : t('toolGroup.globResults', { count: matchCount, suffix: hasWarnings ? '+' : '' })
     }
 
@@ -86,17 +90,6 @@ export function ToolCallGroup({
   const isActive = status === 'running' || status === 'streaming' || status === 'pending_approval'
 
   const [expanded, setExpanded] = useState(isActive)
-  const prevIsActiveRef = useRef(isActive)
-
-  useEffect(() => {
-    const wasActive = prevIsActiveRef.current
-    if (!wasActive && isActive) {
-      setExpanded(true)
-    } else if (wasActive && !isActive) {
-      setExpanded(false)
-    }
-    prevIsActiveRef.current = isActive
-  }, [isActive])
 
   const summaryLabel = groupSummaryLabel(toolName, items, t)
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, ImageIcon, Loader2, TriangleAlert } from 'lucide-react'
@@ -101,18 +101,6 @@ export function ImagePluginToolCard({
     status === 'running' ||
     isAwaitingRetry
   const [collapsed, setCollapsed] = useState(!isRunning)
-  const prevIsRunningRef = useRef(isRunning)
-
-  useEffect(() => {
-    const wasRunning = prevIsRunningRef.current
-    if (!wasRunning && isRunning) {
-      setCollapsed(false)
-    } else if (wasRunning && !isRunning) {
-      setCollapsed(true)
-    }
-    prevIsRunningRef.current = isRunning
-  }, [isRunning])
-
   const hasError =
     !isAwaitingRetry && (status === 'error' || (!!parsedError && images.length === 0))
 

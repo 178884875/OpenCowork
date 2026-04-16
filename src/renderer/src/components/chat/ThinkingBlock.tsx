@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useRef } from 'react'
+import { memo, useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, ChevronDown } from 'lucide-react'
 import Markdown from 'react-markdown'
@@ -37,7 +37,6 @@ export const ThinkingBlock = memo(function ThinkingBlock({
 
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
   const [liveElapsed, setLiveElapsed] = useState(0)
-  const prevIsThinkingRef = useRef(isThinking)
 
   // Live timer while thinking
   useEffect(() => {
@@ -47,16 +46,6 @@ export const ThinkingBlock = memo(function ThinkingBlock({
     const interval = setInterval(tick, 1000)
     return () => clearInterval(interval)
   }, [isThinking, startedAt])
-
-  useEffect(() => {
-    const wasThinking = prevIsThinkingRef.current
-    if (!wasThinking && isThinking) {
-      setCollapsed(false)
-    } else if (wasThinking && !isThinking && hasThinkingContent) {
-      setCollapsed(true)
-    }
-    prevIsThinkingRef.current = isThinking
-  }, [hasThinkingContent, isThinking])
 
   const expanded = isThinking || (hasThinkingContent && !collapsed)
 

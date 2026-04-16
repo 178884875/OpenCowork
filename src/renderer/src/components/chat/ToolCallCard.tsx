@@ -1989,18 +1989,6 @@ export function ToolCallCard({
   const isProcessing = status === 'streaming' || status === 'running'
   const isActive = isProcessing || status === 'pending_approval'
   const [open, setOpen] = React.useState(isActive)
-  const prevIsActiveRef = React.useRef(isActive)
-
-  React.useEffect(() => {
-    const wasActive = prevIsActiveRef.current
-    if (!wasActive && isActive) {
-      setOpen(true)
-    } else if (wasActive && !isActive) {
-      setOpen(false)
-    }
-    prevIsActiveRef.current = isActive
-  }, [isActive])
-
   const outputText = outputAsString(output)
   const summary = inputSummary(name, input, outputText)
   const outputIsErrorOnly = isErrorOnlyOutput(outputText)
